@@ -120,7 +120,7 @@ pub struct PartialSnapshot {
 }
 
 #[derive(Clone, Debug, PartialEq, Eq)]
-pub struct SpecBiVec<T: Sized, const I: usize = { 1 << 30 }, const O: usize = 6> {
+pub struct SpecBiVec<T: Sized, const I: usize = { 1 << 30 }, const O: usize = 4> {
     current: usize,
     total_len: usize,
     buffers: [Vec<T>; O],
@@ -130,6 +130,7 @@ impl<T: Sized, const I: usize, const O: usize> SpecBiVec<T, I, O> {
     pub fn new() -> Self {
         assert!(O > 0);
         assert!(I > 0);
+        assert!(O * I <= 1 << 36);
         let mut buffers: [Vec<T>; O] = std::array::from_fn(|_| Vec::new());
         buffers[0] = Vec::with_capacity(I);
 
@@ -144,7 +145,7 @@ impl<T: Sized, const I: usize, const O: usize> SpecBiVec<T, I, O> {
     pub fn push(&mut self, value: T) {
         unsafe {
             let dst = self.buffers.get_unchecked_mut(self.current);
-            if dst.len() == I {
+            if core::hint::unlikely(dst.len() == I) {
                 let mut next = Vec::with_capacity(I);
                 next.push_within_capacity(value).unwrap_unchecked();
                 self.current += 1;
