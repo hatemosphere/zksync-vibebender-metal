@@ -206,7 +206,7 @@ enum Commands {
         mode: RecursionStrategy,
     },
 
-    /// Take mutiple proofs from files (and some other data) and combine into a single file that can be fed as input.
+    /// Take multiple proofs from files (and some other data) and combine into a single file that can be fed as input.
     PrepareInputs {
         #[arg(long, num_args = 1..)]
         inputs: Vec<String>,
