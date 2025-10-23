@@ -957,17 +957,22 @@ fn replay_non_mem<
             use riscv_transpiler::replayer::*;
             use riscv_transpiler::witness::*;
 
-            let mut ram = ReplayerRam::<ROM_BOUND_SECOND_WORD_BITS> {
-                ram_log: &snapshotter.reads_buffer[ram_range],
-            };
-            let mut nd = ReplayerNonDeterminism {
-                non_determinism_reads_log: &snapshotter.non_determinism_reads_buffer[nd_range],
-            };
-
             let tape_ref = tape;
+            let snapshotter_ref = &snapshotter;
 
             // spawn replayer
             scope.spawn(move |_| {
+                let mut ram_log_buffers = snapshotter_ref.reads_buffer.make_range(ram_range);
+                let mut nd_log_buffers = snapshotter_ref
+                    .non_determinism_reads_buffer
+                    .make_range(nd_range);
+                let mut ram = ReplayerRam::<ROM_BOUND_SECOND_WORD_BITS> {
+                    ram_log: &mut ram_log_buffers,
+                };
+                let mut nd = ReplayerNonDeterminism {
+                    non_determinism_reads_log: &mut nd_log_buffers,
+                };
+
                 let mut chunks = chunks;
                 let mut tracer =
                     UninitNonMemDestinationHolder::<FAMILY_IDX> {
@@ -1158,17 +1163,22 @@ fn replay_mem<const FAMILY_IDX: u8, A: GoodAllocator, const ROM_BOUND_SECOND_WOR
             use riscv_transpiler::replayer::*;
             use riscv_transpiler::witness::*;
 
-            let mut ram = ReplayerRam::<ROM_BOUND_SECOND_WORD_BITS> {
-                ram_log: &snapshotter.reads_buffer[ram_range],
-            };
-            let mut nd = ReplayerNonDeterminism {
-                non_determinism_reads_log: &snapshotter.non_determinism_reads_buffer[nd_range],
-            };
-
             let tape_ref = tape;
+            let snapshotter_ref = &snapshotter;
 
             // spawn replayer
             scope.spawn(move |_| {
+                let mut ram_log_buffers = snapshotter_ref.reads_buffer.make_range(ram_range);
+                let mut nd_log_buffers = snapshotter_ref
+                    .non_determinism_reads_buffer
+                    .make_range(nd_range);
+                let mut ram = ReplayerRam::<ROM_BOUND_SECOND_WORD_BITS> {
+                    ram_log: &mut ram_log_buffers,
+                };
+                let mut nd = ReplayerNonDeterminism {
+                    non_determinism_reads_log: &mut nd_log_buffers,
+                };
+
                 let mut chunks = chunks;
                 let mut tracer =
                     UninitMemDestinationHolder::<FAMILY_IDX> {
@@ -1350,17 +1360,22 @@ fn replay_generic_work<
             use riscv_transpiler::replayer::*;
             use riscv_transpiler::witness::*;
 
-            let mut ram = ReplayerRam::<ROM_BOUND_SECOND_WORD_BITS> {
-                ram_log: &snapshotter.reads_buffer[ram_range],
-            };
-            let mut nd = ReplayerNonDeterminism {
-                non_determinism_reads_log: &snapshotter.non_determinism_reads_buffer[nd_range],
-            };
-
             let tape_ref = tape;
+            let snapshotter_ref = &snapshotter;
 
             // spawn replayer
             scope.spawn(move |_| {
+                let mut ram_log_buffers = snapshotter_ref.reads_buffer.make_range(ram_range);
+                let mut nd_log_buffers = snapshotter_ref
+                    .non_determinism_reads_buffer
+                    .make_range(nd_range);
+                let mut ram = ReplayerRam::<ROM_BOUND_SECOND_WORD_BITS> {
+                    ram_log: &mut ram_log_buffers,
+                };
+                let mut nd = ReplayerNonDeterminism {
+                    non_determinism_reads_log: &mut nd_log_buffers,
+                };
+
                 let mut chunks = chunks;
                 let mut tracer = D::make_uninit_tracer(&mut chunks);
                 let mut state = starting_snapshot.state;
