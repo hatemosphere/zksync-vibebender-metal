@@ -120,33 +120,35 @@ pub struct PartialSnapshot {
 }
 
 #[derive(Clone, Debug, PartialEq, Eq)]
-pub struct BiVec<T: Sized> {
-    buffers: Vec<Vec<T>>,
-    inner_capacity: usize,
+pub struct SpecBiVec<T: Sized, const I: usize = { 1 << 30 }, const O: usize = 6> {
+    current: usize,
     total_len: usize,
+    buffers: [Vec<T>; O],
 }
 
-impl<T: Sized> BiVec<T> {
-    pub fn new_with_capacities(inner_capacity: usize, outer_capacity: usize) -> Self {
-        assert!(outer_capacity > 0);
-        let mut buffers = Vec::with_capacity(outer_capacity);
-        buffers.push(Vec::with_capacity(inner_capacity));
+impl<T: Sized, const I: usize, const O: usize> SpecBiVec<T, I, O> {
+    pub fn new() -> Self {
+        assert!(O > 0);
+        assert!(I > 0);
+        let mut buffers: [Vec<T>; O] = std::array::from_fn(|_| Vec::new());
+        buffers[0] = Vec::with_capacity(I);
 
         Self {
-            buffers,
-            inner_capacity,
+            current: 0,
             total_len: 0,
+            buffers,
         }
     }
 
     #[inline(always)]
     pub fn push(&mut self, value: T) {
         unsafe {
-            let dst = self.buffers.last_mut().unwrap_unchecked();
-            if dst.len() == self.inner_capacity {
-                let mut next = Vec::with_capacity(self.inner_capacity);
+            let dst = self.buffers.get_unchecked_mut(self.current);
+            if dst.len() == I {
+                let mut next = Vec::with_capacity(I);
                 next.push_within_capacity(value).unwrap_unchecked();
-                self.buffers.push(next);
+                self.current += 1;
+                self.buffers[self.current] = next;
             } else {
                 dst.push_within_capacity(value).unwrap_unchecked();
             }
@@ -164,14 +166,8 @@ impl<T: Sized> BiVec<T> {
         T: 'a,
     {
         assert!(range.end <= self.total_len);
-        let (s_o, s_i) = (
-            range.start / self.inner_capacity,
-            range.start % self.inner_capacity,
-        );
-        let (e_o, e_i) = (
-            range.end / self.inner_capacity,
-            range.end % self.inner_capacity,
-        );
+        let (s_o, s_i) = (range.start / I, range.start % I);
+        let (e_o, e_i) = (range.end / I, range.end % I);
 
         let mut result = Vec::with_capacity(e_o + 1 - s_o);
         let mut inner_offset = s_i;
@@ -194,16 +190,14 @@ pub struct SimpleSnapshotter<C: Counters, const ROM_BOUND_SECOND_WORD_BITS: usiz
     pub current_partial_snapshot: PartialSnapshot,
     pub snapshots: Vec<SimpleSnapshot<C>>,
     pub last_zero_address_read_timestamp: TimestampScalar,
-    pub reads_buffer: BiVec<(u32, (u32, u32))>,
-    pub non_determinism_reads_buffer: BiVec<u32>,
+    pub reads_buffer: SpecBiVec<(u32, (u32, u32))>,
+    pub non_determinism_reads_buffer: SpecBiVec<u32>,
     pub initial_snapshot: SimpleSnapshot<C>,
 }
 
 impl<C: Counters, const ROM_BOUND_SECOND_WORD_BITS: usize>
     SimpleSnapshotter<C, ROM_BOUND_SECOND_WORD_BITS>
 {
-    const DEFAULT_INNER_CAPACITY: usize = 1 << 24;
-
     pub fn new_with_cycle_limit(limit: usize, period: usize, initial_state: State<C>) -> Self {
         let initial_snapshot = SimpleSnapshot {
             state: initial_state,
@@ -214,8 +208,6 @@ impl<C: Counters, const ROM_BOUND_SECOND_WORD_BITS: usize>
             memory_reads_end: 0,
         };
 
-        let outer_capacity = limit.div_ceil(Self::DEFAULT_INNER_CAPACITY);
-
         Self {
             current_partial_snapshot: PartialSnapshot {
                 last_zero_address_read_timestamp: 0,
@@ -224,11 +216,8 @@ impl<C: Counters, const ROM_BOUND_SECOND_WORD_BITS: usize>
             },
             snapshots: Vec::with_capacity(limit.div_ceil(period)),
             last_zero_address_read_timestamp: 0,
-            reads_buffer: BiVec::new_with_capacities(Self::DEFAULT_INNER_CAPACITY, outer_capacity),
-            non_determinism_reads_buffer: BiVec::new_with_capacities(
-                Self::DEFAULT_INNER_CAPACITY,
-                outer_capacity,
-            ),
+            reads_buffer: SpecBiVec::new(),
+            non_determinism_reads_buffer: SpecBiVec::new(),
             initial_snapshot,
         }
     }
