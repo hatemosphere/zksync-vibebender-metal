@@ -1183,6 +1183,11 @@ pub fn prove_unrolled_execution_with_replayer<
         worker,
     );
 
+    println!(
+        "Execution ended at PC = 0x{:08x} at timestamp {}",
+        final_pc, final_timestamp
+    );
+
     let should_dump_witness = std::env::var(DUMP_WITNESS_VAR)
         .map(|el| el.parse::<u32>().unwrap_or(0) == 1)
         .unwrap_or(false);
@@ -1225,7 +1230,10 @@ pub fn prove_unrolled_execution_with_replayer<
     );
     assert_eq!(num_trivial, 0);
 
-    println!("In total {} inits and teardown circuits", inits_and_teardowns.len());
+    println!(
+        "In total {} inits and teardown circuits",
+        inits_and_teardowns.len()
+    );
 
     let register_final_state = register_final_state.map(|el| FinalRegisterValue {
         value: el.current_value,
@@ -1749,20 +1757,10 @@ pub fn prove_unrolled_execution_with_replayer<
             //     serialize_to_file(&proof, &format!("riscv_proof_{}", circuit_sequence));
             // }
 
+            assert!(proof.delegation_argument_accumulator.is_none());
+
             permutation_argument_grand_product
                 .mul_assign(&proof.permutation_grand_product_accumulator);
-            if let Some(delegation_argument_accumulator) = proof.delegation_argument_accumulator {
-                assert_eq!(
-                    family_idx,
-                    common_constants::circuit_families::SHIFT_BINARY_CSR_CIRCUIT_FAMILY_IDX
-                );
-                delegation_argument_sum.add_assign(&delegation_argument_accumulator);
-            } else {
-                assert_ne!(
-                    family_idx,
-                    common_constants::circuit_families::SHIFT_BINARY_CSR_CIRCUIT_FAMILY_IDX
-                );
-            }
 
             family_caps.push(proof.memory_tree_caps.clone());
             family_proofs.push(proof);

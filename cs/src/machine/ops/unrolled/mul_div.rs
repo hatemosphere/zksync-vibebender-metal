@@ -74,12 +74,15 @@ fn apply_mul_div<F: PrimeField, CS: Circuit<F>, const SUPPORT_SIGNED: bool>(
                     );
                 let is_rs2_zero_value = rs2_value.is_zero();
                 let quasi_divisor =
-                    <<CS as Circuit<F>>::WitnessPlacer as WitnessTypeSet<F>>::U32::constant(0x7fff_fff); // no overflows/underflows, and it's not 0
-                let rs2_masked_non_zero_value = <<CS as Circuit<F>>::WitnessPlacer as WitnessTypeSet<
-                    F,
-                >>::U32::select(
-                    &is_rs2_zero_value, &quasi_divisor, &rs2_value
-                );
+                    <<CS as Circuit<F>>::WitnessPlacer as WitnessTypeSet<F>>::U32::constant(
+                        0x7fff_fff,
+                    ); // no overflows/underflows, and it's not 0
+                let rs2_masked_non_zero_value =
+                    <<CS as Circuit<F>>::WitnessPlacer as WitnessTypeSet<F>>::U32::select(
+                        &is_rs2_zero_value,
+                        &quasi_divisor,
+                        &rs2_value,
+                    );
                 let rs2_signed_value =
                     <<CS as Circuit<F>>::WitnessPlacer as WitnessTypeSet<F>>::I32::from_unsigned(
                         rs2_value.clone(),
@@ -134,7 +137,12 @@ fn apply_mul_div<F: PrimeField, CS: Circuit<F>, const SUPPORT_SIGNED: bool>(
                 let (quotient_value_masked, remainder_value_masked) = {
                     let is_both_signed_value = is_rs1_signed_value.and(&is_rs2_signed_value);
                     let (both_quotient_value, both_remainder_value) = {
-                        let (quot, rem) = <<CS as Circuit<F>>::WitnessPlacer as WitnessTypeSet<F>>::I32::div_rem_assume_nonzero_divisor_no_overflow(&rs1_signed_value, &rs2_masked_non_zero_signed_value);
+                        let (quot, rem) = <<CS as Circuit<F>>::WitnessPlacer as WitnessTypeSet<
+                            F,
+                        >>::I32::div_rem_assume_nonzero_divisor_no_overflow(
+                            &rs1_signed_value,
+                            &rs2_masked_non_zero_signed_value,
+                        );
 
                         (quot.as_unsigned(), rem.as_unsigned())
                     };
@@ -172,16 +180,18 @@ fn apply_mul_div<F: PrimeField, CS: Circuit<F>, const SUPPORT_SIGNED: bool>(
                         <<CS as Circuit<F>>::WitnessPlacer as WitnessTypeSet<F>>::Mask::constant(c)
                     }
                 };
-                let new1_value = <<CS as Circuit<F>>::WitnessPlacer as WitnessTypeSet<F>>::U32::select(
-                    &is_multiplication_value,
-                    &product_low_value_masked,
-                    &quotient_value_masked,
-                );
-                let new2_value = <<CS as Circuit<F>>::WitnessPlacer as WitnessTypeSet<F>>::U32::select(
-                    &is_multiplication_value,
-                    &product_high_value_masked,
-                    &remainder_value_masked,
-                );
+                let new1_value =
+                    <<CS as Circuit<F>>::WitnessPlacer as WitnessTypeSet<F>>::U32::select(
+                        &is_multiplication_value,
+                        &product_low_value_masked,
+                        &quotient_value_masked,
+                    );
+                let new2_value =
+                    <<CS as Circuit<F>>::WitnessPlacer as WitnessTypeSet<F>>::U32::select(
+                        &is_multiplication_value,
+                        &product_high_value_masked,
+                        &remainder_value_masked,
+                    );
                 placer.assign_u32_from_u16_parts(new1.0.map(|x| x.get_variable()), &new1_value);
                 placer.assign_u32_from_u16_parts(new2.0.map(|x| x.get_variable()), &new2_value);
             };
@@ -195,12 +205,15 @@ fn apply_mul_div<F: PrimeField, CS: Circuit<F>, const SUPPORT_SIGNED: bool>(
                 let rs2_value = placer.get_u32_from_u16_parts(rs2_reg.0.map(|x| x.get_variable()));
                 let is_rs2_zero_value = rs2_value.is_zero();
                 let quasi_divisor =
-                    <<CS as Circuit<F>>::WitnessPlacer as WitnessTypeSet<F>>::U32::constant(0x7fff_fff); // no overflows/underflows, and it's not 0
-                let rs2_masked_non_zero_value = <<CS as Circuit<F>>::WitnessPlacer as WitnessTypeSet<
-                    F,
-                >>::U32::select(
-                    &is_rs2_zero_value, &quasi_divisor, &rs2_value
-                );
+                    <<CS as Circuit<F>>::WitnessPlacer as WitnessTypeSet<F>>::U32::constant(
+                        0x7fff_fff,
+                    ); // no overflows/underflows, and it's not 0
+                let rs2_masked_non_zero_value =
+                    <<CS as Circuit<F>>::WitnessPlacer as WitnessTypeSet<F>>::U32::select(
+                        &is_rs2_zero_value,
+                        &quasi_divisor,
+                        &rs2_value,
+                    );
                 let (product_low_value_masked, product_high_value_masked) = {
                     let (none_product_low_value, none_product_high_value) =
                         rs1_value.split_widening_product(&rs2_value);
@@ -234,23 +247,25 @@ fn apply_mul_div<F: PrimeField, CS: Circuit<F>, const SUPPORT_SIGNED: bool>(
                         <<CS as Circuit<F>>::WitnessPlacer as WitnessTypeSet<F>>::Mask::constant(c)
                     }
                 };
-                let new1_value = <<CS as Circuit<F>>::WitnessPlacer as WitnessTypeSet<F>>::U32::select(
-                    &is_multiplication_value,
-                    &product_low_value_masked,
-                    &quotient_value_masked,
-                );
-                let new2_value = <<CS as Circuit<F>>::WitnessPlacer as WitnessTypeSet<F>>::U32::select(
-                    &is_multiplication_value,
-                    &product_high_value_masked,
-                    &remainder_value_masked,
-                );
+                let new1_value =
+                    <<CS as Circuit<F>>::WitnessPlacer as WitnessTypeSet<F>>::U32::select(
+                        &is_multiplication_value,
+                        &product_low_value_masked,
+                        &quotient_value_masked,
+                    );
+                let new2_value =
+                    <<CS as Circuit<F>>::WitnessPlacer as WitnessTypeSet<F>>::U32::select(
+                        &is_multiplication_value,
+                        &product_high_value_masked,
+                        &remainder_value_masked,
+                    );
                 placer.assign_u32_from_u16_parts(new1.0.map(|x| x.get_variable()), &new1_value);
                 placer.assign_u32_from_u16_parts(new2.0.map(|x| x.get_variable()), &new2_value);
             };
             cs.set_values(value_fn);
 
             [[new1, new2]; 2]
-        }        
+        }
     };
     let quotient_sign = if SUPPORT_SIGNED {
         // THIS WAS INDEPENDENTLY PROVEN CORRECT
