@@ -174,7 +174,7 @@ pub fn compute_setup_for_machine_configuration<C: MachineConfig>(
 }
 
 #[cfg(any(feature = "verifier_80", feature = "verifier_100"))]
-pub fn verify_unrolled_for_machine_configuration<C: MachineConfig>(
+pub fn verify_unrolled_base_layer_for_machine_configuration<C: MachineConfig>(
     proof: &UnrolledProgramProof,
     setup: &UnrolledProgramSetup,
 ) -> Result<[u32; 16], ()> {
@@ -229,13 +229,77 @@ pub fn verify_unrolled_for_machine_configuration<C: MachineConfig>(
     result.map_err(|_| ())
 }
 
+#[cfg(any(feature = "verifier_80", feature = "verifier_100"))]
+pub fn verify_unrolled_recursion_layer_for_machine_configuration<C: MachineConfig>(
+    proof: &UnrolledProgramProof,
+    setup: &UnrolledProgramSetup,
+) -> Result<[u32; 16], ()> {
+    for (k, v) in proof.circuit_families_proofs.iter() {
+        println!("{} proofs for family {}", v.len(), k);
+    }
+
+    let responses = proof.flatten_into_responses(C::ALLOWED_DELEGATION_CSRS);
+
+    let params = if setups::is_default_machine_configuration::<C>() {
+        panic!(
+            "Trying to use configuration {:?} at recursion layer",
+            std::any::type_name::<C>()
+        );
+    } else if setups::is_machine_without_signed_mul_div_configuration::<C>() {
+        panic!(
+            "Trying to use configuration {:?} at recursion layer",
+            std::any::type_name::<C>()
+        );
+    } else if setups::is_reduced_machine_configuration::<C>() {
+        full_statement_verifier::unrolled_proof_statement::RECURSION_WORD_ONLY_UNSIGNED_MACHINE_UNROLLED_CIRCUITS_VERIFICATION_PARAMETERS
+    } else {
+        panic!("Unknown configuration {:?}", std::any::type_name::<C>());
+    };
+
+    println!("Running the verifier");
+
+    let families_setups: Vec<_> = setup
+        .circuit_families_setups
+        .iter()
+        .map(|el| *el.1)
+        .collect();
+    let inits_and_teardowns_setup = setup.inits_and_teardowns_setup;
+
+    let result = std::thread::Builder::new()
+            .name("verifier thread".to_string())
+            .stack_size(1 << 27)
+            .spawn(move || {
+
+        let families_setups_refs: Vec<_> = families_setups.iter().map(|el| el).collect();
+        let it = responses.into_iter();
+        prover::nd_source_std::set_iterator(it);
+
+        #[allow(invalid_value)]
+        let regs = unsafe {
+            full_statement_verifier::unrolled_proof_statement::verify_full_statement_for_unrolled_circuits::<false, { setups::inits_and_teardowns::NUM_INIT_AND_TEARDOWN_SETS }>(
+                &families_setups_refs,
+                params,
+                (&inits_and_teardowns_setup, full_statement_verifier::unrolled_proof_statement::INITS_AND_TEARDOWNS_VERIFIER_PTR),
+                full_statement_verifier::BASE_LAYER_DELEGATION_CIRCUITS_VERIFICATION_PARAMETERS,
+            )
+        };
+
+        regs
+    })
+    .expect("must spawn verifier thread").join();
+
+    result.map_err(|_| ())
+}
+
+use common_constants::rom::ROM_SECOND_WORD_BITS;
+
 #[cfg(feature = "prover")]
 pub fn prove_unrolled_for_machine_configuration_into_program_proof<C: MachineConfig>(
     binary_image: &[u32],
     text_section: &[u32],
     cycles_bound: usize,
     non_determinism: impl riscv_transpiler::vm::NonDeterminismCSRSource<
-        riscv_transpiler::vm::RamWithRomRegion<{ common_constants::rom::ROM_SECOND_WORD_BITS }>,
+        riscv_transpiler::vm::RamWithRomRegion<ROM_SECOND_WORD_BITS>,
     >,
     ram_bound: usize,
     worker: &prover::worker::Worker,
@@ -285,7 +349,7 @@ pub fn prove_unrolled_with_replayer_for_machine_configuration<C: MachineConfig>(
     text_section: &[u32],
     cycles_bound: usize,
     non_determinism: impl riscv_transpiler::vm::NonDeterminismCSRSource<
-        riscv_transpiler::vm::RamWithRomRegion<{ common_constants::rom::ROM_SECOND_WORD_BITS }>,
+        riscv_transpiler::vm::RamWithRomRegion<ROM_SECOND_WORD_BITS>,
     >,
     ram_bound: usize,
     worker: &prover::worker::Worker,
@@ -321,7 +385,11 @@ pub fn prove_unrolled_with_replayer_for_machine_configuration<C: MachineConfig>(
         delegation_proofs,
         register_final_state,
         (final_pc, final_timestamp),
-    ) = prover_examples::unrolled::prove_unrolled_execution_with_replayer::<C, Global, { common_constants::rom::ROM_SECOND_WORD_BITS }>(
+    ) = prover_examples::unrolled::prove_unrolled_execution_with_replayer::<
+        C,
+        Global,
+        ROM_SECOND_WORD_BITS,
+    >(
         cycles_bound,
         &binary_image,
         &text_section,
