@@ -14,6 +14,7 @@ pub fn shift_binop_csrrw_tables() -> Vec<TableType> {
         TableType::SrlWith16BitInputLow,
         TableType::SrlWith16BitInputHigh,
         TableType::Sra16BitInputSignFill,
+        TableType::U16GetSignAndHighByte,
         TableType::Xor,
         TableType::And,
         TableType::Or,
