@@ -1225,6 +1225,8 @@ pub fn prove_unrolled_execution_with_replayer<
     );
     assert_eq!(num_trivial, 0);
 
+    println!("In total {} inits and teardown circuits", inits_and_teardowns.len());
+
     let register_final_state = register_final_state.map(|el| FinalRegisterValue {
         value: el.current_value,
         last_access_timestamp: el.last_access_timestamp,
