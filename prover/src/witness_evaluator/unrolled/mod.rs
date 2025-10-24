@@ -813,6 +813,11 @@ fn replay_non_mem<
     let num_circuits = num_calls.div_ceil(cycles_per_circuit);
 
     println!(
+        "In total {} calls to circuits for family {}",
+        num_calls, FAMILY_IDX
+    );
+
+    println!(
         "In total {} of circuits for family {}",
         num_circuits, FAMILY_IDX
     );
@@ -1035,6 +1040,11 @@ fn replay_mem<const FAMILY_IDX: u8, A: GoodAllocator, const ROM_BOUND_SECOND_WOR
     }
 
     let num_circuits = num_calls.div_ceil(cycles_per_circuit);
+
+    println!(
+        "In total {} calls to circuits for family {}",
+        num_calls, FAMILY_IDX
+    );
 
     println!(
         "In total {} of circuits for family {}",
