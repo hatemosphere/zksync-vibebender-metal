@@ -1434,12 +1434,12 @@ pub fn prove_unrolled_execution_with_replayer<
             delegation_memory_trees.push((delegation_type as u32, per_tree_set));
         }
     }
-    // #[cfg(feature = "timing_logs")]
-    // println!(
-    //     "=== Commitment for {} delegation circuits memory trees took {:?}",
-    //     delegation_circuits_witness.len(),
-    //     now.elapsed()
-    // );
+    #[cfg(feature = "timing_logs")]
+    println!(
+        "=== Commitment for {} delegation circuits memory trees took {:?}",
+        delegation_memory_trees.iter().map(|el| el.1.len()).sum(),
+        now.elapsed()
+    );
 
     #[cfg(feature = "debug_logs")]
     println!("Will create FS transformation challenge for memory and delegation arguments");

@@ -460,45 +460,6 @@ pub fn run_unrolled_machine<
     assert!(rom_image.len() * 4 <= ram_bound_bytes);
     let mut ram = RamWithRomRegion::from_rom_content(rom_image, ram_bound_bytes);
 
-    // use crate::cs::machine::ops::unrolled::process_binary_into_separate_tables_ext;
-    // let preprocessed_data = if core::any::TypeId::of::<C>() == core::any::TypeId::of::<FullIsaMachineWithDelegationNoExceptionHandling>() {
-    //     process_binary_into_separate_tables_ext::<Mersenne31Field, true, Global>(
-    //         &text_section_u32,
-    //         &opcodes_for_full_machine_with_mem_word_access_specialization(),
-    //         1 << (16 + ROM_BOUND_SECOND_WORD_BITS - 2),
-    //         &[
-    //             NON_DETERMINISM_CSR as u16,
-    //             BLAKE2S_DELEGATION_CSR_REGISTER as u16,
-    //             BIGINT_OPS_WITH_CONTROL_CSR_REGISTER as u16,
-    //             KECCAK_SPECIAL5_CSR_REGISTER as u16,
-    //         ],
-    //     )
-    // } else if core::any::TypeId::of::<C>() == core::any::TypeId::of::<FullIsaMachineWithDelegationNoExceptionHandlingNoSignedMulDiv>() {
-    //     process_binary_into_separate_tables_ext::<Mersenne31Field, true, Global>(
-    //         &text_section_u32,
-    //         &opcodes_for_full_machine_with_unsigned_mul_div_only_with_mem_word_access_specialization(),
-    //         1 << (16 + ROM_BOUND_SECOND_WORD_BITS - 2),
-    //         &[
-    //             NON_DETERMINISM_CSR as u16,
-    //             BLAKE2S_DELEGATION_CSR_REGISTER as u16,
-    //             BIGINT_OPS_WITH_CONTROL_CSR_REGISTER as u16,
-    //             KECCAK_SPECIAL5_CSR_REGISTER as u16,
-    //         ],
-    //     )
-    // } else if core::any::TypeId::of::<C>() == core::any::TypeId::of::<MinimalMachineNoExceptionHandlingWithDelegation>() {
-    //         process_binary_into_separate_tables_ext::<Mersenne31Field, true, Global>(
-    //         &text_section_u32,
-    //         &opcodes_for_reduced_machine(),
-    //         1 << (16 + ROM_BOUND_SECOND_WORD_BITS - 2),
-    //         &[
-    //             NON_DETERMINISM_CSR as u16,
-    //             BLAKE2S_DELEGATION_CSR_REGISTER as u16,
-    //         ],
-    //     )
-    // } else {
-    //     panic!("Unknown machine config {}", core::any::type_name::<C>());
-    // };
-
     let preprocessed_bytecode: Vec<_> = text_section
         .iter()
         .map(|el| {
