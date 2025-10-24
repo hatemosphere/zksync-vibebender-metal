@@ -40,9 +40,9 @@ pub(super) struct ConstantsTimesChallenges {
 // These values are hand-picked, so that the biggest circuit (bigint) fits.
 // What is here must match values from stage_3.cu
 const MAX_NON_BOOLEAN_CONSTRAINTS: usize = 192;
-const MAX_TERMS: usize = 1824;
-const MAX_EXPLICIT_COEFFS: usize = 632;
-const MAX_FLAT_COL_IDXS: usize = 3488;
+const MAX_TERMS: usize = 2224; // 1824 was original
+const MAX_EXPLICIT_COEFFS: usize = 1000; // 800 was too low, orignal was 632.
+const MAX_FLAT_COL_IDXS: usize = 4488; // 3488 was origina.
 const MAX_QUADRATIC_TERMS_PER_CONSTRAINT: usize = 256;
 const MAX_LINEAR_TERMS_PER_CONSTRAINT: usize = 256;
 const COEFF_IS_ONE: u8 = 0x00;
@@ -1273,7 +1273,6 @@ impl StaticMetadata {
             .intermediate_polys_for_memory_argument
             .start();
         let memory_args_start = translate_e4_offset(raw_memory_args_start);
-
 
         let shuffle_ram_accesses = if process_shuffle_ram_init {
             let shuffle_ram_access_sets = &circuit.memory_layout.shuffle_ram_access_sets;

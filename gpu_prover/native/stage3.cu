@@ -18,9 +18,9 @@ using e4 = ext4_field;
 /// These values are hand-picked, so that the biggest circuit (bigint) fits.
 /// What is here must match values from stage_3_kernels.rs
 constexpr unsigned MAX_NON_BOOLEAN_CONSTRAINTS = 192;
-constexpr unsigned MAX_TERMS = 1824;
-constexpr unsigned MAX_EXPLICIT_COEFFS = 632;
-constexpr unsigned MAX_FLAT_COL_IDXS = 3488;
+constexpr unsigned MAX_TERMS = 2224;
+constexpr unsigned MAX_EXPLICIT_COEFFS = 1000;
+constexpr unsigned MAX_FLAT_COL_IDXS = 4488;
 constexpr uint8_t COEFF_IS_ONE = 0x00;
 constexpr uint8_t COEFF_IS_MINUS_ONE = 0x01;
 // constexpr uint8_t COEFF_IS_EXPLICIT = 0x02; // technically unused, "default" case
