@@ -930,6 +930,10 @@ impl WitnessComputationalI32 for i32 {
     }
     #[inline(always)]
     fn div_rem_assume_nonzero_divisor_no_overflow(divident: &Self, divisor: &Self) -> (Self, Self) {
+        if divident.checked_div(*divisor).is_none() {
+            panic!("Dividing {} by {} with overflow", divident, divisor);
+        }
+
         let q = divident / divisor;
         let r = divident % divisor;
 

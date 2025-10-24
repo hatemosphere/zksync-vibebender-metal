@@ -1012,7 +1012,10 @@ fn replay_non_mem<
         });
     }
 
-    assert_eq!(result.iter().map(|el| el.data.len()).sum::<usize>(), num_calls);
+    assert_eq!(
+        result.iter().map(|el| el.data.len()).sum::<usize>(),
+        num_calls
+    );
 
     result
 }
@@ -1243,7 +1246,10 @@ fn replay_mem<const FAMILY_IDX: u8, A: GoodAllocator, const ROM_BOUND_SECOND_WOR
         });
     }
 
-    assert_eq!(result.iter().map(|el| el.data.len()).sum::<usize>(), num_calls);
+    assert_eq!(
+        result.iter().map(|el| el.data.len()).sum::<usize>(),
+        num_calls
+    );
 
     result
 }
