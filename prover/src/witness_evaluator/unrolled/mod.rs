@@ -969,6 +969,7 @@ fn replay_non_mem<
             for dst in chunks.iter() {
                 println!("Chunk size {}", dst.len());
             }
+            let expected_final_snapshot_state = current_snapshot.state;
 
             // spawn replayer
             scope.spawn(move |_| {
@@ -998,6 +999,8 @@ fn replay_non_mem<
                     &mut nd,
                     &mut tracer,
                 );
+
+                assert_eq!(expected_final_snapshot_state, state);
             });
 
             starting_snapshot = current_snapshot;
