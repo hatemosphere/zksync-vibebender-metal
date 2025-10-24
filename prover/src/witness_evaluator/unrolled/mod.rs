@@ -902,12 +902,14 @@ fn replay_non_mem<
                 // Lazy to go via splits
                 for src_chunk in start_chunk_idx..=end_chunk_idx {
                     if src_chunk == end_chunk_idx {
-                        if end_chunk_offset > 0 {
-                            let range = 0..end_chunk_offset;
+                        if end_chunk_offset > offset {
+                            let range = offset..end_chunk_offset;
+                            offset = end_chunk_offset;
                             let chunk = (&mut witness_buffers[src_chunk][range]
                                 as *mut [MaybeUninit<NonMemoryOpcodeTracingDataWithTimestamp>])
                                 .as_mut_unchecked();
                             chunks.push(chunk);
+
                         }
                     } else {
                         let range = offset..;
@@ -1130,8 +1132,9 @@ fn replay_mem<const FAMILY_IDX: u8, A: GoodAllocator, const ROM_BOUND_SECOND_WOR
                 // Lazy to go via splits
                 for src_chunk in start_chunk_idx..=end_chunk_idx {
                     if src_chunk == end_chunk_idx {
-                        if end_chunk_offset > 0 {
-                            let range = 0..end_chunk_offset;
+                        if end_chunk_offset > offset {
+                            let range = offset..end_chunk_offset;
+                            offset = end_chunk_offset;
                             let chunk = (&mut witness_buffers[src_chunk][range]
                                 as *mut [MaybeUninit<MemoryOpcodeTracingDataWithTimestamp>])
                                 .as_mut_unchecked();
@@ -1344,8 +1347,9 @@ fn replay_generic_work<
                 // Lazy to go via splits
                 for src_chunk in start_chunk_idx..=end_chunk_idx {
                     if src_chunk == end_chunk_idx {
-                        if end_chunk_offset > 0 {
-                            let range = 0..end_chunk_offset;
+                        if end_chunk_offset > offset {
+                            let range = offset..end_chunk_offset;
+                            offset = end_chunk_offset;
                             let chunk = (&mut witness_buffers[src_chunk][range]
                                 as *mut [MaybeUninit<D::Element>])
                                 .as_mut_unchecked();
