@@ -645,15 +645,11 @@ pub fn prove_unrolled_execution<
             if should_dump_witness {
                 println!(
                     "Will serialize witness for family {} circuit {}",
-                    family_idx,
-                    idx
+                    family_idx, idx
                 );
                 bincode_serialize_to_file(
                     &chunk.realloc_to_global(),
-                    &format!(
-                        "family_{}_circuit_{}_oracle_witness.bin",
-                        family_idx, idx
-                    ),
+                    &format!("family_{}_circuit_{}_oracle_witness.bin", family_idx, idx),
                 );
                 println!("Serialization is done");
             }
@@ -769,15 +765,11 @@ pub fn prove_unrolled_execution<
             if should_dump_witness {
                 println!(
                     "Will serialize witness for family {} circuit {}",
-                    family_idx,
-                    idx
+                    family_idx, idx
                 );
                 bincode_serialize_to_file(
                     &chunk.realloc_to_global(),
-                    &format!(
-                        "family_{}_circuit_{}_oracle_witness.bin",
-                        family_idx, idx
-                    ),
+                    &format!("family_{}_circuit_{}_oracle_witness.bin", family_idx, idx),
                 );
                 println!("Serialization is done");
             }
@@ -1560,15 +1552,11 @@ pub fn prove_unrolled_execution_with_replayer<
             if should_dump_witness {
                 println!(
                     "Will serialize witness for family {} circuit {}",
-                    family_idx,
-                    idx
+                    family_idx, idx
                 );
                 bincode_serialize_to_file(
                     &chunk.realloc_to_global(),
-                    &format!(
-                        "family_{}_circuit_{}_oracle_witness.bin",
-                        family_idx, idx
-                    ),
+                    &format!("family_{}_circuit_{}_oracle_witness.bin", family_idx, idx),
                 );
                 println!("Serialization is done");
             }
@@ -1686,15 +1674,11 @@ pub fn prove_unrolled_execution_with_replayer<
             if should_dump_witness {
                 println!(
                     "Will serialize witness for family {} circuit {}",
-                    family_idx,
-                    idx
+                    family_idx, idx
                 );
                 bincode_serialize_to_file(
                     &chunk.realloc_to_global(),
-                    &format!(
-                        "family_{}_circuit_{}_oracle_witness.bin",
-                        family_idx, idx
-                    ),
+                    &format!("family_{}_circuit_{}_oracle_witness.bin", family_idx, idx),
                 );
                 println!("Serialization is done");
             }

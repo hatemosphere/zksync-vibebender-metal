@@ -20,9 +20,15 @@ pub(crate) const DELEGATION_ACCESS_IDX: TimestampScalar = 3;
 pub(crate) const RAM_READ_ACCESS_IDX: TimestampScalar = RS2_ACCESS_IDX;
 pub(crate) const RAM_WRITE_ACCESS_IDX: TimestampScalar = RD_ACCESS_IDX;
 
-#[derive(Clone)]
+#[derive(Clone, serde::Serialize, serde::Deserialize)]
 pub struct NonMemTracingFamilyChunk<A: GoodAllocator = Global> {
     pub num_cycles: usize,
+    #[serde(bound(
+        deserialize = "Vec<NonMemoryOpcodeTracingDataWithTimestamp, A>: serde::Deserialize<'de>"
+    ))]
+    #[serde(bound(
+        serialize = "Vec<NonMemoryOpcodeTracingDataWithTimestamp, A>: serde::Serialize"
+    ))]
     pub data: Vec<NonMemoryOpcodeTracingDataWithTimestamp, A>,
 }
 
@@ -45,9 +51,13 @@ impl<A: GoodAllocator> NonMemTracingFamilyChunk<A> {
     }
 }
 
-#[derive(Clone)]
+#[derive(Clone, serde::Serialize, serde::Deserialize)]
 pub struct MemTracingFamilyChunk<A: GoodAllocator = Global> {
     pub num_cycles: usize,
+    #[serde(bound(
+        deserialize = "Vec<MemoryOpcodeTracingDataWithTimestamp, A>: serde::Deserialize<'de>"
+    ))]
+    #[serde(bound(serialize = "Vec<MemoryOpcodeTracingDataWithTimestamp, A>: serde::Serialize"))]
     pub data: Vec<MemoryOpcodeTracingDataWithTimestamp, A>,
 }
 
