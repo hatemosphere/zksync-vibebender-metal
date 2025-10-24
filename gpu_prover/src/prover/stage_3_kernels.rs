@@ -1273,6 +1273,25 @@ impl StaticMetadata {
             .intermediate_polys_for_memory_argument
             .start();
         let memory_args_start = translate_e4_offset(raw_memory_args_start);
+
+
+        let shuffle_ram_accesses = if process_shuffle_ram_init {
+            let shuffle_ram_access_sets = &circuit.memory_layout.shuffle_ram_access_sets;
+            let write_timestamp_in_setup_start =
+                circuit.setup_layout.timestamp_setup_columns.start();
+            ShuffleRamAccesses::new(shuffle_ram_access_sets, write_timestamp_in_setup_start)
+        } else {
+            ShuffleRamAccesses::default()
+        };
+        for i in 0..shuffle_ram_accesses.num_accesses as usize {
+            let access = &shuffle_ram_accesses.accesses[i];
+            num_helpers_expected += 1;
+            if !access.is_register_only {
+                num_helpers_expected += 1;
+            }
+            num_helpers_expected += 6;
+        }
+
         assert_eq!(
             circuit
                 .stage_2_layout
@@ -1291,22 +1310,6 @@ impl StaticMetadata {
             num_helpers_expected += 7;
         }
 
-        let shuffle_ram_accesses = if process_shuffle_ram_init {
-            let shuffle_ram_access_sets = &circuit.memory_layout.shuffle_ram_access_sets;
-            let write_timestamp_in_setup_start =
-                circuit.setup_layout.timestamp_setup_columns.start();
-            ShuffleRamAccesses::new(shuffle_ram_access_sets, write_timestamp_in_setup_start)
-        } else {
-            ShuffleRamAccesses::default()
-        };
-        for i in 0..shuffle_ram_accesses.num_accesses as usize {
-            let access = &shuffle_ram_accesses.accesses[i];
-            num_helpers_expected += 1;
-            if !access.is_register_only {
-                num_helpers_expected += 1;
-            }
-            num_helpers_expected += 6;
-        }
         for i in 0..register_and_indirect_accesses.num_register_accesses as usize {
             num_helpers_expected += 5;
             for _j in 0..register_and_indirect_accesses.indirect_accesses_per_register_access[i] {
@@ -1780,33 +1783,6 @@ pub(super) fn prepare_async_challenge_data(
             helpers.push(*alpha.clone().mul_assign(&challenge));
         }
     }
-    // for lazy init padding constraints (limbs are zero if "final borrow" is zero)
-    for _ in 0..lazy_init_teardown_layouts.num_init_teardown_sets {
-        alpha_offset += 6;
-    }
-    // for lazy init memory accumulator contributions
-    for i in 0..lazy_init_teardown_layouts.num_init_teardown_sets as usize {
-        let alpha = h_alphas_for_hardcoded_every_row_except_last[alpha_offset];
-        alpha_offset += 1;
-        let alpha_times_gamma = *alpha.clone().mul_assign(&memory_challenges.gamma);
-        if i == 0 {
-            constants_times_challenges
-                .every_row_except_last
-                .sub_assign(&alpha_times_gamma);
-        }
-        let mc = &memory_challenges;
-        helpers.push(*alpha.clone().mul_assign(&mc.address_low_challenge));
-        helpers.push(*alpha.clone().mul_assign(&mc.address_high_challenge));
-        helpers.push(*alpha.clone().mul_assign(&mc.value_low_challenge));
-        helpers.push(*alpha.clone().mul_assign(&mc.value_high_challenge));
-        helpers.push(*alpha.clone().mul_assign(&mc.timestamp_low_challenge));
-        helpers.push(*alpha.clone().mul_assign(&mc.timestamp_high_challenge));
-        helpers.push(
-            *alpha_times_gamma
-                .clone()
-                .mul_assign_by_base(&decompression_factor_inv),
-        );
-    }
 
     for i in 0..shuffle_ram_accesses.num_accesses as usize {
         let access = &shuffle_ram_accesses.accesses[i];
@@ -1848,6 +1824,35 @@ pub(super) fn prepare_async_challenge_data(
                 .mul_assign_by_base(&decompression_factor_inv),
         );
     }
+
+    // for lazy init padding constraints (limbs are zero if "final borrow" is zero)
+    for _ in 0..lazy_init_teardown_layouts.num_init_teardown_sets {
+        alpha_offset += 6;
+    }
+    // for lazy init memory accumulator contributions
+    for i in 0..lazy_init_teardown_layouts.num_init_teardown_sets as usize {
+        let alpha = h_alphas_for_hardcoded_every_row_except_last[alpha_offset];
+        alpha_offset += 1;
+        let alpha_times_gamma = *alpha.clone().mul_assign(&memory_challenges.gamma);
+        if i == 0 {
+            constants_times_challenges
+                .every_row_except_last
+                .sub_assign(&alpha_times_gamma);
+        }
+        let mc = &memory_challenges;
+        helpers.push(*alpha.clone().mul_assign(&mc.address_low_challenge));
+        helpers.push(*alpha.clone().mul_assign(&mc.address_high_challenge));
+        helpers.push(*alpha.clone().mul_assign(&mc.value_low_challenge));
+        helpers.push(*alpha.clone().mul_assign(&mc.value_high_challenge));
+        helpers.push(*alpha.clone().mul_assign(&mc.timestamp_low_challenge));
+        helpers.push(*alpha.clone().mul_assign(&mc.timestamp_high_challenge));
+        helpers.push(
+            *alpha_times_gamma
+                .clone()
+                .mul_assign_by_base(&decompression_factor_inv),
+        );
+    }
+
     let mut flat_indirect_idx = 0;
     for i in 0..register_and_indirect_accesses.num_register_accesses as usize {
         let register_access = &register_and_indirect_accesses.register_accesses[i];
