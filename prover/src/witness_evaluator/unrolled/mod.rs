@@ -968,13 +968,6 @@ fn replay_non_mem<
             let tape_ref = tape;
             let snapshotter_ref = &snapshotter;
 
-            println!("Thread {} will need RAM logs in range {:?} and non-determinisms in range {:?}", _i, &ram_range, &nd_range);
-            println!("Thread {} starts with snapshot {:?}", _i, &starting_snapshot);
-            println!("Thread {} ends with snapshot {:?}", _i, &current_snapshot);
-            println!("Thread {}: total of {} chunks", _i, chunks.len());
-            for dst in chunks.iter() {
-                println!("Chunk size {}", dst.len());
-            }
             let expected_final_snapshot_state = current_snapshot.state;
 
             // spawn replayer
@@ -1110,6 +1103,8 @@ fn replay_mem<const FAMILY_IDX: u8, A: GoodAllocator, const ROM_BOUND_SECOND_WOR
         let last_snapshot = *snapshotter.snapshots.last().expect("at least one snapshot");
         let mut current_snapshot = starting_snapshot;
         let mut snapshots_iter = snapshotter.snapshots.iter();
+        let mut ram_range_start = 0;
+        let mut nd_range_start = 0;
 
         // split snapshots over workers
         for _i in 0..worker.get_num_cores() {
@@ -1182,10 +1177,12 @@ fn replay_mem<const FAMILY_IDX: u8, A: GoodAllocator, const ROM_BOUND_SECOND_WOR
                 }
             }
 
+            let ram_range_end = current_snapshot.memory_reads_end;
+            let nd_range_end = current_snapshot.non_determinism_reads_end;
+
             let ram_range =
-                starting_snapshot.memory_reads_start..current_snapshot.memory_reads_end;
-            let nd_range = starting_snapshot.non_determinism_reads_start
-                ..current_snapshot.non_determinism_reads_end;
+                ram_range_start..ram_range_end;
+            let nd_range = nd_range_start..nd_range_end;
 
             use riscv_transpiler::replayer::*;
             use riscv_transpiler::witness::*;
@@ -1193,6 +1190,8 @@ fn replay_mem<const FAMILY_IDX: u8, A: GoodAllocator, const ROM_BOUND_SECOND_WOR
 
             let tape_ref = tape;
             let snapshotter_ref = &snapshotter;
+
+            let expected_final_snapshot_state = current_snapshot.state;
 
             // spawn replayer
             scope.spawn(move |_| {
@@ -1222,10 +1221,18 @@ fn replay_mem<const FAMILY_IDX: u8, A: GoodAllocator, const ROM_BOUND_SECOND_WOR
                     &mut nd,
                     &mut tracer,
                 );
+
+                assert_eq!(expected_final_snapshot_state.registers, state.registers);
+                assert_eq!(expected_final_snapshot_state.pc, state.pc);
             });
 
+            ram_range_start = ram_range_end;
+            nd_range_start = nd_range_end;
             starting_snapshot = current_snapshot;
         }
+
+        assert_eq!(ram_range_start, snapshotter.reads_buffer.len());
+        assert_eq!(nd_range_start, snapshotter.non_determinism_reads_buffer.len());
     });
     let elapsed = now.elapsed();
 
