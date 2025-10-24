@@ -874,11 +874,14 @@ fn replay_non_mem<
         .collect();
 
     let now = std::time::Instant::now();
+
     worker.scope(total_snapshots, |scope, _| {
         let mut starting_snapshot = snapshotter.initial_snapshot;
         let last_snapshot = *snapshotter.snapshots.last().expect("at least one snapshot");
         let mut current_snapshot = starting_snapshot;
         let mut snapshots_iter = snapshotter.snapshots.iter();
+        let mut ram_range_start = 0;
+        let mut nd_range_start = 0;
 
         // split snapshots over workers
         for _i in 0..worker.get_num_cores() {
@@ -951,10 +954,12 @@ fn replay_non_mem<
                 }
             }
 
+            let ram_range_end = current_snapshot.memory_reads_end;
+            let nd_range_end = current_snapshot.non_determinism_reads_end;
+
             let ram_range =
-                starting_snapshot.memory_reads_start..current_snapshot.memory_reads_end;
-            let nd_range = starting_snapshot.non_determinism_reads_start
-                ..current_snapshot.non_determinism_reads_end;
+                ram_range_start..ram_range_end;
+            let nd_range = nd_range_start..nd_range_end;
 
             use riscv_transpiler::replayer::*;
             use riscv_transpiler::witness::*;
@@ -1004,6 +1009,8 @@ fn replay_non_mem<
                 assert_eq!(expected_final_snapshot_state, state);
             });
 
+            ram_range_start = ram_range_end;
+            nd_range_start = nd_range_end;
             starting_snapshot = current_snapshot;
         }
     });
