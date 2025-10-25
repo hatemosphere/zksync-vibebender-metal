@@ -307,10 +307,16 @@ fn apply_shift_binop_csrrw<F: PrimeField, CS: Circuit<F>>(
         );
 
         if let Some(low_from_low) = cs.get_value(low_from_low) {
-            println!("SRL result low from low = 0x{:x}", low_from_low.as_u64_reduced());
+            println!(
+                "SRL result low from low = 0x{:x}",
+                low_from_low.as_u64_reduced()
+            );
         }
         if let Some(high_from_low) = cs.get_value(high_from_low) {
-            println!("SRL result high from low = 0x{:x}", high_from_low.as_u64_reduced());
+            println!(
+                "SRL result high from low = 0x{:x}",
+                high_from_low.as_u64_reduced()
+            );
         }
 
         cs.peek_lookup_value_unconstrained_ext::<1, 2>(
@@ -330,10 +336,16 @@ fn apply_shift_binop_csrrw<F: PrimeField, CS: Circuit<F>>(
         );
 
         if let Some(low_from_high) = cs.get_value(low_from_high) {
-            println!("SRL result low from high = 0x{:x}", low_from_high.as_u64_reduced());
+            println!(
+                "SRL result low from high = 0x{:x}",
+                low_from_high.as_u64_reduced()
+            );
         }
         if let Some(high_from_high) = cs.get_value(high_from_high) {
-            println!("SRL result high from high = 0x{:x}", high_from_high.as_u64_reduced());
+            println!(
+                "SRL result high from high = 0x{:x}",
+                high_from_high.as_u64_reduced()
+            );
         }
 
         (
@@ -507,7 +519,7 @@ fn apply_shift_binop_csrrw<F: PrimeField, CS: Circuit<F>>(
         // cs.set_values(value_fn);
 
         let delegation_type = cs.add_variable(); // we also do not need to perform range checks
-        
+
         // cs.require_invariant(delegation_type, Invariant::Substituted((Placeholder::DelegationType, 0)));
         // let value_fn = move |placer: &mut CS::WitnessPlacer| {
         //     let value =

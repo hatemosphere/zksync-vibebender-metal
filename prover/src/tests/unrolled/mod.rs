@@ -1197,10 +1197,10 @@ pub fn run_basic_unrolled_test_impl(
 
 #[test]
 fn test_single_non_mem_circuit() {
-    use cs::machine::ops::unrolled::shift_binary_csr::*;
-    use std::path::Path;
     use crate::cs::cs::cs_reference::BasicAssembly;
     use cs::cs::circuit::Circuit;
+    use cs::machine::ops::unrolled::shift_binary_csr::*;
+    use std::path::Path;
 
     let family_idx = 3;
 

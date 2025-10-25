@@ -1401,7 +1401,22 @@ pub fn prove_unrolled_execution_with_replayer<
                 .unwrap();
             let prec = &delegation_circuits_precomputations[idx].1;
             let mut per_tree_set = vec![];
-            for el in delegation_circuits.iter() {
+            for (idx, el) in delegation_circuits.iter().enumerate() {
+                if should_dump_witness {
+                    println!(
+                        "Will serialize witness for delegation {} circuit {}",
+                        delegation_type, idx
+                    );
+                    bincode_serialize_to_file(
+                        &el[..].to_vec(), // realloc to global
+                        &format!(
+                            "delegation_{}_circuit_{}_oracle_witness.bin",
+                            family_idx, idx
+                        ),
+                    );
+                    println!("Serialization is done");
+                }
+
                 let caps = commit_memory_tree_for_delegation_circuit_with_replayer_format::<
                     A,
                     DelegationDescription,
@@ -1560,17 +1575,15 @@ pub fn prove_unrolled_execution_with_replayer<
 
         for (idx, chunk) in witness_chunks.into_iter().enumerate() {
             if should_dump_witness {
-                if family_idx == 3 {
-                    println!(
-                        "Will serialize witness for family {} circuit {}",
-                        family_idx, idx
-                    );
-                    bincode_serialize_to_file(
-                        &chunk.realloc_to_global(),
-                        &format!("family_{}_circuit_{}_oracle_witness.bin", family_idx, idx),
-                    );
-                    println!("Serialization is done");
-                }
+                println!(
+                    "Will serialize witness for family {} circuit {}",
+                    family_idx, idx
+                );
+                bincode_serialize_to_file(
+                    &chunk.realloc_to_global(),
+                    &format!("family_{}_circuit_{}_oracle_witness.bin", family_idx, idx),
+                );
+                println!("Serialization is done");
             }
 
             let oracle = NonMemoryCircuitOracle {
