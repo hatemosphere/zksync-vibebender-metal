@@ -1411,7 +1411,7 @@ pub fn prove_unrolled_execution_with_replayer<
                         &el[..].to_vec(), // realloc to global
                         &format!(
                             "delegation_{}_circuit_{}_oracle_witness.bin",
-                            family_idx, idx
+                            delegation_type, idx
                         ),
                     );
                     println!("Serialization is done");
