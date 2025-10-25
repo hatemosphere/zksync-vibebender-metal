@@ -773,16 +773,16 @@ pub(crate) fn process_delegation_requests(
                     timestamp_high,
                 );
             } else {
-                println!(
-                    "Delegation request with inputs: delegation type = {:?}, abi offset = {:?}, timestamp {:?}|{:?}",
-                    memory_trace_row.get_unchecked(
-                        delegation_request_layout.delegation_type.start(),
-                    ),
-                    mem_abi_offset,
-                    timestamp_low,
-                    timestamp_high,
-                );
-                println!("Contribution = {:?}", denom);
+                // println!(
+                //     "Delegation request with inputs: delegation type = {:?}, abi offset = {:?}, timestamp {:?}|{:?}",
+                //     memory_trace_row.get_unchecked(
+                //         delegation_request_layout.delegation_type.start(),
+                //     ),
+                //     mem_abi_offset,
+                //     timestamp_low,
+                //     timestamp_high,
+                // );
+                // println!("Contribution = {:?}", denom);
             }
         }
     }
