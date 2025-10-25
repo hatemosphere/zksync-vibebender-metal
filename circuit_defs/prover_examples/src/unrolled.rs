@@ -1970,7 +1970,6 @@ pub fn prove_unrolled_execution_with_replayer<
         )
     }
 
-
     assert_eq!(delegation_argument_sum, Mersenne31Quartic::ZERO);
     assert_eq!(permutation_argument_grand_product, Mersenne31Quartic::ONE);
 
