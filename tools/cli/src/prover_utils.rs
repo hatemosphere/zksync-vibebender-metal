@@ -64,7 +64,9 @@ pub fn multi_prove(bin_path: &String, input_files: Vec<Vec<u32>>) {
 
     // TODO: hardcoded for now.
     let num_instances = 500;
-    let recursion_circuit_type = MainCircuitType::ReducedRiscVMachine;
+    // Let's use v23 circuits everywhere.
+
+    let recursion_circuit_type = MainCircuitType::ReducedRiscVLog23Machine;
     let mut gpu_state = Some(GpuSharedState::new(&binary, recursion_circuit_type));
 
     let mut gpu_state = gpu_state.as_mut();
@@ -86,15 +88,16 @@ pub fn multi_prove(bin_path: &String, input_files: Vec<Vec<u32>>) {
 
         let recursion_mode = RecursionStrategy::UseReducedLog23Machine;
 
-        let (_recursion_proof_list, _recursion_proof_metadata) = create_recursion_proofs(
-            proof_list,
-            proof_metadata,
-            recursion_mode,
-            &None,
-            &mut gpu_state,
-            &mut total_proof_time,
-        );
-
+        let (_recursion_proof_list, _recursion_proof_metadata) =
+            create_recursion_proofs_with_machine(
+                proof_list,
+                proof_metadata,
+                recursion_mode,
+                &None,
+                &Machine::ReducedLog23,
+                &mut gpu_state,
+                &mut total_proof_time,
+            );
         // Currently we don't store the final proofs (as this is mostly for performance testing).
         println!(
             "**** {} Total time on production critical path {:.3}s ****",
@@ -552,6 +555,26 @@ pub fn create_recursion_proofs(
     gpu_shared_state: &mut Option<&mut GpuSharedState>,
     total_proof_time: &mut Option<f64>,
 ) -> (ProofList, ProofMetadata) {
+    create_recursion_proofs_with_machine(
+        proof_list,
+        proof_metadata,
+        recursion_mode,
+        tmp_dir,
+        &Machine::Reduced,
+        gpu_shared_state,
+        total_proof_time,
+    )
+}
+
+pub fn create_recursion_proofs_with_machine(
+    proof_list: ProofList,
+    proof_metadata: ProofMetadata,
+    recursion_mode: RecursionStrategy,
+    tmp_dir: &Option<String>,
+    machine: &Machine,
+    gpu_shared_state: &mut Option<&mut GpuSharedState>,
+    total_proof_time: &mut Option<f64>,
+) -> (ProofList, ProofMetadata) {
     assert!(
         proof_metadata.basic_proof_count > 0,
         "Recursion proofs can be created only for basic proofs.",
@@ -577,7 +600,7 @@ pub fn create_recursion_proofs(
         (current_proof_list, current_proof_metadata) = create_proofs_internal(
             &binary,
             non_determinism_data,
-            &Machine::Reduced,
+            machine,
             current_proof_metadata.total_proofs(),
             Some(current_proof_metadata.create_prev_metadata()),
             gpu_shared_state,
