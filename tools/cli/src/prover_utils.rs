@@ -69,6 +69,8 @@ pub fn multi_prove(bin_path: &String, input_files: Vec<Vec<u32>>) {
 
     let mut gpu_state = gpu_state.as_mut();
 
+    let mut final_results = vec![];
+
     for (i, non_determinism_data) in input_files.into_iter().enumerate() {
         let mut total_proof_time = Some(0f64);
 
@@ -81,20 +83,30 @@ pub fn multi_prove(bin_path: &String, input_files: Vec<Vec<u32>>) {
             &mut gpu_state,
             &mut total_proof_time,
         );
+
+        let recursion_mode = RecursionStrategy::UseReducedLog23Machine;
+
         let (_recursion_proof_list, _recursion_proof_metadata) = create_recursion_proofs(
             proof_list,
             proof_metadata,
-            RecursionStrategy::UseReducedLog23Machine,
+            recursion_mode,
             &None,
             &mut gpu_state,
             &mut total_proof_time,
         );
+
         // Currently we don't store the final proofs (as this is mostly for performance testing).
         println!(
             "**** {} Total time on production critical path {:.3}s ****",
             i,
             total_proof_time.unwrap(),
         );
+        final_results.push(total_proof_time.unwrap());
+    }
+
+    println!("**** Multi-prove summary ****");
+    for (i, time) in final_results.iter().enumerate() {
+        println!("Input {}: total proof time {:.3}s", i, time);
     }
 }
 
