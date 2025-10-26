@@ -58,6 +58,46 @@ pub fn u32_from_hex_string(hex_string: &str) -> Vec<u32> {
     numbers
 }
 
+#[cfg(feature = "gpu")]
+pub fn multi_prove(bin_path: &String, input_files: Vec<Vec<u32>>) {
+    let binary = load_binary_from_path(bin_path);
+
+    // TODO: hardcoded for now.
+    let num_instances = 500;
+    let recursion_circuit_type = MainCircuitType::ReducedRiscVMachine;
+    let mut gpu_state = Some(GpuSharedState::new(&binary, recursion_circuit_type));
+
+    let mut gpu_state = gpu_state.as_mut();
+
+    for (i, non_determinism_data) in input_files.into_iter().enumerate() {
+        let mut total_proof_time = Some(0f64);
+
+        let (proof_list, proof_metadata) = create_proofs_internal(
+            &binary,
+            non_determinism_data,
+            &Machine::Standard,
+            num_instances,
+            None,
+            &mut gpu_state,
+            &mut total_proof_time,
+        );
+        let (_recursion_proof_list, _recursion_proof_metadata) = create_recursion_proofs(
+            proof_list,
+            proof_metadata,
+            RecursionStrategy::UseReducedLog23Machine,
+            &None,
+            &mut gpu_state,
+            &mut total_proof_time,
+        );
+        // Currently we don't store the final proofs (as this is mostly for performance testing).
+        println!(
+            "**** {} Total time on production critical path {:.3}s ****",
+            i,
+            total_proof_time.unwrap(),
+        );
+    }
+}
+
 pub fn create_proofs(
     bin_path: &String,
     output_dir: &String,
