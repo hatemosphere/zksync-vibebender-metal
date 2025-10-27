@@ -1200,38 +1200,43 @@ pub fn run_basic_unrolled_test_impl(
 fn test_single_non_mem_circuit() {
     use crate::cs::cs::cs_reference::BasicAssembly;
     use cs::cs::circuit::Circuit;
+    use cs::machine::ops::unrolled::add_sub_lui_auipc_mop::*;
     use cs::machine::ops::unrolled::shift_binary_csr::*;
     use std::path::Path;
 
-    let family_idx = 3;
+    let family_idx = ADD_SUB_LUI_AUIPC_MOP_CIRCUIT_FAMILY_IDX;
 
     println!("Reading and preprocessing binary");
-    let (_, text_section) = read_binary(Path::new("../../zksync-os/zksync_os/app.text"));
-    let pc = 471684;
+    // let (_, text_section) = read_binary(Path::new("../../zksync-os/zksync_os/app.text"));
+    let (_, text_section) = read_binary(Path::new("../tools/verifier/unrolled_base_layer.text"));
+    dbg!(text_section.len());
+    let pc = 1434836;
     dbg!(text_section[pc / 4]);
 
     let mut t = process_binary_into_separate_tables_ext::<Mersenne31Field, true, Global>(
         &text_section,
-        &[Box::new(ShiftBinaryCsrrwDecoder)],
+        &[Box::new(AddSubLuiAuipcMopDecoder)],
         1 << 20,
-        &[1984, 1991, 1994, 1995],
+        &[1984, 1991],
     );
     let (_, decoder_data) = t.remove(&family_idx).expect("decoder data");
 
-    println!("Deserializing witness");
-    // let oracle_input = fast_deserialize_from_file::<NonMemTracingFamilyChunk<Global>>(
-    //     "../../zksync-os/tests/instances/eth_runner/family_3_circuit_0_oracle_witness.bin",
-    // );
     let oracle_input =
         fast_deserialize_from_file::<NonMemTracingFamilyChunk<Global>>("tmp_wit.bin");
-    println!("Will check {} different inputs", oracle_input.data.len());
 
-    // let round = 4378;
-    // let t = NonMemTracingFamilyChunk {
-    //     data: oracle_input.data[round..][..1].to_vec(),
-    //     num_cycles: oracle_input.num_cycles,
-    // };
-    // fast_serialize_to_file(&t, "tmp_wit.bin");
+    // {
+    //     println!("Deserializing witness");
+    //     let oracle_input = fast_deserialize_from_file::<NonMemTracingFamilyChunk<Global>>(
+    //         "../../zksync-os/tests/instances/eth_runner/family_1_circuit_0_oracle_witness.bin",
+    //     );
+    //     let round = 288655;
+    //     let t = NonMemTracingFamilyChunk {
+    //         data: oracle_input.data[round..][..1].to_vec(),
+    //         num_cycles: oracle_input.num_cycles,
+    //     };
+    //     fast_serialize_to_file(&t, "tmp_wit.bin");
+    //     panic!();
+    // }
 
     // for round in 0..oracle_input.len() {
     {
@@ -1252,20 +1257,19 @@ fn test_single_non_mem_circuit() {
             decoder_data.clone(),
         );
 
-        shift_binop_csrrw_table_addition_fn(&mut cs);
+        add_sub_lui_auipc_mop_circuit_with_preprocessed_bytecode(&mut cs);
 
-        let csr_table = create_csr_table_for_delegation(
-            true,
-            &[1984, 1991, 1994, 1995],
-            TableType::SpecialCSRProperties.to_table_id(),
-        );
-
-        cs.add_table_with_content(
-            TableType::SpecialCSRProperties,
-            LookupWrapper::Dimensional3(csr_table.clone()),
-        );
-
-        shift_binop_csrrw_circuit_with_preprocessed_bytecode(&mut cs);
+        // shift_binop_csrrw_table_addition_fn(&mut cs);
+        // let csr_table = create_csr_table_for_delegation(
+        //     true,
+        //     &[1984, 1991, 1994, 1995],
+        //     TableType::SpecialCSRProperties.to_table_id(),
+        // );
+        // cs.add_table_with_content(
+        //     TableType::SpecialCSRProperties,
+        //     LookupWrapper::Dimensional3(csr_table.clone()),
+        // );
+        // shift_binop_csrrw_circuit_with_preprocessed_bytecode(&mut cs);
 
         assert!(cs.is_satisfied());
     }
