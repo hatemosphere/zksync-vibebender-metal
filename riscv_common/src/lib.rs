@@ -1,6 +1,6 @@
 #![no_std]
 
-#[cfg(all(target_arch = "riscv32", feature = "boot_sequence"))]
+// #[cfg(all(target_arch = "riscv32", feature = "boot_sequence"))]
 pub mod boot_sequence;
 
 /// Exit sequence produced by `zksync_os_finish_success_extended`

@@ -333,8 +333,9 @@ pub unsafe fn verify_full_statement_for_unrolled_circuits<
 
                     // now we should check all invariants about continuity
 
+                    delegation_used |= true;
+
                     if circuit_sequence > 0 {
-                        delegation_used |= true;
                         // and check equality of the setup
                         assert!(MerkleTreeCap::compare(
                             &previous.setup_caps,
@@ -595,6 +596,8 @@ pub unsafe fn verify_full_statement_for_unrolled_circuits<
     }
     result_hasher.absorb(caps_flattened(&inits_and_teardowns_verifier.0));
     let end_params_output = result_hasher.finalize_reset();
+
+    // `end_params_output` now fully describes an ending PC + setups (and setups include program binary)
 
     if BASE_LAYER {
         // we REQUIRE that remaining 8 registers are 0 in our convention

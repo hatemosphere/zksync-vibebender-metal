@@ -1,6 +1,10 @@
 core::arch::global_asm!(include_str!("asm/start.s"));
-core::arch::global_asm!(include_str!("asm/memset.s"));
+
+#[cfg(not(feature = "no_memcpy_override"))]
 core::arch::global_asm!(include_str!("asm/memcpy.s"));
+
+#[cfg(not(feature = "no_memset_override"))]
+core::arch::global_asm!(include_str!("asm/memset.s"));
 
 pub use ::common_constants;
 

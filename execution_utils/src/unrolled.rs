@@ -64,6 +64,41 @@ impl UnrolledProgramSetup {
 
         result
     }
+
+    pub fn begin_recursion_chain(base_layer_end_params: &[u32; 8]) -> ([u32; 8], [u32; 16]) {
+        let mut preimage = [0u32; 16];
+        preimage[8..].copy_from_slice(base_layer_end_params);
+        let mut result_hasher = Blake2sBufferingTranscript::new();
+        result_hasher.absorb(&preimage);
+        let hash_chain = result_hasher.finalize().0;
+        (hash_chain, preimage)
+    }
+
+    pub fn continue_recursion_chain(
+        end_params: &[u32; 8],
+        previous_step_hash_chain: &[u32; 8],
+        previous_step_chain_preimage: &[u32; 16],
+    ) -> ([u32; 8], [u32; 16]) {
+        {
+            let mut result_hasher = Blake2sBufferingTranscript::new();
+            result_hasher.absorb(previous_step_chain_preimage);
+            let t = result_hasher.finalize().0;
+            assert_eq!(&t, previous_step_hash_chain);
+        }
+        if &previous_step_hash_chain[8..] == &end_params {
+            // do not repeat
+            assert!(&previous_step_hash_chain[..8] != &[0u32; 8]);
+            (*previous_step_hash_chain, *previous_step_chain_preimage)
+        } else {
+            let mut preimage = [0u32; 16];
+            preimage[..8].copy_from_slice(previous_step_hash_chain);
+            preimage[8..].copy_from_slice(end_params);
+            let mut result_hasher = Blake2sBufferingTranscript::new();
+            result_hasher.absorb(&preimage);
+            let hash_chain = result_hasher.finalize().0;
+            (hash_chain, preimage)
+        }
+    }
 }
 
 #[derive(Clone, Debug, Hash, serde::Serialize, serde::Deserialize)]
