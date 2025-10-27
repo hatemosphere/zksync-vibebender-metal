@@ -192,21 +192,27 @@ pub fn compute_setup_for_machine_configuration<C: MachineConfig>(
     assert_eq!(binary_image.len() % 4, 0);
     assert_eq!(text_section.len() % 4, 0);
 
-    let mut binary_image_u32: Vec<_> = binary_image
+    let binary_image_u32: Vec<_> = binary_image
         .as_chunks::<4>()
         .0
         .iter()
         .map(|el| u32::from_le_bytes(*el))
         .collect();
-    let mut text_section_u32: Vec<_> = text_section
+    let text_section_u32: Vec<_> = text_section
         .as_chunks::<4>()
         .0
         .iter()
         .map(|el| u32::from_le_bytes(*el))
         .collect();
 
-    binary_image_u32.resize(riscv_transpiler::common_constants::ROM_WORD_SIZE, 0u32);
-    text_section_u32.resize(riscv_transpiler::common_constants::ROM_WORD_SIZE, 0u32);
+    assert_eq!(
+        binary_image_u32,
+        riscv_transpiler::common_constants::ROM_WORD_SIZE
+    );
+    assert_eq!(
+        text_section_u32,
+        riscv_transpiler::common_constants::ROM_WORD_SIZE
+    );
 
     let families_setups = setups::compute_unrolled_circuits_params_for_machine_configuration::<C>(
         &binary_image_u32,

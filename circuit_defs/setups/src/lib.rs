@@ -611,7 +611,7 @@ pub fn generate_delegation_circuits_artifacts() -> String {
     description
 }
 
-pub fn read_binary(path: &Path) -> (Vec<u8>, Vec<u32>) {
+pub fn read_and_pad_binary(path: &Path) -> (Vec<u8>, Vec<u32>) {
     use std::io::Read;
     let mut file = std::fs::File::open(path).expect("must open provided file");
     let mut buffer = vec![];
@@ -621,6 +621,8 @@ pub fn read_binary(path: &Path) -> (Vec<u8>, Vec<u32>) {
     for el in buffer.as_chunks::<4>().0 {
         binary.push(u32::from_le_bytes(*el));
     }
+
+    pad_bytecode_for_proving(&mut binary);
 
     (buffer, binary)
 }
