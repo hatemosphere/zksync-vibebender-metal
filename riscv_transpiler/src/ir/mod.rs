@@ -705,7 +705,8 @@ pub fn decode<OPT: DecodingOptions>(opcode: u32) -> Instruction {
             instr
         }
         _ => {
-            panic!("Unknown opcode 0x{:08x}", opcode);
+            // any other opcode, or unreachable result of padding
+            Instruction::from_imm(InstructionName::Illegal, 0, 0, 0, 0)
         }
     };
 
