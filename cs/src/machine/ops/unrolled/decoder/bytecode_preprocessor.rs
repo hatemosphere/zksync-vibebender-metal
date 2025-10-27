@@ -64,7 +64,7 @@ pub fn preprocess_bytecode<F: PrimeField, A: GoodAllocator>(
             assert_eq!(
                 instr_type,
                 InstructionType::IType,
-                "avoiding I-type sign extend flag is set for opcode 0x:{:08x} by family {:?}",
+                "avoiding I-type sign extend flag is set for opcode 0x{:08x} by family {:?}",
                 opcode,
                 &*family
             );
