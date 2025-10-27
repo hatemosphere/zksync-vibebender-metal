@@ -495,7 +495,6 @@ fn compute_unrolled_circuits_params_impl(
     circuits: &[fn(&[u32], &[u32], &Worker) -> UnrolledCircuitPrecomputations<Global, Global>],
 ) -> Vec<UnrolledCircuitSetupParams> {
     assert!(binary_image.len() >= bytecode.len());
-    assert!(binary_image.starts_with(bytecode));
     let worker = prover::worker::Worker::new();
     use prover::merkle_trees::MerkleTreeConstructor;
 

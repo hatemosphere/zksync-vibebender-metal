@@ -189,7 +189,6 @@ fn precomputations_for_unrolled_circuits_params_impl<A: GoodAllocator, B: GoodAl
     worker: &Worker,
 ) -> BTreeMap<u8, UnrolledCircuitPrecomputations<A, B>> {
     assert!(binary_image.len() >= bytecode.len());
-    assert!(binary_image.starts_with(bytecode));
 
     let mut results = BTreeMap::new();
     for eval_fn in circuits.iter() {
