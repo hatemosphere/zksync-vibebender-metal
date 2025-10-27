@@ -179,6 +179,85 @@ fn apply_add_sub_lui_auipc_mop<F: PrimeField, CS: Circuit<F>>(
         assert_eq!(of_var, t.get_variable().unwrap());
     }
 
+    let [rs1_reg_low, rs1_reg_high] = rs1_reg.0;
+    let [rs2_reg_low, rs2_reg_high] = rs2_reg.0;
+
+    // ADDMOD
+    {
+        opt_ctx.restore_indexers(indexers);
+        cs.add_constraint(
+            Constraint::from(is_addmod)
+                * ((Constraint::from(out_low) + shift * Term::from(out_high))
+                    - (Constraint::from(rs1_reg_low)
+                        + shift * Term::from(rs1_reg_high)
+                        + Term::from(rs2_reg_low)
+                        + shift * Term::from(rs2_reg_high))),
+        );
+        // of + out - modulus = tmp, and OF must be true
+        let relation = AddSubRelation {
+            exec_flag: is_addmod,
+            a: intermediate_tmp,
+            b: modulus_reg,
+            c: out,
+        };
+        let addmod_borrow_bit = opt_ctx.append_add_sub_relation_raw(cs, relation);
+        cs.add_constraint(
+            Term::from(is_addmod) * (Term::from(1u64) - Term::from(addmod_borrow_bit)),
+        );
+        // check that we indeed use the same boolean for all the cases
+        assert_eq!(of_var, addmod_borrow_bit.get_variable().unwrap());
+    }
+
+    // SUBMOD
+    {
+        opt_ctx.restore_indexers(indexers);
+        cs.add_constraint(
+            Constraint::from(is_submod)
+                * ((Constraint::from(out_low) + shift * Term::from(out_high))
+                    - (Constraint::from(rs1_reg_low) + shift * Term::from(rs1_reg_high)
+                        - Term::from(rs2_reg_low)
+                        - shift * Term::from(rs2_reg_high))),
+        );
+        let relation = AddSubRelation {
+            exec_flag: is_submod,
+            a: intermediate_tmp,
+            b: modulus_reg,
+            c: out,
+        };
+        let submod_borrow_bit = opt_ctx.append_add_sub_relation_raw(cs, relation);
+        cs.add_constraint(
+            Term::from(is_submod) * (Term::from(1u64) - Term::from(submod_borrow_bit)),
+        );
+        // check that we indeed use the same boolean for all the cases
+        assert_eq!(of_var, submod_borrow_bit.get_variable().unwrap());
+    }
+
+    // MULMOD
+    {
+        opt_ctx.restore_indexers(indexers);
+        // that will create a witness for us
+        let tmp = cs.add_variable_from_constraint(
+            (Constraint::from(rs1_reg_low) + shift * Term::from(rs1_reg_high))
+                * (Constraint::from(rs2_reg_low) + shift * Term::from(rs2_reg_high)),
+        );
+        cs.add_constraint(
+            Constraint::from(is_mulmod)
+                * ((Constraint::from(out_low) + shift * Term::from(out_high)) - Term::from(tmp)),
+        );
+        let relation = AddSubRelation {
+            exec_flag: is_mulmod,
+            a: intermediate_tmp,
+            b: modulus_reg,
+            c: out,
+        };
+        let mulmod_borrow_bit = opt_ctx.append_add_sub_relation_raw(cs, relation);
+        cs.add_constraint(
+            Term::from(is_mulmod) * (Term::from(1u64) - Term::from(mulmod_borrow_bit)),
+        );
+        // check that we indeed use the same boolean for all the cases
+        assert_eq!(of_var, mulmod_borrow_bit.get_variable().unwrap());
+    }
+
     // Witness function
     let out_vars = out.0.map(|el| el.get_variable());
     let intemediate_vars = intermediate_tmp.0.map(|el| el.get_variable());
@@ -345,87 +424,6 @@ fn apply_add_sub_lui_auipc_mop<F: PrimeField, CS: Circuit<F>>(
         placer.assign_mask(of_var, &of_value);
     };
     cs.set_values(value_fn);
-
-    // rest of ops are after - as we have constraints and want nice debug
-
-    let [rs1_reg_low, rs1_reg_high] = rs1_reg.0;
-    let [rs2_reg_low, rs2_reg_high] = rs2_reg.0;
-
-    // ADDMOD
-    {
-        opt_ctx.restore_indexers(indexers);
-        cs.add_constraint(
-            Constraint::from(is_addmod)
-                * ((Constraint::from(out_low) + shift * Term::from(out_high))
-                    - (Constraint::from(rs1_reg_low)
-                        + shift * Term::from(rs1_reg_high)
-                        + Term::from(rs2_reg_low)
-                        + shift * Term::from(rs2_reg_high))),
-        );
-        // of + out - modulus = tmp, and OF must be true
-        let relation = AddSubRelation {
-            exec_flag: is_addmod,
-            a: intermediate_tmp,
-            b: modulus_reg,
-            c: out,
-        };
-        let addmod_borrow_bit = opt_ctx.append_add_sub_relation_raw(cs, relation);
-        cs.add_constraint(
-            Term::from(is_addmod) * (Term::from(1u64) - Term::from(addmod_borrow_bit)),
-        );
-        // check that we indeed use the same boolean for all the cases
-        assert_eq!(of_var, addmod_borrow_bit.get_variable().unwrap());
-    }
-
-    // SUBMOD
-    {
-        opt_ctx.restore_indexers(indexers);
-        cs.add_constraint(
-            Constraint::from(is_submod)
-                * ((Constraint::from(out_low) + shift * Term::from(out_high))
-                    - (Constraint::from(rs1_reg_low) + shift * Term::from(rs1_reg_high)
-                        - Term::from(rs2_reg_low)
-                        - shift * Term::from(rs2_reg_high))),
-        );
-        let relation = AddSubRelation {
-            exec_flag: is_submod,
-            a: intermediate_tmp,
-            b: modulus_reg,
-            c: out,
-        };
-        let submod_borrow_bit = opt_ctx.append_add_sub_relation_raw(cs, relation);
-        cs.add_constraint(
-            Term::from(is_submod) * (Term::from(1u64) - Term::from(submod_borrow_bit)),
-        );
-        // check that we indeed use the same boolean for all the cases
-        assert_eq!(of_var, submod_borrow_bit.get_variable().unwrap());
-    }
-
-    // MULMOD
-    {
-        opt_ctx.restore_indexers(indexers);
-        // that will create a witness for us
-        let tmp = cs.add_variable_from_constraint(
-            (Constraint::from(rs1_reg_low) + shift * Term::from(rs1_reg_high))
-                * (Constraint::from(rs2_reg_low) + shift * Term::from(rs2_reg_high)),
-        );
-        cs.add_constraint(
-            Constraint::from(is_mulmod)
-                * ((Constraint::from(out_low) + shift * Term::from(out_high)) - Term::from(tmp)),
-        );
-        let relation = AddSubRelation {
-            exec_flag: is_mulmod,
-            a: intermediate_tmp,
-            b: modulus_reg,
-            c: out,
-        };
-        let mulmod_borrow_bit = opt_ctx.append_add_sub_relation_raw(cs, relation);
-        cs.add_constraint(
-            Term::from(is_mulmod) * (Term::from(1u64) - Term::from(mulmod_borrow_bit)),
-        );
-        // check that we indeed use the same boolean for all the cases
-        assert_eq!(of_var, mulmod_borrow_bit.get_variable().unwrap());
-    }
 
     // write to RD
     let rd_reg = out;

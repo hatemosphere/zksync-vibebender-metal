@@ -65,6 +65,10 @@ rm unrolled_recursion_layer.text
 CARGO_TARGET_DIR=target/thirteen cargo objcopy --release -Z build-std=core,panic_abort,alloc -Z build-std-features=panic_immediate_abort  --features unrolled_base_layer,security_80 --no-default-features -- -R .text unrolled_base_layer.elf;
 CARGO_TARGET_DIR=target/thirteen cargo objcopy --release -Z build-std=core,panic_abort,alloc -Z build-std-features=panic_immediate_abort  --features unrolled_base_layer,security_80 --no-default-features -- -O binary --only-section=.text unrolled_base_layer.text) &
 
+# (CARGO_TARGET_DIR=target/fourteen cargo objcopy --release -Z build-std=core,alloc --features unrolled_recursion_layer,security_80,panic_output --no-default-features -- -O binary unrolled_recursion_layer.bin;
+# CARGO_TARGET_DIR=target/fourteen cargo objcopy --release -Z build-std=core,alloc --features unrolled_recursion_layer,security_80,panic_output --no-default-features -- -R .text unrolled_recursion_layer.elf;
+# CARGO_TARGET_DIR=target/fourteen cargo objcopy --release -Z build-std=core,alloc --features unrolled_recursion_layer,security_80,panic_output --no-default-features -- -O binary --only-section=.text unrolled_recursion_layer.text) &
+
 #cargo build -Z build-std=core,panic_abort,alloc -Z build-std-features=panic_immediate_abort --release --no-default-features --features=unrolled_recursion_layer,security_80
 (CARGO_TARGET_DIR=target/fourteen cargo objcopy --release -Z build-std=core,panic_abort,alloc -Z build-std-features=panic_immediate_abort  --features unrolled_recursion_layer,security_80 --no-default-features -- -O binary unrolled_recursion_layer.bin;
 CARGO_TARGET_DIR=target/fourteen cargo objcopy --release -Z build-std=core,panic_abort,alloc -Z build-std-features=panic_immediate_abort  --features unrolled_recursion_layer,security_80 --no-default-features -- -R .text unrolled_recursion_layer.elf;

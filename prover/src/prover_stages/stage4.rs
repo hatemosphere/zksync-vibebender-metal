@@ -165,7 +165,7 @@ pub fn prover_stage_4<const N: usize, A: GoodAllocator, T: MerkleTreeConstructor
             .map(|el| Mersenne31Field::from_nonreduced_u32(el)),
     );
 
-    #[cfg(feature = "debug_logs")]
+    // #[cfg(feature = "debug_logs")]
     dbg!(z);
 
     // first we evaluate using barycentric formula,
