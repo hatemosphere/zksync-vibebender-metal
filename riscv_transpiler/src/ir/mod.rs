@@ -738,3 +738,13 @@ impl DecodingOptions for ReducedMachineDecoderConfig {
     const SUPPORT_SIGNED_MUL_DIV: bool = false;
     const SUPPORT_SUBWORD_MEM_ACCESS: bool = false;
 }
+
+// Special config to allow sending text over UART in recursive verifiers
+pub struct DebugReducedMachineDecoderConfig;
+
+impl DecodingOptions for DebugReducedMachineDecoderConfig {
+    const SUPPORT_MOP: bool = true;
+    const SUPPORT_MUL_DIV: bool = false;
+    const SUPPORT_SIGNED_MUL_DIV: bool = false;
+    const SUPPORT_SUBWORD_MEM_ACCESS: bool = true;
+}
