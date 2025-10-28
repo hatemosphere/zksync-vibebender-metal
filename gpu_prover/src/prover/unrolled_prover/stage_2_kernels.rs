@@ -1,38 +1,38 @@
-use super::arg_utils::*;
-use super::context::DeviceProperties;
-use super::unrolled_prover::stage_2_ram_shared::{
-    stage2_process_lazy_init_and_ram_access,
-    stage2_process_registers_and_indirect_access_in_delegation,
-};
-use super::unrolled_prover::stage_2_shared::{
+use super::stage_2_ram_shared::stage2_process_unrolled_grand_product_contributions;
+use super::stage_2_shared::{
     get_stage_2_e4_scratch, stage2_col_sum_adjustments_and_grand_product,
-    stage2_handle_delegation_requests, stage2_process_delegations,
+    stage2_handle_delegation_requests,
+    stage2_process_executor_family_decoder_entry_invs_and_multiplicity,
+    stage2_process_executor_family_decoder_intermediate_poly,
     stage2_process_generic_lookup_entry_invs_and_multiplicity,
     stage2_process_generic_lookup_intermediate_polys, stage2_process_lazy_init_range_checks,
     stage2_process_range_check_16_entry_invs_and_multiplicity,
     stage2_process_range_check_16_expressions, stage2_process_range_check_16_trivial_checks,
     stage2_process_timestamp_range_check_entry_invs_and_multiplicity,
-    stage2_process_timestamp_range_check_expressions,
-    stage2_process_timestamp_range_check_expressions_with_extra_timestamp_contribution,
-    stage2_zero_last_row,
+    stage2_process_timestamp_range_check_expressions, stage2_zero_last_row,
 };
 use crate::device_structures::{
     DeviceMatrixChunkImpl, DeviceMatrixChunkMut, DeviceMatrixChunkMutImpl,
 };
 use crate::field::{BaseField, Ext4Field};
 use crate::ops_simple::set_to_zero;
+use crate::prover::arg_utils::*;
+use crate::prover::context::DeviceProperties;
 
 use cs::definitions::{NUM_TIMESTAMP_COLUMNS_FOR_RAM, REGISTER_SIZE, TIMESTAMP_COLUMNS_NUM_BITS};
 use cs::one_row_compiler::CompiledCircuitArtifact;
 use era_cudart::result::CudaResult;
 use era_cudart::slice::{DeviceSlice, DeviceVariable};
 use era_cudart::stream::CudaStream;
-use field::Field;
 use prover::prover_stages::cached_data::ProverCachedData;
 
 type BF = BaseField;
 type E4 = Ext4Field;
 
+// temporarily allow this to be dead_code to squash warnings
+// for non-test builds, until we figure out how to use it
+// in higher-level orchestration
+#[allow(dead_code)]
 pub fn compute_stage_2_args_on_main_domain(
     setup_cols: &(impl DeviceMatrixChunkImpl<BF> + ?Sized),
     witness_cols: &(impl DeviceMatrixChunkImpl<BF> + ?Sized),
@@ -44,7 +44,7 @@ pub fn compute_stage_2_args_on_main_domain(
     maybe_batch_reduce_intermediates: &mut Option<&mut DeviceSlice<BF>>,
     scratch_for_col_sums: &mut DeviceSlice<BF>,
     lookup_challenges: &DeviceVariable<LookupChallenges>,
-    // decoder_table_challenges: &DeviceVariable<DecoderTableChallenges>,
+    decoder_table_challenges: &DeviceVariable<DecoderTableChallenges>,
     cached_data: &ProverCachedData,
     circuit: &CompiledCircuitArtifact<BF>,
     log_n: u32,
@@ -70,6 +70,24 @@ pub fn compute_stage_2_args_on_main_domain(
         .stage_2_layout
         .intermediate_polys_for_memory_init_teardown
         .num_elements();
+    let num_intermediate_polys_for_decoder = circuit
+        .stage_2_layout
+        .intermediate_poly_for_decoder_accesses
+        .num_elements();
+    assert!(num_intermediate_polys_for_decoder == 0 || num_intermediate_polys_for_decoder == 1);
+    let num_intermediate_polys_for_state_permutation = circuit
+        .stage_2_layout
+        .intermediate_polys_for_state_permutation
+        .num_elements();
+    assert!(
+        num_intermediate_polys_for_state_permutation == 0
+            || num_intermediate_polys_for_state_permutation == 1
+    );
+    let num_intermediate_polys_for_masking = circuit
+        .stage_2_layout
+        .intermediate_polys_for_permutation_masking
+        .num_elements();
+    assert!(num_intermediate_polys_for_masking == 0 || num_intermediate_polys_for_masking == 1);
     let num_stage_2_bf_cols = circuit.stage_2_layout.num_base_field_polys();
     let num_stage_2_e4_cols = circuit.stage_2_layout.num_ext4_field_polys();
     assert_eq!(setup_cols.rows(), n);
@@ -129,9 +147,10 @@ pub fn compute_stage_2_args_on_main_domain(
     // and some are useful for doublechecks.
     let ProverCachedData {
         trace_len,
-        memory_timestamp_high_from_circuit_idx,
-        delegation_type,
+        memory_timestamp_high_from_circuit_idx: _,
+        delegation_type: _,
         memory_argument_challenges,
+        machine_state_argument_challenges,
         delegation_challenges,
         process_shuffle_ram_init,
         shuffle_ram_inits_and_teardowns,
@@ -140,10 +159,10 @@ pub fn compute_stage_2_args_on_main_domain(
         delegation_request_layout,
         process_batch_ram_access,
         process_registers_and_indirect_access,
-        delegation_processor_layout,
+        delegation_processor_layout: _,
         process_delegations,
         delegation_processing_aux_poly,
-        num_set_polys_for_memory_shuffle,
+        num_set_polys_for_memory_shuffle: _,
         offset_for_grand_product_accumulation_poly: _,
         range_check_16_multiplicities_src,
         range_check_16_multiplicities_dst,
@@ -169,12 +188,22 @@ pub fn compute_stage_2_args_on_main_domain(
             .num_elements(),
         1,
     );
+    // Surprisingly, lazy init + teardown circuit has no timestamp range checks!
+    // Init timestamps are hardcoded to 0 (by omitting them from argument entries)
+    // and teardown timestamps don't need to be range checked because they must
+    // cancel some access in another circuit whose timestamp was ranged checked
+    // in that other circuit.
+    let num_timestamp_multiplicities_cols = circuit
+        .witness_layout
+        .multiplicities_columns_for_timestamp_range_check
+        .num_elements();
+    assert!(num_timestamp_multiplicities_cols == 0 || num_timestamp_multiplicities_cols == 1);
     assert_eq!(
+        num_timestamp_multiplicities_cols,
         circuit
-            .witness_layout
-            .multiplicities_columns_for_timestamp_range_check
+            .stage_2_layout
+            .intermediate_poly_for_timestamp_range_check_multiplicity
             .num_elements(),
-        1,
     );
     let num_generic_multiplicities_cols = circuit
         .setup_layout
@@ -188,6 +217,13 @@ pub fn compute_stage_2_args_on_main_domain(
             .multiplicities_columns_for_generic_lookup
             .num_elements(),
     );
+    if num_generic_table_rows > 0 {
+        assert!(num_generic_multiplicities_cols > 0);
+        assert!(num_generic_args > 0);
+    } else {
+        assert_eq!(num_generic_multiplicities_cols, 0);
+        assert_eq!(num_generic_args, 0);
+    };
     assert_eq!(
         generic_lookup_setup_columns_start,
         circuit.setup_layout.generic_lookup_setup_columns.start()
@@ -231,7 +267,9 @@ pub fn compute_stage_2_args_on_main_domain(
     assert_eq!(num_stage_2_bf_cols, num_expected_bf_args);
     let mut num_expected_e4_args = 0;
     num_expected_e4_args += 1; // range check 16 multiplicities dst
-    num_expected_e4_args += 1; // timestamp range check multiplicities dst
+    num_expected_e4_args += num_timestamp_multiplicities_cols; // timestamp multiplicities dst
+    num_expected_e4_args += num_intermediate_polys_for_decoder; // decoder multiplicities dst
+    num_expected_e4_args += num_intermediate_polys_for_decoder; // decoder lookup arg
     num_expected_e4_args += num_generic_multiplicities_cols;
     num_expected_e4_args += num_expected_bf_args; // each bf arg should have a corresponding e4 arg
     num_expected_e4_args += num_generic_args;
@@ -244,7 +282,9 @@ pub fn compute_stage_2_args_on_main_domain(
             .num_elements();
     }
     num_expected_e4_args += num_memory_args;
-    num_expected_e4_args += 1; // memory grand product
+    num_expected_e4_args += num_intermediate_polys_for_state_permutation;
+    num_expected_e4_args += num_intermediate_polys_for_masking;
+    num_expected_e4_args += 1; // grand product
     assert_eq!(num_stage_2_e4_cols, num_expected_e4_args);
     let setup_cols = setup_cols.as_ptr_and_stride();
     let witness_cols = witness_cols.as_ptr_and_stride();
@@ -255,15 +295,20 @@ pub fn compute_stage_2_args_on_main_domain(
         scratch_for_aggregated_entry_invs.split_at_mut(1 << 16);
     let (aggregated_entry_invs_for_timestamp_range_checks, aggregated_entry_invs) =
         aggregated_entry_invs.split_at_mut(1 << TIMESTAMP_COLUMNS_NUM_BITS);
+    let (aggregated_entry_invs_for_decoder_lookups, aggregated_entry_invs) =
+        aggregated_entry_invs.split_at_mut(1 << TIMESTAMP_COLUMNS_NUM_BITS);
     let (aggregated_entry_invs_for_generic_lookups, _) =
         aggregated_entry_invs.split_at_mut(circuit.total_tables_size);
     let aggregated_entry_invs_for_range_check_16 =
         aggregated_entry_invs_for_range_check_16.as_mut_ptr();
     let aggregated_entry_invs_for_timestamp_range_checks =
         aggregated_entry_invs_for_timestamp_range_checks.as_mut_ptr();
+    let aggregated_entry_invs_for_decoder_lookups =
+        aggregated_entry_invs_for_decoder_lookups.as_mut_ptr();
     let aggregated_entry_invs_for_generic_lookups =
         aggregated_entry_invs_for_generic_lookups.as_mut_ptr();
     let lookup_challenges = lookup_challenges.as_ptr();
+    let decoder_table_challenges = decoder_table_challenges.as_ptr();
 
     stage2_zero_last_row(
         d_stage_2_bf_cols,
@@ -287,52 +332,51 @@ pub fn compute_stage_2_args_on_main_domain(
         stream,
     )?;
 
-    stage2_process_timestamp_range_check_entry_invs_and_multiplicity(
-        lookup_challenges,
-        setup_cols,
-        witness_cols,
-        aggregated_entry_invs_for_timestamp_range_checks,
-        d_stage_2_e4_cols,
-        timestamp_range_check_multiplicities_src,
-        timestamp_range_check_multiplicities_dst,
-        log_n,
-        &translate_e4_offset,
-        stream,
-    )?;
+    if num_timestamp_multiplicities_cols > 0 {
+        stage2_process_timestamp_range_check_entry_invs_and_multiplicity(
+            lookup_challenges,
+            setup_cols,
+            witness_cols,
+            aggregated_entry_invs_for_timestamp_range_checks,
+            d_stage_2_e4_cols,
+            timestamp_range_check_multiplicities_src,
+            timestamp_range_check_multiplicities_dst,
+            log_n,
+            &translate_e4_offset,
+            stream,
+        )?;
+    }
 
-    stage2_process_generic_lookup_entry_invs_and_multiplicity(
-        lookup_challenges,
-        setup_cols,
-        witness_cols,
-        aggregated_entry_invs_for_generic_lookups,
-        d_stage_2_e4_cols,
-        generic_lookup_setup_columns_start,
-        num_generic_multiplicities_cols,
-        num_generic_table_rows,
-        generic_lookup_multiplicities_src_start,
-        generic_lookup_multiplicities_dst_start,
-        log_n,
-        &translate_e4_offset,
-        stream,
-    )?;
+    if num_intermediate_polys_for_decoder > 0 {
+        stage2_process_executor_family_decoder_entry_invs_and_multiplicity(
+            circuit,
+            decoder_table_challenges,
+            setup_cols,
+            witness_cols,
+            aggregated_entry_invs_for_decoder_lookups,
+            d_stage_2_e4_cols,
+            log_n,
+            &translate_e4_offset,
+            stream,
+        )?;
+    }
 
-    // layout sanity check
-    if circuit.memory_layout.delegation_processor_layout.is_none()
-        && circuit.memory_layout.delegation_request_layout.is_none()
-    {
-        assert_eq!(
-            circuit
-                .stage_2_layout
-                .intermediate_polys_for_generic_multiplicities
-                .full_range()
-                .end,
-            circuit
-                .stage_2_layout
-                .intermediate_polys_for_memory_argument
-                .start()
-        );
-    } else {
-        assert!(delegation_challenges.delegation_argument_gamma.is_zero() == false);
+    if num_generic_table_rows > 0 {
+        stage2_process_generic_lookup_entry_invs_and_multiplicity(
+            lookup_challenges,
+            setup_cols,
+            witness_cols,
+            aggregated_entry_invs_for_generic_lookups,
+            d_stage_2_e4_cols,
+            generic_lookup_setup_columns_start,
+            num_generic_multiplicities_cols,
+            num_generic_table_rows,
+            generic_lookup_multiplicities_src_start,
+            generic_lookup_multiplicities_dst_start,
+            log_n,
+            &translate_e4_offset,
+            stream,
+        )?;
     }
 
     if handle_delegation_requests {
@@ -340,30 +384,20 @@ pub fn compute_stage_2_args_on_main_domain(
         stage2_handle_delegation_requests(
             circuit,
             &delegation_challenges,
-            Some(memory_timestamp_high_from_circuit_idx),
+            None,
             &delegation_request_layout,
             memory_cols,
             setup_cols,
             d_stage_2_e4_cols,
             delegation_aux_poly_col,
-            false,
+            true,
             log_n,
             stream,
         )?;
     }
 
     if process_delegations {
-        assert!(!handle_delegation_requests);
-        stage2_process_delegations(
-            &delegation_challenges,
-            delegation_type,
-            &delegation_processor_layout,
-            memory_cols,
-            d_stage_2_e4_cols,
-            delegation_aux_poly_col,
-            log_n,
-            stream,
-        )?;
+        panic!("Requires non-unrolled compute_stage_2_args_on_main_domain");
     }
 
     stage2_process_range_check_16_trivial_checks(
@@ -424,38 +458,36 @@ pub fn compute_stage_2_args_on_main_domain(
         d_stage_2_e4_cols,
         num_stage_2_bf_cols,
         num_stage_2_e4_cols,
-        true, // expect_constant_terms_are_zero
+        false, // expect_constant_terms_are_zero
         log_n,
         &translate_e4_offset,
         stream,
     )?;
 
-    stage2_process_timestamp_range_check_expressions_with_extra_timestamp_contribution(
-        &timestamp_range_check_width_1_lookups_access_via_expressions_for_shuffle_ram,
-        setup_cols,
-        witness_cols,
-        memory_cols,
-        aggregated_entry_invs_for_timestamp_range_checks,
-        d_stage_2_bf_cols,
-        d_stage_2_e4_cols,
-        num_stage_2_bf_cols,
-        num_stage_2_e4_cols,
-        memory_timestamp_high_from_circuit_idx,
-        log_n,
-        &translate_e4_offset,
-        stream,
-    )?;
+    if num_intermediate_polys_for_decoder > 0 {
+        stage2_process_executor_family_decoder_intermediate_poly(
+            circuit,
+            memory_cols,
+            aggregated_entry_invs_for_decoder_lookups,
+            d_stage_2_e4_cols,
+            log_n,
+            &translate_e4_offset,
+            stream,
+        )?;
+    }
 
-    stage2_process_generic_lookup_intermediate_polys(
-        circuit,
-        generic_lookups_args_to_table_entries_map,
-        aggregated_entry_invs_for_generic_lookups,
-        d_stage_2_e4_cols,
-        num_generic_args,
-        log_n,
-        &translate_e4_offset,
-        stream,
-    )?;
+    if num_generic_table_rows > 0 {
+        stage2_process_generic_lookup_intermediate_polys(
+            circuit,
+            generic_lookups_args_to_table_entries_map,
+            aggregated_entry_invs_for_generic_lookups,
+            d_stage_2_e4_cols,
+            num_generic_args,
+            log_n,
+            &translate_e4_offset,
+            stream,
+        )?;
+    }
 
     // Shuffle ram init/teardown and shuffle ram accesses are distinct things.
     // We expect:
@@ -463,64 +495,20 @@ pub fn compute_stage_2_args_on_main_domain(
     // inits == 0, access > 0: can happen in unrolled, never in non-unrolled
     // both > 0              : can happen in non-unrolled (main), never in unrolled
     // both == 0             : can happen in non-unrolled (delegated), and also in unrolled
-    // The following asserts might be fail for unrolled circuits.
-    // They're a reminder of what I need to change.
-    assert_eq!(
-        process_shuffle_ram_init,
-        circuit.memory_layout.shuffle_ram_access_sets.len() > 0,
-    );
-    assert_eq!(num_memory_args, num_set_polys_for_memory_shuffle);
-    let memory_challenges = MemoryChallenges::new(&memory_argument_challenges);
-    let raw_memory_args_start = circuit
-        .stage_2_layout
-        .intermediate_polys_for_memory_argument
-        .start();
-    let memory_args_start = translate_e4_offset(raw_memory_args_start);
-
-    if process_shuffle_ram_init {
-        assert!(!process_registers_and_indirect_access);
-        // reminder of what needs to change for unrolled circuits
-        assert_eq!(
-            num_memory_args,
-            circuit.memory_layout.shuffle_ram_access_sets.len(),
-        );
-        stage2_process_lazy_init_and_ram_access(
-            circuit,
-            memory_challenges.clone(),
-            memory_timestamp_high_from_circuit_idx,
-            lazy_init_teardown_layouts,
-            setup_cols,
-            memory_cols,
-            d_stage_2_e4_cols,
-            memory_args_start,
-            log_n,
-            stream,
-        )?;
-    }
+    stage2_process_unrolled_grand_product_contributions(
+        circuit,
+        &memory_argument_challenges,
+        &machine_state_argument_challenges,
+        lazy_init_teardown_layouts,
+        memory_cols,
+        d_stage_2_e4_cols,
+        log_n,
+        &translate_e4_offset,
+        stream,
+    )?;
 
     if process_registers_and_indirect_access {
-        assert!(!process_shuffle_ram_init);
-        // Layout checks that likely need to be modified for unrolled circuits
-        let mut num_intermediate_polys_for_register_accesses = 0;
-        for el in circuit.memory_layout.register_and_indirect_accesses.iter() {
-            num_intermediate_polys_for_register_accesses += 1;
-            num_intermediate_polys_for_register_accesses += el.indirect_accesses.len();
-        }
-        assert_eq!(
-            num_memory_args,
-            num_intermediate_polys_for_register_accesses,
-        );
-        assert_eq!(num_memory_args, num_set_polys_for_memory_shuffle);
-        stage2_process_registers_and_indirect_access_in_delegation(
-            circuit,
-            memory_challenges,
-            &delegation_processor_layout,
-            memory_cols,
-            d_stage_2_e4_cols,
-            memory_args_start,
-            log_n,
-            stream,
-        )?;
+        panic!("Requires non-unrolled compute_stage_2_args_on_main_domain");
     }
 
     stage2_col_sum_adjustments_and_grand_product(
@@ -536,14 +524,14 @@ pub fn compute_stage_2_args_on_main_domain(
         n,
         handle_delegation_requests,
         process_delegations,
-        false,
+        true,
         stream,
         device_properties,
     )
 }
 
 #[cfg(test)]
-pub(crate) mod tests {
+mod tests {
     use super::*;
     use crate::device_context::DeviceContext;
     use crate::device_structures::{DeviceMatrix, DeviceMatrixChunk, DeviceMatrixMut};
@@ -554,37 +542,38 @@ pub(crate) mod tests {
 
     use era_cudart::memory::{memory_copy_async, DeviceAllocation};
     use field::Field;
-    use prover::tests::{run_basic_delegation_test_impl, run_keccak_test_impl, GpuComparisonArgs};
+    use prover::tests::{
+        run_basic_unrolled_test_with_word_specialization_impl, GpuUnrolledComparisonArgs,
+    };
     use serial_test::serial;
 
     type BF = BaseField;
     type E4 = Ext4Field;
 
     // CPU witness generation and checks are copied from zksync_airbender prover test.
-    pub(crate) fn comparison_hook(gpu_comparison_args: &GpuComparisonArgs) {
+    fn comparison_hook(gpu_comparison_args: &GpuUnrolledComparisonArgs) {
         let device_properties = DeviceProperties::new().unwrap();
-        let GpuComparisonArgs {
+        let GpuUnrolledComparisonArgs {
             circuit,
             setup,
-            external_values,
+            external_challenges,
+            aux_boundary_values: _,
             public_inputs: _,
             twiddles: _,
             lde_precomputations: _,
             lookup_mapping,
             log_n,
-            circuit_sequence,
             delegation_processing_type,
             prover_data,
         } = gpu_comparison_args;
         let log_n = *log_n;
-        let circuit_sequence = *circuit_sequence;
         let delegation_processing_type = delegation_processing_type.unwrap_or(0);
         let domain_size = 1 << log_n;
         let cached_data = ProverCachedData::new(
             &circuit,
-            &external_values.challenges,
+            &external_challenges,
             domain_size,
-            circuit_sequence,
+            0,
             delegation_processing_type,
         );
         // double-check argument sizes if desired
@@ -668,12 +657,14 @@ pub(crate) mod tests {
                 .lookup_argument_linearization_challenges,
             prover_data.stage_2_result.lookup_argument_gamma,
         );
+        let h_decoder_table_challenges = DecoderTableChallenges::new(
+            &prover_data
+                .stage_2_result
+                .decoder_table_linearization_challenges,
+            prover_data.stage_2_result.decoder_table_gamma,
+        );
         // Allocate GPU memory
         let stream = CudaStream::default();
-        let num_memory_args = circuit
-            .stage_2_layout
-            .intermediate_polys_for_memory_argument
-            .num_elements();
         let mut d_alloc_setup_cols =
             DeviceAllocation::<BF>::alloc(domain_size * num_setup_cols).unwrap();
         let mut d_alloc_trace_cols =
@@ -714,6 +705,8 @@ pub(crate) mod tests {
             DeviceAllocation::<BF>::alloc(col_sums_scratch_elems).unwrap();
 
         let mut d_lookup_challenges = DeviceAllocation::<LookupChallenges>::alloc(1).unwrap();
+        let mut d_decoder_table_challenges =
+            DeviceAllocation::<DecoderTableChallenges>::alloc(1).unwrap();
         memory_copy_async(&mut d_alloc_setup_cols, &h_setup_cols, &stream).unwrap();
         memory_copy_async(&mut d_alloc_trace_cols, &h_trace_cols, &stream).unwrap();
         memory_copy_async(
@@ -723,6 +716,12 @@ pub(crate) mod tests {
         )
         .unwrap();
         memory_copy_async(&mut d_lookup_challenges, &[h_lookup_challenges], &stream).unwrap();
+        memory_copy_async(
+            &mut d_decoder_table_challenges,
+            &[h_decoder_table_challenges],
+            &stream,
+        )
+        .unwrap();
         let d_setup_cols = DeviceMatrix::new(&d_alloc_setup_cols, domain_size);
         let d_trace_cols = DeviceMatrix::new(&d_alloc_trace_cols, domain_size);
         let slice = d_trace_cols.slice();
@@ -756,6 +755,7 @@ pub(crate) mod tests {
             &mut maybe_batch_reduce_intermediates,
             &mut d_alloc_scratch_for_col_sums,
             &d_lookup_challenges[0],
+            &d_decoder_table_challenges[0],
             &cached_data,
             &circuit,
             log_n as u32,
@@ -783,6 +783,10 @@ pub(crate) mod tests {
         let range_check_16_e4_args_start =
             translate_e4_offset(args_metadata.ext_4_field_oracles.start());
         // collect locations of timestamp range check args
+        let num_timestamp_multiplicities_cols = circuit
+            .stage_2_layout
+            .intermediate_poly_for_timestamp_range_check_multiplicity
+            .num_elements();
         let args_metadata = &circuit
             .stage_2_layout
             .intermediate_polys_for_timestamp_range_checks;
@@ -792,9 +796,15 @@ pub(crate) mod tests {
             timestamp_range_check_num_bf_args,
             timestamp_range_check_num_e4_args
         );
-        let timestamp_range_check_bf_args_start = args_metadata.base_field_oracles.start();
-        let timestamp_range_check_e4_args_start =
-            translate_e4_offset(args_metadata.ext_4_field_oracles.start());
+        let (timestamp_range_check_bf_args_start, timestamp_range_check_e4_args_start) =
+            if num_timestamp_multiplicities_cols > 0 {
+                let bf_args_start = args_metadata.base_field_oracles.start();
+                let e4_args_start = translate_e4_offset(args_metadata.ext_4_field_oracles.start());
+                (bf_args_start, e4_args_start)
+            } else {
+                assert_eq!(timestamp_range_check_num_bf_args, 0);
+                (0, 0)
+            };
         // collect locations of lazy init address args
         let lazy_init_lookup_set = cached_data.lazy_init_address_range_check_16;
         assert_eq!(
@@ -814,26 +824,47 @@ pub(crate) mod tests {
                 (0, 0, 0)
             };
         // collect locations of generic args
-        let raw_col = circuit
-            .stage_2_layout
-            .intermediate_polys_for_generic_lookup
-            .start();
-        let generic_args_start = translate_e4_offset(raw_col);
-        // check locations of multiplicity args
-        let multiplicities_args_start = cached_data.range_check_16_multiplicities_dst;
-        assert_eq!(
-            multiplicities_args_start + 4,
-            cached_data.timestamp_range_check_multiplicities_dst,
-        );
-        assert_eq!(
-            multiplicities_args_start + 8,
-            cached_data.generic_lookup_multiplicities_dst_start,
-        );
-        let multiplicities_args_start = translate_e4_offset(multiplicities_args_start);
+        let generic_args_start = if num_generic_args > 0 {
+            let raw_col = circuit
+                .stage_2_layout
+                .intermediate_polys_for_generic_lookup
+                .start();
+            translate_e4_offset(raw_col)
+        } else {
+            0
+        };
+        // collect locations of multiplicity args
+        let range_check_16_multiplicities_arg_col =
+            translate_e4_offset(cached_data.range_check_16_multiplicities_dst);
+        let timestamp_range_check_multiplicities_arg_col = if num_timestamp_multiplicities_cols > 0
+        {
+            translate_e4_offset(cached_data.timestamp_range_check_multiplicities_dst)
+        } else {
+            0
+        };
         let num_generic_multiplicities_cols = circuit
             .setup_layout
             .generic_lookup_setup_columns
             .num_elements();
+        let generic_lookup_multiplicities_args_start = if num_generic_multiplicities_cols > 0 {
+            translate_e4_offset(cached_data.generic_lookup_multiplicities_dst_start)
+        } else {
+            0
+        };
+        let num_decoder_multiplicities_cols = circuit
+            .stage_2_layout
+            .intermediate_polys_for_decoder_multiplicities
+            .num_elements();
+        let decoder_multiplicities_arg_col = if num_decoder_multiplicities_cols > 0 {
+            translate_e4_offset(
+                circuit
+                    .stage_2_layout
+                    .intermediate_polys_for_decoder_multiplicities
+                    .start(),
+            )
+        } else {
+            0
+        };
         // one delegation aux poly col
         let delegation_aux_poly_col =
             if cached_data.handle_delegation_requests || cached_data.process_delegations {
@@ -854,12 +885,53 @@ pub(crate) mod tests {
                 .num_elements(),
         );
         let lazy_init_teardown_args_start = translate_e4_offset(raw_col);
-        let raw_col = circuit
+        let num_memory_args = circuit
             .stage_2_layout
             .intermediate_polys_for_memory_argument
-            .start();
-        let memory_args_start = translate_e4_offset(raw_col);
-        let (_, grand_product_col) = get_grand_product_src_dst_cols(circuit, false);
+            .num_elements();
+        let memory_args_start = if num_memory_args > 0 {
+            let raw_col = circuit
+                .stage_2_layout
+                .intermediate_polys_for_memory_argument
+                .start();
+            translate_e4_offset(raw_col)
+        } else {
+            0
+        };
+        // collect locations of unrolled-specific args
+        let next = &circuit
+            .stage_2_layout
+            .intermediate_poly_for_decoder_accesses;
+        let num_intermediate_polys_for_decoder = next.num_elements();
+        let intermediate_polys_for_decoder_start = if num_intermediate_polys_for_decoder > 0 {
+            translate_e4_offset(next.start())
+        } else {
+            0
+        };
+
+        let next = &circuit
+            .stage_2_layout
+            .intermediate_polys_for_state_permutation;
+        let num_intermediate_polys_for_state_permutation = next.num_elements();
+        let intermediate_polys_for_state_permutation_start =
+            if num_intermediate_polys_for_state_permutation > 0 {
+                translate_e4_offset(next.start())
+            } else {
+                0
+            };
+
+        let next = &circuit
+            .stage_2_layout
+            .intermediate_polys_for_permutation_masking;
+        let num_intermediate_polys_for_permutation_masking = next.num_elements();
+        let intermediate_polys_for_permutation_masking_start =
+            if num_intermediate_polys_for_permutation_masking > 0 {
+                translate_e4_offset(next.start())
+            } else {
+                0
+            };
+
+        let (_, grand_product_col) = get_grand_product_src_dst_cols(circuit, true);
         let h_stage_2_bf_cols = &h_stage_2_cols[0..num_stage_2_bf_cols * domain_size];
         let start = e4_cols_offset * domain_size;
         let end = start + 4 * num_stage_2_e4_cols * domain_size;
@@ -966,13 +1038,42 @@ pub(crate) mod tests {
                     );
                 }
                 // multiplicities args comparisons
-                let start = multiplicities_args_start;
-                let end = start + 2 + num_generic_multiplicities_cols;
+                let j = range_check_16_multiplicities_arg_col;
+                assert_eq!(
+                    get_vectorized_e4_val(i, j),
+                    src_e4.add(j).read(),
+                    "range check 16 multiplicity e4 failed at row {} col {}",
+                    i,
+                    j,
+                );
+                if num_timestamp_multiplicities_cols > 0 {
+                    let j = timestamp_range_check_multiplicities_arg_col;
+                    assert_eq!(
+                        get_vectorized_e4_val(i, j),
+                        src_e4.add(j).read(),
+                        "timestamp range check multiplicity e4 failed at row {} col {}",
+                        i,
+                        j,
+                    );
+                }
+                let start = generic_lookup_multiplicities_args_start;
+                let end = start + num_generic_multiplicities_cols;
                 for j in start..end {
                     assert_eq!(
                         get_vectorized_e4_val(i, j),
                         src_e4.add(j).read(),
-                        "multiplicities args e4 failed at row {} col {}",
+                        "generic lookup multiplicity e4 failed at row {} col {}",
+                        i,
+                        j,
+                    );
+                }
+                let start = decoder_multiplicities_arg_col;
+                let end = start + num_decoder_multiplicities_cols;
+                for j in start..end {
+                    assert_eq!(
+                        get_vectorized_e4_val(i, j),
+                        src_e4.add(j).read(),
+                        "decoder lookup multiplicity e4 failed at row {} col {}",
                         i,
                         j,
                     );
@@ -1014,6 +1115,40 @@ pub(crate) mod tests {
                         j,
                     );
                 }
+                // remaining unrolled-specific arg comparisons
+                let start = intermediate_polys_for_decoder_start;
+                let end = start + num_intermediate_polys_for_decoder;
+                for j in start..end {
+                    assert_eq!(
+                        get_vectorized_e4_val(i, j),
+                        src_e4.add(j).read(),
+                        "intermediate polys for decoder e4 failed at row {} col {}",
+                        i,
+                        j,
+                    );
+                }
+                let start = intermediate_polys_for_state_permutation_start;
+                let end = start + num_intermediate_polys_for_state_permutation;
+                for j in start..end {
+                    assert_eq!(
+                        get_vectorized_e4_val(i, j),
+                        src_e4.add(j).read(),
+                        "intermediate polys for state permutation e4 failed at row {} col {}",
+                        i,
+                        j,
+                    );
+                }
+                let start = intermediate_polys_for_permutation_masking_start;
+                let end = start + num_intermediate_polys_for_permutation_masking;
+                for j in start..end {
+                    assert_eq!(
+                        get_vectorized_e4_val(i, j),
+                        src_e4.add(j).read(),
+                        "intermediate polys for permutation masking e4 failed at row {} col {}",
+                        i,
+                        j,
+                    );
+                }
                 // memory grand product comparison
                 let j = grand_product_col;
                 assert_eq!(
@@ -1030,23 +1165,15 @@ pub(crate) mod tests {
 
     #[test]
     #[serial]
-    fn test_stage_2_non_unrolled_for_main_and_blake() {
+    fn test_stage_2_unrolled_for_main_and_blake() {
         let ctx = DeviceContext::create(12).unwrap();
-        run_basic_delegation_test_impl(
+        // Tells the CPU test to use this file's comparison_hook for unrolled ciruits,
+        // and comparison_hook from non-unrolled stage_2_kernels for delegation circuits.
+        run_basic_unrolled_test_with_word_specialization_impl(
             Some(Box::new(comparison_hook)),
-            Some(Box::new(comparison_hook)),
-        );
-        ctx.destroy().unwrap();
-    }
-
-    #[test]
-    #[serial]
-    #[ignore]
-    fn test_stage_2_non_unrolled_for_main_and_keccak() {
-        let ctx = DeviceContext::create(12).unwrap();
-        run_keccak_test_impl(
-            Some(Box::new(comparison_hook)),
-            Some(Box::new(comparison_hook)),
+            Some(Box::new(
+                crate::prover::stage_2_kernels::tests::comparison_hook,
+            )),
         );
         ctx.destroy().unwrap();
     }
