@@ -13,6 +13,10 @@ pub fn caps_flattened(caps: &'_ [MerkleTreeCap<CAP_SIZE>; NUM_COSETS]) -> &'_ [u
 
 pub const CAP_SIZE: usize = 64;
 
+pub const FINAL_PC_BUFFER_PC_IDX: usize = 0;
+pub const FINAL_PC_BUFFER_TS_LOW_IDX: usize = 1;
+pub const FINAL_PC_BUFFER_TS_HIGH_IDX: usize = 2;
+
 #[repr(usize)]
 pub enum VerificationFunctionPointer {
     UnrolledNoDelegation(VerifierFunctionPointer<CAP_SIZE, NUM_COSETS, 0, 0, 0, 1>),
@@ -23,8 +27,7 @@ pub const INITS_AND_TEARDOWNS_CAPACITY_PER_SET: u32 =
     (inits_and_teardowns_verifier::concrete::size_constants::TRACE_LEN - 1) as u32;
 pub const MAX_MEMORY_CELLS_TO_INIT: u32 = const {
     let mut max_cells = 1u32 << 30;
-    // TODO: move to constant
-    max_cells -= (1 << 21) >> 2;
+    max_cells -= common_constants::rom::ROM_WORD_SIZE as u32 ;
 
     max_cells
 };
@@ -191,14 +194,14 @@ pub unsafe fn verify_full_statement_for_unrolled_circuits<
     // capacity per set, setup, verifier function
     inits_and_teardowns_verifier: (
         &[MerkleTreeCap<CAP_SIZE>; NUM_COSETS],
-        VerifierFunctionPointer<CAP_SIZE, NUM_COSETS, 0, NUM_INIT_AND_TEARDOWN_SETS, 0>,
+        VerifierFunctionPointer<CAP_SIZE, NUM_COSETS, 0, NUM_INIT_AND_TEARDOWN_SETS, 0, 0>,
     ),
     // circuit type/delegation type, capacity, setup, verifier function
     delegation_circuits_verifiers: &[(
         u32,
         u32,
         &[MerkleTreeCap<CAP_SIZE>; NUM_COSETS],
-        VerifierFunctionPointer<CAP_SIZE, NUM_COSETS, NUM_DELEGATION_CHALLENGES, 0, 0>,
+        VerifierFunctionPointer<CAP_SIZE, NUM_COSETS, NUM_DELEGATION_CHALLENGES, 0, 0, 0>,
     )],
 ) -> [u32; 16] {
     assert_eq!(
@@ -225,10 +228,6 @@ pub unsafe fn verify_full_statement_for_unrolled_circuits<
     assert_eq!(registers_buffer[0], 0);
 
     transcript.absorb(&registers_buffer);
-
-    const FINAL_PC_BUFFER_PC_IDX: usize = 0;
-    const FINAL_PC_BUFFER_TS_LOW_IDX: usize = 1;
-    const FINAL_PC_BUFFER_TS_HIGH_IDX: usize = 2;
 
     let mut final_pc_buffer = [0u32; BLAKE2S_BLOCK_SIZE_U32_WORDS];
     let final_pc = verifier_common::DefaultNonDeterminismSource::read_word();

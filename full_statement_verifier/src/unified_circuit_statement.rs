@@ -1,233 +1,31 @@
-#![cfg_attr(not(any(test, feature = "replace_csr")), no_std)]
-#![feature(slice_from_ptr_range)]
-#![allow(incomplete_features)]
-#![feature(generic_const_exprs)]
+use common_constants::{INITIAL_PC, INITIAL_TIMESTAMP};
+use verifier_common::{cs::definitions::split_timestamp, DefaultNonDeterminismSource};
+use crate::unrolled_proof_statement::read_setups;
+use super::*;
 
-use core::mem::MaybeUninit;
+pub const REDUCED_UNIFIED_CIRCUIT_VERIFIER_PTR: VerifierFunctionPointer<CAP_SIZE, NUM_COSETS, 1, 1, 0, 1> = unified_reduced_machine_verifier::verify;
+pub const REDUCED_UNIFIED_CIRCUIT_CAPACITY: u32 = (unified_reduced_machine_verifier::concrete::size_constants::TRACE_LEN - 1) as u32;
 
-pub use verifier_common;
-
-use verifier_common::blake2s_u32::{BLAKE2S_BLOCK_SIZE_U32_WORDS, BLAKE2S_DIGEST_SIZE_U32_WORDS};
-use verifier_common::cs::definitions::{
-    NUM_EMPTY_BITS_FOR_RAM_TIMESTAMP, NUM_TIMESTAMP_COLUMNS_FOR_RAM, TIMESTAMP_COLUMNS_NUM_BITS,
-};
-use verifier_common::field::{Field, Mersenne31Field, Mersenne31Quartic, PrimeField};
-use verifier_common::prover::definitions::MerkleTreeCap;
-
-mod constants;
-pub mod unrolled_proof_statement;
-pub mod unified_circuit_statement;
-
-use self::constants::*;
-
-use verifier_common::non_determinism_source::NonDeterminismSource;
-use verifier_common::prover::definitions::ExternalChallenges;
-use verifier_common::transcript::Blake2sBufferingTranscript;
-use verifier_common::VerifierFunctionPointer;
-use verifier_common::{parse_field_els_as_u32_from_u16_limbs_checked, ProofPublicInputs};
-use verifier_common::{prover, ProofOutput};
-
-pub const MAX_CYCLES: u64 = const {
-    let max_unique_timestamps =
-        1u64 << (TIMESTAMP_COLUMNS_NUM_BITS as usize * NUM_TIMESTAMP_COLUMNS_FOR_RAM);
-    let max_cycles = max_unique_timestamps >> NUM_EMPTY_BITS_FOR_RAM_TIMESTAMP;
-
-    max_cycles
-};
-
-pub const MAX_BASE_LAYER_CIRCUITS: usize = const {
-    let max_circuits =
-        MAX_CYCLES / ((risc_v_cycles_verifier::concrete::size_constants::TRACE_LEN as u64) - 1);
-
-    max_circuits as usize
-};
-
-pub const MAX_RECURSION_LAYER_CIRCUITS: usize = MAX_BASE_LAYER_CIRCUITS;
-
-pub const RISC_V_VERIFIER_PTR: VerifierFunctionPointer<
-    CAP_SIZE,
-    NUM_COSETS,
-    NUM_DELEGATION_CHALLENGES,
-    1,
-    2,
-> = risc_v_cycles_verifier::verify;
-
-pub const RISC_V_REDUCED_MACHINE_VERIFIER_PTR: VerifierFunctionPointer<
-    CAP_SIZE,
-    NUM_COSETS,
-    NUM_DELEGATION_CHALLENGES,
-    1,
-    2,
-> = reduced_risc_v_machine_verifier::verify;
-
-pub const RISC_V_REDUCED_LOG_23_MACHINE_VERIFIER_PTR: VerifierFunctionPointer<
-    CAP_SIZE,
-    NUM_COSETS,
-    NUM_DELEGATION_CHALLENGES,
-    1,
-    2,
-> = reduced_risc_v_log_23_machine_verifier::verify;
-
-pub const RISC_V_FINAL_REDUCED_MACHINE_VERIFIER_PTR: VerifierFunctionPointer<
-    CAP_SIZE,
-    NUM_COSETS,
-    NUM_DELEGATION_CHALLENGES,
-    1,
-    2,
-> = final_reduced_risc_v_machine_verifier::verify;
-
-pub const BLAKE_WITH_COMPRESSION_VERIFIER_PTR: VerifierFunctionPointer<
-    CAP_SIZE,
-    NUM_COSETS,
-    NUM_DELEGATION_CHALLENGES,
-    0,
-    0,
-> = blake2_with_compression_verifier::verify;
-
-pub const BIGINT_WITH_CONTROL_VERIFIER_PTR: VerifierFunctionPointer<
-    CAP_SIZE,
-    NUM_COSETS,
-    NUM_DELEGATION_CHALLENGES,
-    0,
-    0,
-> = bigint_with_control_verifier::verify;
-
-pub const KECCAK_SPECIAL5_CONTROL_VERIFIER_PTR: VerifierFunctionPointer<
-    CAP_SIZE,
-    NUM_COSETS,
-    NUM_DELEGATION_CHALLENGES,
-    0,
-    0,
-> = keccak_special5_verifier::verify;
-
-use crate::constants::ALL_DELEGATION_CIRCUITS_PARAMS;
-
-pub const BASE_LAYER_DELEGATION_CIRCUITS_VERIFICATION_PARAMETERS: &[(
-    u32, // delegation type
-    u32, // delegation capacity
-    &[MerkleTreeCap<CAP_SIZE>; NUM_COSETS],
-    VerifierFunctionPointer<CAP_SIZE, NUM_COSETS, NUM_DELEGATION_CHALLENGES, 0, 0>,
-)] = &[
-    (
-        ALL_DELEGATION_CIRCUITS_PARAMS[0].0,
-        ALL_DELEGATION_CIRCUITS_PARAMS[0].1,
-        &ALL_DELEGATION_CIRCUITS_PARAMS[0].2,
-        BLAKE_WITH_COMPRESSION_VERIFIER_PTR,
-    ),
-    (
-        ALL_DELEGATION_CIRCUITS_PARAMS[1].0,
-        ALL_DELEGATION_CIRCUITS_PARAMS[1].1,
-        &ALL_DELEGATION_CIRCUITS_PARAMS[1].2,
-        BIGINT_WITH_CONTROL_VERIFIER_PTR,
-    ),
-    (
-        ALL_DELEGATION_CIRCUITS_PARAMS[2].0,
-        ALL_DELEGATION_CIRCUITS_PARAMS[2].1,
-        &ALL_DELEGATION_CIRCUITS_PARAMS[2].2,
-        KECCAK_SPECIAL5_CONTROL_VERIFIER_PTR,
-    ),
-];
-
-pub const RECURSION_LAYER_CIRCUITS_VERIFICATION_PARAMETERS: &[(
-    u32,
-    u32,
-    &[MerkleTreeCap<CAP_SIZE>; NUM_COSETS],
-    VerifierFunctionPointer<CAP_SIZE, NUM_COSETS, NUM_DELEGATION_CHALLENGES, 0, 0>,
-)] = &[(
-    ALL_DELEGATION_CIRCUITS_PARAMS[0].0,
-    ALL_DELEGATION_CIRCUITS_PARAMS[0].1,
-    &ALL_DELEGATION_CIRCUITS_PARAMS[0].2,
-    BLAKE_WITH_COMPRESSION_VERIFIER_PTR,
-)];
-
-pub const FINAL_RECURSION_LAYER_CIRCUITS_VERIFICATION_PARAMETERS: &[(
-    u32,
-    u32,
-    &[MerkleTreeCap<CAP_SIZE>; NUM_COSETS],
-    VerifierFunctionPointer<CAP_SIZE, NUM_COSETS, NUM_DELEGATION_CHALLENGES, 0, 0>,
-)] = &[];
-
-const _: () = {
-    let mut t = BASE_LAYER_DELEGATION_CIRCUITS_VERIFICATION_PARAMETERS[0].0;
-    let mut i = 1;
-    while i < BASE_LAYER_DELEGATION_CIRCUITS_VERIFICATION_PARAMETERS.len() {
-        assert!(t < BASE_LAYER_DELEGATION_CIRCUITS_VERIFICATION_PARAMETERS[i].0);
-        t = BASE_LAYER_DELEGATION_CIRCUITS_VERIFICATION_PARAMETERS[i].0;
-        i += 1
-    }
-
-    let mut t = RECURSION_LAYER_CIRCUITS_VERIFICATION_PARAMETERS[0].0;
-    let mut i = 1;
-    while i < RECURSION_LAYER_CIRCUITS_VERIFICATION_PARAMETERS.len() {
-        assert!(t < RECURSION_LAYER_CIRCUITS_VERIFICATION_PARAMETERS[i].0);
-        t = RECURSION_LAYER_CIRCUITS_VERIFICATION_PARAMETERS[i].0;
-        i += 1
-    }
-
-    ()
-};
-
-#[derive(Clone, Copy, Debug, PartialEq, Eq, Hash)]
-pub struct InitAndTeardownTuple {
-    pub address: u32,
-    pub teardown_value: u32,
-    pub teardown_ts_pair: (u32, u32),
-}
-
-impl InitAndTeardownTuple {
-    #[inline(always)]
-    pub fn from_aux_values_first_row(
-        value: &prover::definitions::AuxArgumentsBoundaryValues,
-    ) -> Self {
-        Self {
-            address: parse_field_els_as_u32_from_u16_limbs_checked(value.lazy_init_first_row),
-            teardown_value: parse_field_els_as_u32_from_u16_limbs_checked(
-                value.teardown_value_first_row,
-            ),
-            teardown_ts_pair: (
-                value.teardown_timestamp_first_row[0].to_reduced_u32(),
-                value.teardown_timestamp_first_row[1].to_reduced_u32(),
-            ),
-        }
-    }
-
-    #[inline(always)]
-    pub fn from_aux_values_one_before_last_row(
-        value: &prover::definitions::AuxArgumentsBoundaryValues,
-    ) -> Self {
-        Self {
-            address: parse_field_els_as_u32_from_u16_limbs_checked(
-                value.lazy_init_one_before_last_row,
-            ),
-            teardown_value: parse_field_els_as_u32_from_u16_limbs_checked(
-                value.teardown_value_one_before_last_row,
-            ),
-            teardown_ts_pair: (
-                value.teardown_timestamp_one_before_last_row[0].to_reduced_u32(),
-                value.teardown_timestamp_one_before_last_row[1].to_reduced_u32(),
-            ),
-        }
-    }
-}
-
-/// If we recurse over user's program -> we must provide expected final PC,
-/// and setup caps (that encode the program itself!),
-/// otherwise we only need to provide final PC
+/// Unified circuit inherits PC + timestamp permutation technique from unrolled ones,
+/// but also keeps inits and teardowns in the one an only circuit
 #[allow(invalid_value)]
 #[inline(never)]
-pub unsafe fn verify_full_statement<const BASE_LAYER: bool>(
-    main_risc_v_circuit_verifier: VerifierFunctionPointer<
+pub unsafe fn verify_unified_circuit_statement<const BASE_LAYER: bool>(
+    unified_circuit_setup: &[MerkleTreeCap<CAP_SIZE>; NUM_COSETS],
+    unified_circuit_capacity: u32,
+    unified_circuit_verifier: VerifierFunctionPointer<
         CAP_SIZE,
         NUM_COSETS,
         NUM_DELEGATION_CHALLENGES,
         1,
-        2,
+        0,
+        1,
     >,
     delegation_circuits_verifiers: &[(
         u32,
         u32,
         &[MerkleTreeCap<CAP_SIZE>; NUM_COSETS],
-        VerifierFunctionPointer<CAP_SIZE, NUM_COSETS, NUM_DELEGATION_CHALLENGES, 0, 0>,
+        VerifierFunctionPointer<CAP_SIZE, NUM_COSETS, NUM_DELEGATION_CHALLENGES, 0, 0, 0>,
     )],
 ) -> [u32; 16] {
     // we should in parallel verify proofs, and drag along the transcript to assert equality of challenges
@@ -250,26 +48,35 @@ pub unsafe fn verify_full_statement<const BASE_LAYER: bool>(
 
     transcript.absorb(&registers_buffer);
 
+    use crate::unrolled_proof_statement::*;
+
+    let mut final_pc_buffer = [0u32; BLAKE2S_BLOCK_SIZE_U32_WORDS];
+    let final_pc = verifier_common::DefaultNonDeterminismSource::read_word();
+    let final_ts_low = verifier_common::DefaultNonDeterminismSource::read_word();
+    let final_ts_high = verifier_common::DefaultNonDeterminismSource::read_word();
+    final_pc_buffer[FINAL_PC_BUFFER_PC_IDX] = final_pc;
+    final_pc_buffer[FINAL_PC_BUFFER_TS_LOW_IDX] = final_ts_low;
+    final_pc_buffer[FINAL_PC_BUFFER_TS_HIGH_IDX] = final_ts_high;
+
+    transcript.absorb(&final_pc_buffer);
+
     // continue with main RISC-V cycles
-    let mut expected_input_pc = 0; // entry point
-    let mut memory_grand_product_accumulator = Mersenne31Quartic::ONE;
+    let mut grand_product_accumulator = Mersenne31Quartic::ONE;
     let mut delegation_set_accumulator = Mersenne31Quartic::ZERO;
 
     // loop over main circuit type
-    let mut proof_output_0: ProofOutput<CAP_SIZE, NUM_COSETS, NUM_DELEGATION_CHALLENGES, 1> =
+    let mut proof_output_0: ProofOutput<CAP_SIZE, NUM_COSETS, NUM_DELEGATION_CHALLENGES, 1, 1> =
         MaybeUninit::uninit().assume_init();
-    let mut proof_output_1: ProofOutput<CAP_SIZE, NUM_COSETS, NUM_DELEGATION_CHALLENGES, 1> =
+    let mut proof_output_1: ProofOutput<CAP_SIZE, NUM_COSETS, NUM_DELEGATION_CHALLENGES, 1, 1> =
         MaybeUninit::uninit().assume_init();
     let mut state_variables = ProofPublicInputs::uninit();
 
     let num_circuits = verifier_common::DefaultNonDeterminismSource::read_word();
     assert!(num_circuits > 0);
-    if BASE_LAYER {
-        assert!(num_circuits <= MAX_BASE_LAYER_CIRCUITS as u32);
-    } else {
-        assert!(num_circuits <= MAX_RECURSION_LAYER_CIRCUITS as u32);
-    }
+    let mut total_cycles = 0u64;
     for circuit_sequence in 0..num_circuits {
+        total_cycles += unified_circuit_capacity as u64;
+        assert!(total_cycles < MAX_CYCLES);
         let (current, previous) = if circuit_sequence & 1 == 0 {
             (&mut proof_output_0, &proof_output_1)
         } else {
@@ -277,21 +84,16 @@ pub unsafe fn verify_full_statement<const BASE_LAYER: bool>(
         };
         // Note: this will make sure that all external challenges are the same as we progress,
         // and so we will only need to save the result at the very end
-        (main_risc_v_circuit_verifier)(current, &mut state_variables);
+        (unified_circuit_verifier)(current, &mut state_variables);
 
         assert_eq!(current.circuit_sequence, circuit_sequence);
         assert_eq!(current.delegation_type, 0);
 
-        if circuit_sequence == 0 {
-            // commit setup into transcript
-            transcript.absorb(current.setup_caps_flattened());
-        }
         // and commit memory caps
         transcript.absorb(current.memory_caps_flattened());
 
         // now we should check all invariants about continuity
 
-        // first over ProofOutput
         if circuit_sequence > 0 {
             // and check equality of the setup
             assert!(MerkleTreeCap::compare(
@@ -305,6 +107,7 @@ pub unsafe fn verify_full_statement<const BASE_LAYER: bool>(
                 current.delegation_challenges
             );
 
+            // and we also check inits/teardowns
             // check lazy inits
             let last_previous = parse_field_els_as_u32_from_u16_limbs_checked(
                 previous.lazy_init_boundary_values[0].lazy_init_one_before_last_row,
@@ -313,7 +116,6 @@ pub unsafe fn verify_full_statement<const BASE_LAYER: bool>(
                 current.lazy_init_boundary_values[0].lazy_init_first_row,
             );
 
-            // if it's
             if first_current > last_previous {
                 // nothing, we are all good
             } else {
@@ -343,19 +145,12 @@ pub unsafe fn verify_full_statement<const BASE_LAYER: bool>(
                     0
                 );
             }
+        } else {
+            assert!(MerkleTreeCap::compare(unified_circuit_setup, &current.setup_caps));
         }
-        // then over state variables
-
-        // check continuous PC
-        let start_pc =
-            parse_field_els_as_u32_from_u16_limbs_checked(state_variables.input_state_variables);
-        assert_eq!(start_pc, expected_input_pc);
-        let end_pc =
-            parse_field_els_as_u32_from_u16_limbs_checked(state_variables.output_state_variables);
-        expected_input_pc = end_pc;
 
         // update accumulators
-        memory_grand_product_accumulator.mul_assign(&current.grand_product_accumulator);
+        grand_product_accumulator.mul_assign(&current.grand_product_accumulator);
         if NUM_DELEGATION_CHALLENGES > 0 {
             delegation_set_accumulator.add_assign(&current.delegation_argument_accumulator[0]);
         }
@@ -414,7 +209,7 @@ pub unsafe fn verify_full_statement<const BASE_LAYER: bool>(
                 );
 
                 // update accumulators
-                memory_grand_product_accumulator
+                grand_product_accumulator
                     .mul_assign(&delegation_proof_output.grand_product_accumulator);
                 delegation_set_accumulator
                     .sub_assign(&delegation_proof_output.delegation_argument_accumulator[0]);
@@ -457,8 +252,19 @@ pub unsafe fn verify_full_statement<const BASE_LAYER: bool>(
                 .memory_argument_linearization_challenges,
             proof_output_0.memory_challenges.memory_argument_gamma,
         );
-    memory_grand_product_accumulator.mul_assign(&register_contribution);
-    assert_eq!(memory_grand_product_accumulator, Mersenne31Quartic::ONE);
+    let machine_state_contribution =
+        prover::definitions::produce_pc_into_permutation_accumulator_raw(
+            INITIAL_PC,
+            split_timestamp(INITIAL_TIMESTAMP),
+            final_pc,
+            (final_ts_low, final_ts_high),
+            &proof_output_0.machine_state_permutation_challenges[0].linearization_challenges,
+            &proof_output_0.machine_state_permutation_challenges[0].additive_term,
+        );
+    grand_product_accumulator.mul_assign(&register_contribution);
+    grand_product_accumulator.mul_assign(&machine_state_contribution);
+
+    assert_eq!(grand_product_accumulator, Mersenne31Quartic::ONE);
     assert_eq!(delegation_set_accumulator, Mersenne31Quartic::ZERO);
 
     // Now we only need to reason about "which program do we execute", and "did it finish successfully or not".
@@ -473,9 +279,14 @@ pub unsafe fn verify_full_statement<const BASE_LAYER: bool>(
     // so the program ended logical execution and we can conclude that the set of register values is meaningful
 
     let mut result_hasher = Blake2sBufferingTranscript::new();
-    result_hasher.absorb(&[expected_input_pc]);
+    final_pc_buffer[FINAL_PC_BUFFER_TS_LOW_IDX] = 0;
+    final_pc_buffer[FINAL_PC_BUFFER_TS_HIGH_IDX] = 0;
+
+    result_hasher.absorb(&final_pc_buffer);
     result_hasher.absorb(proof_output_0.setup_caps_flattened());
     let end_params_output = result_hasher.finalize_reset();
+
+    // `end_params_output` now fully describes an ending PC + setups (and setups include program binary)
 
     if BASE_LAYER {
         // we REQUIRE that remaining 8 registers are 0 in our convention
@@ -554,38 +365,14 @@ pub unsafe fn verify_full_statement<const BASE_LAYER: bool>(
     output
 }
 
-pub fn verify_base_layer() -> [u32; 16] {
+pub fn verify_unified_circuit_recursion_layer() -> [u32; 16] {
     unsafe {
-        verify_full_statement::<true>(
-            RISC_V_VERIFIER_PTR,
-            BASE_LAYER_DELEGATION_CIRCUITS_VERIFICATION_PARAMETERS,
-        )
-    }
-}
-
-pub fn verify_recursion_layer() -> [u32; 16] {
-    unsafe {
-        verify_full_statement::<false>(
-            RISC_V_REDUCED_MACHINE_VERIFIER_PTR,
+        let main_setup = read_setups::<DefaultNonDeterminismSource, 1>();
+        verify_unified_circuit_statement::<false>(
+            &main_setup[0],
+            REDUCED_UNIFIED_CIRCUIT_CAPACITY,
+            REDUCED_UNIFIED_CIRCUIT_VERIFIER_PTR,
             RECURSION_LAYER_CIRCUITS_VERIFICATION_PARAMETERS,
-        )
-    }
-}
-
-pub fn verify_recursion_log_23_layer() -> [u32; 16] {
-    unsafe {
-        verify_full_statement::<false>(
-            RISC_V_REDUCED_LOG_23_MACHINE_VERIFIER_PTR,
-            RECURSION_LAYER_CIRCUITS_VERIFICATION_PARAMETERS,
-        )
-    }
-}
-
-pub fn verify_final_recursion_layer() -> [u32; 16] {
-    unsafe {
-        verify_full_statement::<false>(
-            RISC_V_FINAL_REDUCED_MACHINE_VERIFIER_PTR,
-            FINAL_RECURSION_LAYER_CIRCUITS_VERIFICATION_PARAMETERS,
         )
     }
 }
