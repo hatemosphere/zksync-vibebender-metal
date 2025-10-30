@@ -15,6 +15,7 @@ pub fn unified_reduced_machine_circuit_setup<A: GoodAllocator + 'static, B: Good
     let (decoder_table_data, witness_gen_data) =
         ::unified_reduced_machine::get_decoder_table::<B>(bytecode);
     use prover::cs::machine::ops::unrolled::materialize_flattened_decoder_table;
+    println!("Flattening decoder table");
     let decoder_table = materialize_flattened_decoder_table::<Mersenne31Field>(&decoder_table_data);
     println!("Precomputing twiddles and LDE factors");
     let twiddles = Twiddles::get(::unified_reduced_machine::DOMAIN_SIZE, &worker);
