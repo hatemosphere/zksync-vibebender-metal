@@ -181,7 +181,8 @@ impl OpcodeFamilyDecoder for ReducedMachineDecoder {
         (bool, bool), // (void sign extending for CSRRW (I-type formally), validate CSR)
     ) {
         let (a, b, c) = self.define_decoder_subspace(opcode, func3, func7);
-        if opcode == OPERATION_SYSTEM && a == true {
+        if opcode == OPERATION_SYSTEM && a == true && func3 == 0b001 {
+            // CSRRW only in system space, not MOP one
             // only if opcode is supported
             (a, b, c, (true, true))
         } else {
