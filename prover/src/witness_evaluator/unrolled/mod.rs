@@ -7,6 +7,7 @@ use crate::tracers::unrolled::word_specialized_tracer::WordSpecializedTracer;
 use cs::machine::machine_configurations::full_isa_with_delegation_no_exceptions::FullIsaMachineWithDelegationNoExceptionHandling;
 use cs::machine::machine_configurations::full_isa_with_delegation_no_exceptions_no_signed_mul_div::FullIsaMachineWithDelegationNoExceptionHandlingNoSignedMulDiv;
 use cs::machine::machine_configurations::minimal_no_exceptions_with_delegation::MinimalMachineNoExceptionHandlingWithDelegation;
+use risc_v_simulator::machine_mode_only_unrolled::UnifiedOpcodeTracingDataWithTimestamp;
 use risc_v_simulator::cycle::MachineConfig;
 use risc_v_simulator::machine_mode_only_unrolled::{
     DelegationCSRProcessor, RiscV32StateForUnrolledProver,
@@ -696,6 +697,7 @@ pub fn run_unrolled_machine<
             ROM_BOUND_SECOND_WORD_BITS,
             BlakeDelegationDestinationHolderConstructor,
             _,
+            _,
         >(
             &tape,
             &snapshotter,
@@ -728,6 +730,7 @@ pub fn run_unrolled_machine<
             ROM_BOUND_SECOND_WORD_BITS,
             BigintDelegationDestinationHolderConstructor,
             _,
+            _,
         >(
             &tape,
             &snapshotter,
@@ -757,6 +760,7 @@ pub fn run_unrolled_machine<
             ROM_BOUND_SECOND_WORD_BITS,
             KeccakDelegationDestinationHolderConstructor,
             _,
+            _,
         >(
             &tape,
             &snapshotter,
@@ -774,6 +778,257 @@ pub fn run_unrolled_machine<
         exact_cycles_passed as usize,
         non_mem_circuits,
         mem_circuits,
+        (blake_circuits, bigint_circuits, keccak_circuits),
+        register_final_values,
+        inits_and_teardowns,
+    )
+}
+
+pub fn run_unified_machine<
+    C: MachineConfig,
+    A: GoodAllocator,
+    const ROM_BOUND_SECOND_WORD_BITS: usize,
+>(
+    initial_pc: u32,
+    text_section: &[u32],
+    rom_image: &[u32],
+    replayer_max_snapshots: usize,
+    replayer_snapshot_period: usize,
+    ram_bound_bytes: usize,
+    non_determinism: &mut impl riscv_transpiler::vm::NonDeterminismCSRSource<
+        riscv_transpiler::vm::RamWithRomRegion<ROM_BOUND_SECOND_WORD_BITS>,
+    >,
+    chunk_size: usize,
+    delegation_chunk_sizes: HashMap<u16, usize>,
+    worker: &Worker,
+) -> (
+    u32,
+    TimestampScalar,
+    usize,
+    Vec<Vec<UnifiedOpcodeTracingDataWithTimestamp, A>>,
+    (
+        Vec<Vec<Blake2sRoundFunctionDelegationWitness, A>>,
+        Vec<Vec<BigintDelegationWitness, A>>,
+        Vec<Vec<KeccakSpecial5DelegationWitness, A>>,
+    ),
+    [RamShuffleMemStateRecord; NUM_REGISTERS], // register final values
+    Vec<Vec<(u32, (TimestampScalar, u32)), A>>, // lazy iniy/teardown data - all unique words touched, sorted ascending, but not in one vector
+) {
+    use riscv_transpiler::vm::*;
+    use riscv_transpiler::witness::*;
+    use riscv_transpiler::*;
+
+    assert_eq!(initial_pc, 0);
+    assert!(1 << (16 + ROM_BOUND_SECOND_WORD_BITS) <= ram_bound_bytes);
+    assert!(text_section.len() * 4 <= ram_bound_bytes);
+    assert!(rom_image.len() * 4 <= ram_bound_bytes);
+    let mut ram = RamWithRomRegion::from_rom_content(rom_image, ram_bound_bytes);
+
+    let preprocessed_bytecode: Vec<_> = text_section
+        .iter()
+        .map(|el| {
+            let opcode = *el;
+            use riscv_transpiler::ir::*;
+            if core::any::TypeId::of::<C>()
+                == core::any::TypeId::of::<risc_v_simulator::cycle::IMStandardIsaConfig>()
+            {
+                panic!("Unsupported machine config {} for unified circuit", core::any::type_name::<C>());
+            } else if core::any::TypeId::of::<C>()
+                == core::any::TypeId::of::<
+                    risc_v_simulator::cycle::IMStandardIsaConfigWithUnsignedMulDiv,
+                >()
+            {
+                panic!("Unsupported machine config {} for unified circuit", core::any::type_name::<C>());
+            } else if core::any::TypeId::of::<C>()
+                == core::any::TypeId::of::<
+                    risc_v_simulator::cycle::IWithoutByteAccessIsaConfigWithDelegation,
+                >()
+            {
+                decode::<ReducedMachineDecoderConfig>(opcode)
+            } else {
+                panic!("Unknown machine config {}", core::any::type_name::<C>());
+            }
+        })
+        .collect();
+    let tape = SimpleTape::new(&preprocessed_bytecode);
+
+    let cycles_upper_bound = replayer_snapshot_period * replayer_max_snapshots;
+
+    type CountersT = DelegationsAndUnifiedCounters;
+
+    let mut state = State::initial_with_counters(CountersT::default());
+    let mut snapshotter = SimpleSnapshotter::new_with_cycle_limit(
+        cycles_upper_bound,
+        replayer_snapshot_period,
+        state,
+    );
+
+    let now = std::time::Instant::now();
+    let is_program_finished = VM::<CountersT>::run_basic_unrolled::<
+        SimpleSnapshotter<CountersT, ROM_BOUND_SECOND_WORD_BITS>,
+        RamWithRomRegion<ROM_BOUND_SECOND_WORD_BITS>,
+        _,
+    >(
+        &mut state,
+        replayer_max_snapshots,
+        &mut ram,
+        &mut snapshotter,
+        &tape,
+        replayer_snapshot_period,
+        non_determinism,
+    );
+    assert!(
+        is_program_finished,
+        "program failed to finish over {} cycles",
+        cycles_upper_bound
+    ); // check that we reached looping state (ie. end state for our vm)
+
+    let elapsed = now.elapsed();
+
+    let register_final_values = state.registers.map(|el| RamShuffleMemStateRecord {
+        current_value: el.value,
+        last_access_timestamp: el.timestamp,
+    });
+
+    let total_snapshots = snapshotter.snapshots.len();
+    let exact_cycles_passed = (state.timestamp - INITIAL_TIMESTAMP) / TIMESTAMP_STEP;
+    let final_pc = state.pc;
+    let final_timestamp = state.timestamp;
+
+    println!("Passed exactly {} cycles", exact_cycles_passed);
+    println!(
+        "Simulator performance is {} MHz",
+        (exact_cycles_passed as f64) / (elapsed.as_micros() as f64)
+    );
+
+    let inits_and_teardowns = ram.collect_inits_and_teardowns(worker, A::default());
+
+    // now replay. We will replay in parallel inside of every circuit family for simplicity
+    let replay_blake_only_delegations = core::any::TypeId::of::<C>()
+        == core::any::TypeId::of::<
+            risc_v_simulator::cycle::IWithoutByteAccessIsaConfigWithDelegation,
+        >();
+    let replay_mul_circuits = core::any::TypeId::of::<C>()
+        != core::any::TypeId::of::<
+            risc_v_simulator::cycle::IWithoutByteAccessIsaConfigWithDelegation,
+        >();
+
+    let main_circuits = {
+        let t = replay_generic_work::<
+            A,
+            ROM_BOUND_SECOND_WORD_BITS,
+            UnifiedCircuitDestinationHolderConstructor,
+            _,
+            _,
+        >(
+            &tape,
+            &snapshotter,
+            replayer_snapshot_period,
+            chunk_size,
+            |counters| counters.get_calls_to_circuit_family::<REDUCED_MACHINE_CIRCUIT_FAMILY_IDX>(),
+            REDUCED_MACHINE_CIRCUIT_FAMILY_IDX as usize,
+            worker,
+        );
+
+        t
+    };
+
+    let blake_circuits = {
+        let Some(cycles_per_circuit) = delegation_chunk_sizes
+            .get(&(common_constants::blake2s_with_control::BLAKE2S_DELEGATION_CSR_REGISTER as u16))
+            .copied()
+        else {
+            panic!(
+                "Must have chunk size for work type {}",
+                common_constants::blake2s_with_control::BLAKE2S_DELEGATION_CSR_REGISTER
+            );
+        };
+
+        replay_generic_work::<
+            A,
+            ROM_BOUND_SECOND_WORD_BITS,
+            BlakeDelegationDestinationHolderConstructor,
+            _,
+            _,
+        >(
+            &tape,
+            &snapshotter,
+            replayer_snapshot_period,
+            cycles_per_circuit,
+            |cycles| cycles.blake_calls,
+            common_constants::blake2s_with_control::BLAKE2S_DELEGATION_CSR_REGISTER as usize,
+            worker,
+        )
+    };
+
+    let bigint_circuits = if replay_blake_only_delegations {
+        vec![]
+    } else {
+        let Some(cycles_per_circuit) = delegation_chunk_sizes
+            .get(
+                &(common_constants::bigint_with_control::BIGINT_OPS_WITH_CONTROL_CSR_REGISTER
+                    as u16),
+            )
+            .copied()
+        else {
+            panic!(
+                "Must have chunk size for work type {}",
+                common_constants::bigint_with_control::BIGINT_OPS_WITH_CONTROL_CSR_REGISTER
+            );
+        };
+
+        replay_generic_work::<
+            A,
+            ROM_BOUND_SECOND_WORD_BITS,
+            BigintDelegationDestinationHolderConstructor,
+            _,
+            _,
+        >(
+            &tape,
+            &snapshotter,
+            replayer_snapshot_period,
+            cycles_per_circuit,
+            |cycles| cycles.bigint_calls,
+            common_constants::bigint_with_control::BIGINT_OPS_WITH_CONTROL_CSR_REGISTER as usize,
+            worker,
+        )
+    };
+
+    let keccak_circuits = if replay_blake_only_delegations {
+        vec![]
+    } else {
+        let Some(cycles_per_circuit) = delegation_chunk_sizes
+            .get(&(common_constants::keccak_special5::KECCAK_SPECIAL5_CSR_REGISTER as u16))
+            .copied()
+        else {
+            panic!(
+                "Must have chunk size for work type {}",
+                common_constants::keccak_special5::KECCAK_SPECIAL5_CSR_REGISTER
+            );
+        };
+
+        replay_generic_work::<
+            A,
+            ROM_BOUND_SECOND_WORD_BITS,
+            KeccakDelegationDestinationHolderConstructor,
+            _,
+            _,
+        >(
+            &tape,
+            &snapshotter,
+            replayer_snapshot_period,
+            cycles_per_circuit,
+            |cycles| cycles.keccak_calls,
+            common_constants::keccak_special5::KECCAK_SPECIAL5_CSR_REGISTER as usize,
+            worker,
+        )
+    };
+
+    (
+        final_pc,
+        final_timestamp,
+        exact_cycles_passed as usize,
+        main_circuits,
         (blake_circuits, bigint_circuits, keccak_circuits),
         register_final_values,
         inits_and_teardowns,
@@ -1258,11 +1513,12 @@ fn replay_generic_work<
     A: GoodAllocator,
     const ROM_BOUND_SECOND_WORD_BITS: usize,
     D: riscv_transpiler::witness::DestinationHolderConstructor,
-    FN: Fn(&riscv_transpiler::vm::DelegationsAndFamiliesCounters) -> usize,
+    C: riscv_transpiler::vm::Counters,
+    FN: Fn(&C) -> usize,
 >(
     tape: &impl riscv_transpiler::vm::InstructionTape,
     snapshotter: &riscv_transpiler::vm::SimpleSnapshotter<
-        riscv_transpiler::vm::DelegationsAndFamiliesCounters,
+        C,
         ROM_BOUND_SECOND_WORD_BITS,
     >,
     replayer_snapshot_period: usize,
@@ -1408,7 +1664,7 @@ fn replay_generic_work<
                 let mut chunks = chunks;
                 let mut tracer = D::make_uninit_tracer(&mut chunks);
                 let mut state = starting_snapshot.state;
-                ReplayerVM::<riscv_transpiler::vm::DelegationsAndFamiliesCounters>::replay_basic_unrolled::<_, _>(
+                ReplayerVM::<C>::replay_basic_unrolled::<_, _>(
                     &mut state,
                     num_snapshots,
                     &mut ram,

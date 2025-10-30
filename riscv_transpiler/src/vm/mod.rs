@@ -16,7 +16,7 @@ pub use self::ram_with_rom_region::RamWithRomRegion;
 pub use self::replay_snapshotter::*;
 pub use self::simple_tape::SimpleTape;
 
-pub trait Counters: 'static + Clone + Copy + Debug + PartialEq + Eq {
+pub trait Counters: 'static + Clone + Copy + Debug + PartialEq + Eq + Send + Sync {
     fn bump_bigint(&mut self);
     fn bump_blake2_round_function(&mut self);
     fn bump_keccak_special5(&mut self);

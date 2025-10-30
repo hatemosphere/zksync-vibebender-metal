@@ -104,6 +104,60 @@ impl Counters for DelegationsAndFamiliesCounters {
     }
 }
 
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
+pub struct DelegationsAndUnifiedCounters {
+    pub non_determinism_reads: usize,
+    pub blake_calls: usize,
+    pub bigint_calls: usize,
+    pub keccak_calls: usize,
+    pub cycles: usize,
+}
+
+impl Counters for DelegationsAndUnifiedCounters {
+    #[inline(always)]
+    fn bump_bigint(&mut self) {
+        self.bigint_calls += 1;
+    }
+    #[inline(always)]
+    fn bump_blake2_round_function(&mut self) {
+        self.blake_calls += 1;
+    }
+    #[inline(always)]
+    fn bump_keccak_special5(&mut self) {
+        self.keccak_calls += 1;
+    }
+    #[inline(always)]
+    fn bump_non_determinism(&mut self) {
+        self.non_determinism_reads += 1;
+    }
+    #[inline(always)]
+    fn log_circuit_family<const FAMILY: u8>(&mut self) {
+        if const { FAMILY == ADD_SUB_LUI_AUIPC_MOP_CIRCUIT_FAMILY_IDX } {
+            self.cycles += 1;
+        } else if const { FAMILY == JUMP_BRANCH_SLT_CIRCUIT_FAMILY_IDX } {
+            self.cycles += 1;
+        } else if const { FAMILY == SHIFT_BINARY_CSR_CIRCUIT_FAMILY_IDX } {
+            self.cycles += 1;
+        } else if const { FAMILY == MUL_DIV_CIRCUIT_FAMILY_IDX } {
+            self.cycles += 1;
+        } else if const { FAMILY == LOAD_STORE_WORD_ONLY_CIRCUIT_FAMILY_IDX } {
+            self.cycles += 1;
+        } else if const { FAMILY == LOAD_STORE_SUBWORD_ONLY_CIRCUIT_FAMILY_IDX } {
+            self.cycles += 1;
+        } else {
+            unsafe { core::hint::unreachable_unchecked() }
+        }
+    }
+    #[inline(always)]
+    fn get_calls_to_circuit_family<const FAMILY: u8>(&self) -> usize {
+        if const { FAMILY == REDUCED_MACHINE_CIRCUIT_FAMILY_IDX } {
+            self.cycles
+        } else {
+            panic!("Must be called with reduced machine family only");
+        }
+    }
+}
+
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub struct SimpleSnapshot<C: Counters> {
     pub state: State<C>,

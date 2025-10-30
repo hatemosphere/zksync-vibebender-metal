@@ -20,6 +20,7 @@ mod recursion;
 mod recursion_strategy;
 mod verifiers;
 
+pub mod unified_circuit;
 pub mod unrolled;
 
 #[derive(Clone, Debug, ValueEnum, Serialize, Deserialize, PartialEq, Eq)]

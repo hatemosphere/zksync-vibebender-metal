@@ -543,6 +543,68 @@ impl<'a> WitnessTracer for UnifiedDestinationHolder<'a> {
     }
 }
 
+pub struct UninitUnifiedDestinationHolder<'a> {
+    pub buffers: &'a mut [&'a mut [MaybeUninit<UnifiedOpcodeTracingDataWithTimestamp>]],
+}
+
+impl<'a> WitnessTracer for UninitUnifiedDestinationHolder<'a> {
+    fn write_non_memory_family_data<const FAMILY_T: u8>(
+        &mut self,
+        data: NonMemoryOpcodeTracingDataWithTimestamp,
+    ) {
+        unsafe {
+            if self.buffers.len() > 0 {
+                let first = self.buffers.get_unchecked_mut(0);
+                first.as_mut_ptr().as_mut_unchecked().write(UnifiedOpcodeTracingDataWithTimestamp::NonMem(data));
+                // For some reason truncating the buffer doesn't work - livetime analysis complains
+                *first = core::mem::transmute(first.get_unchecked_mut(1..));
+                if first.is_empty() {
+                    self.buffers = core::mem::transmute(self.buffers.get_unchecked_mut(1..));
+                }
+            } else {
+                // nothing
+            }
+        }
+    }
+
+    #[inline(always)]
+    fn write_memory_family_data<const FAMILY_T: u8>(
+        &mut self,
+        data: MemoryOpcodeTracingDataWithTimestamp,
+    ) {
+        unsafe {
+            if self.buffers.len() > 0 {
+                let first = self.buffers.get_unchecked_mut(0);
+                first.as_mut_ptr().as_mut_unchecked().write(UnifiedOpcodeTracingDataWithTimestamp::Mem(data));
+                // For some reason truncating the buffer doesn't work - livetime analysis complains
+                *first = core::mem::transmute(first.get_unchecked_mut(1..));
+                if first.is_empty() {
+                    self.buffers = core::mem::transmute(self.buffers.get_unchecked_mut(1..));
+                }
+            } else {
+                // nothing
+            }
+        }
+    }
+
+    fn write_delegation<
+        const DELEGATION_TYPE: u16,
+        const REG_ACCESSES_T: usize,
+        const INDIRECT_READS_T: usize,
+        const INDIRECT_WRITES_T: usize,
+        const VARIABLE_OFFSETS_T: usize,
+    >(
+        &mut self,
+        _data: DelegationWitness<
+            REG_ACCESSES_T,
+            INDIRECT_READS_T,
+            INDIRECT_WRITES_T,
+            VARIABLE_OFFSETS_T,
+        >,
+    ) {
+    }
+}
+
 pub trait DestinationHolderConstructor: 'static + Send + Sync + Clone + Copy {
     type Tracer<'a>: WitnessTracer;
     type UninitTracer<'a>: WitnessTracer;
@@ -671,3 +733,28 @@ pub type KeccakDelegationDestinationHolderConstructor<'a> = DelegationDestinatio
     { common_constants::keccak_special5::KECCAK_SPECIAL5_NUM_VARIABLE_OFFSETS * 2 },
     { common_constants::keccak_special5::KECCAK_SPECIAL5_NUM_VARIABLE_OFFSETS },
 >;
+
+#[derive(Clone, Copy, Debug)]
+pub struct UnifiedCircuitDestinationHolderConstructor;
+
+impl DestinationHolderConstructor
+    for UnifiedCircuitDestinationHolderConstructor
+{
+    type Element = UnifiedOpcodeTracingDataWithTimestamp;
+    type Tracer<'a> = UnifiedDestinationHolder<
+        'a,
+    >;
+    type UninitTracer<'a> = UninitUnifiedDestinationHolder<
+        'a,
+    >;
+
+    fn make_tracer<'a>(buffers: &'a mut [&'a mut [Self::Element]]) -> Self::Tracer<'a> {
+        UnifiedDestinationHolder { buffers }
+    }
+
+    fn make_uninit_tracer<'a>(
+        buffers: &'a mut [&'a mut [MaybeUninit<Self::Element>]],
+    ) -> Self::UninitTracer<'a> {
+        UninitUnifiedDestinationHolder { buffers }
+    }
+}
