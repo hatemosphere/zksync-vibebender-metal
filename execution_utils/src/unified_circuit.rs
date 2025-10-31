@@ -243,7 +243,7 @@ pub fn verify_unrolled_recursion_layer_via_full_statement_verifier(
         println!("{} proofs for family {}", v.len(), k);
     }
 
-    let mut responses = setup.flatten_for_recursion();
+    let mut responses = setup.flatten_unified_for_recursion();
     responses.extend(proof.flatten_into_responses(&[
         common_constants::delegation_types::blake2s_with_control::BLAKE2S_DELEGATION_CSR_REGISTER,
     ]));

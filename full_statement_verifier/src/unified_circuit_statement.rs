@@ -401,10 +401,8 @@ pub fn verify_unrolled_or_unified_circuit_recursion_layer() -> [u32; 16] {
     match op_type {
         OP_VERIFY_UNROLLED_RECURSION_LAYER => {
             crate::unrolled_proof_statement::verify_unrolled_recursion_layer()
-        },
-        OP_VERIFY_UNIFIED_RECURSION_LAYER => {
-            verify_unified_circuit_recursion_layer()
         }
+        OP_VERIFY_UNIFIED_RECURSION_LAYER => verify_unified_circuit_recursion_layer(),
         _ => {
             panic!("Uknown op");
         }

@@ -65,6 +65,17 @@ impl UnrolledProgramSetup {
         result
     }
 
+    pub fn flatten_unified_for_recursion(&self) -> Vec<u32> {
+        assert_eq!(self.circuit_families_setups.len(), 1);
+        // we just need to dump merkle caps, without any circuit IDs
+        let mut result = vec![];
+        for (_, caps) in self.circuit_families_setups.iter() {
+            result.extend_from_slice(MerkleTreeCap::flatten(caps));
+        }
+
+        result
+    }
+
     pub fn begin_recursion_chain(base_layer_end_params: &[u32; 8]) -> ([u32; 8], [u32; 16]) {
         let mut preimage = [0u32; 16];
         preimage[8..].copy_from_slice(base_layer_end_params);
