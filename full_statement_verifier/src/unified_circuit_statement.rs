@@ -172,6 +172,10 @@ pub unsafe fn verify_unified_circuit_statement<const BASE_LAYER: bool>(
         }
     }
 
+    // NOTE: it's purely to match dumping code for unrolled circuits
+    let num_init_and_teardown_circuits = verifier_common::DefaultNonDeterminismSource::read_word();
+    assert_eq!(num_init_and_teardown_circuits, 0);
+
     // If we will even want to break an execution here, we will have full buffer (unflushed)
     assert!(transcript.get_current_buffer_offset() == BLAKE2S_BLOCK_SIZE_U32_WORDS);
 
@@ -242,6 +246,8 @@ pub unsafe fn verify_unified_circuit_statement<const BASE_LAYER: bool>(
         // of responses processed it < field size
         assert!(total_delegation_requests < Mersenne31Field::CHARACTERISTICS as u64);
     }
+
+    panic!("{:?}", &transcript);
 
     // finish with the transcript, compare memory values from transcript with ones used in proofs
     let memory_seed = transcript.finalize_reset();

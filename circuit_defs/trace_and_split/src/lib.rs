@@ -1088,6 +1088,8 @@ pub fn fs_transform_for_memory_and_delegation_arguments_for_unrolled_circuits(
         BLAKE2S_BLOCK_SIZE_U32_WORDS
     );
 
+    dbg!(&memory_trace_transcript);
+
     // then for delegation circuits: delegation type contributes to the delegation argument's expressions, and as we have a variable number of them
     // we will always commit a tuple of delegation type + caps. This way the order is not too important, but we adhere to convention that
     // those should be batched and sorted
