@@ -1113,6 +1113,9 @@ pub fn fs_transform_for_memory_and_delegation_arguments_for_unrolled_circuits(
             BLAKE2S_BLOCK_SIZE_U32_WORDS
         );
     }
+
+    dbg!(&memory_trace_transcript);
+
     let memory_challenges_seed = memory_trace_transcript.finalize();
 
     memory_challenges_seed
