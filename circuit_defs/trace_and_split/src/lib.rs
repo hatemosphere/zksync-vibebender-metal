@@ -1068,8 +1068,6 @@ pub fn fs_transform_for_memory_and_delegation_arguments_for_unrolled_circuits(
         }
     }
 
-    dbg!(&memory_trace_transcript);
-
     // inits and teardowns
     {
         if inits_and_teardowns_memory_caps.len() > 0 {
@@ -1089,8 +1087,6 @@ pub fn fs_transform_for_memory_and_delegation_arguments_for_unrolled_circuits(
         memory_trace_transcript.get_current_buffer_offset(),
         BLAKE2S_BLOCK_SIZE_U32_WORDS
     );
-
-    dbg!(&memory_trace_transcript);
 
     // then for delegation circuits: delegation type contributes to the delegation argument's expressions, and as we have a variable number of them
     // we will always commit a tuple of delegation type + caps. This way the order is not too important, but we adhere to convention that
@@ -1113,8 +1109,6 @@ pub fn fs_transform_for_memory_and_delegation_arguments_for_unrolled_circuits(
             BLAKE2S_BLOCK_SIZE_U32_WORDS
         );
     }
-
-    dbg!(&memory_trace_transcript);
 
     let memory_challenges_seed = memory_trace_transcript.finalize();
 

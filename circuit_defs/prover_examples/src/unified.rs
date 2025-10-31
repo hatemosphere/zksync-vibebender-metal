@@ -347,10 +347,6 @@ pub fn prove_unified_execution_with_replayer<
     #[cfg(feature = "debug_logs")]
     println!("Will create FS transformation challenge for memory and delegation arguments");
 
-    dbg!(memory_trees.len());
-    dbg!(memory_trees[0].0);
-    dbg!(memory_trees[0].1.len());
-
     // commit memory challenges
     let all_challenges_seed =
         fs_transform_for_memory_and_delegation_arguments_for_unrolled_circuits(
