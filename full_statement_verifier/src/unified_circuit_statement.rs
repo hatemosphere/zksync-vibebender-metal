@@ -81,6 +81,10 @@ pub unsafe fn verify_unified_circuit_statement<const BASE_LAYER: bool>(
 
     let num_circuits = verifier_common::DefaultNonDeterminismSource::read_word();
     assert!(num_circuits > 0);
+    let mut buffer = [0u32; BLAKE2S_BLOCK_SIZE_U32_WORDS];
+    buffer[0] = common_constants::REDUCED_MACHINE_CIRCUIT_FAMILY_IDX as u32;
+    transcript.absorb(&buffer);
+
     let mut total_cycles = 0u64;
     for circuit_sequence in 0..num_circuits {
         total_cycles += unified_circuit_capacity as u64;
@@ -385,5 +389,24 @@ pub fn verify_unified_circuit_recursion_layer() -> [u32; 16] {
             REDUCED_UNIFIED_CIRCUIT_VERIFIER_PTR,
             RECURSION_LAYER_CIRCUITS_VERIFICATION_PARAMETERS,
         )
+    }
+}
+
+pub const OP_VERIFY_UNROLLED_RECURSION_LAYER: u32 = 1;
+pub const OP_VERIFY_UNIFIED_RECURSION_LAYER: u32 = 2;
+
+pub fn verify_unrolled_or_unified_circuit_recursion_layer() -> [u32; 16] {
+    // we just branch
+    let op_type = DefaultNonDeterminismSource::read_word();
+    match op_type {
+        OP_VERIFY_UNROLLED_RECURSION_LAYER => {
+            crate::unrolled_proof_statement::verify_unrolled_recursion_layer()
+        },
+        OP_VERIFY_UNIFIED_RECURSION_LAYER => {
+            verify_unified_circuit_recursion_layer()
+        }
+        _ => {
+            panic!("Uknown op");
+        }
     }
 }

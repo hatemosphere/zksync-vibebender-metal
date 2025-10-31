@@ -220,7 +220,7 @@ unsafe fn workload() -> ! {
 #[cfg(feature = "unified_reduced_machine")]
 unsafe fn workload() -> ! {
     let output =
-        full_statement_verifier::unified_circuit_statement::verify_unified_circuit_recursion_layer();
+        full_statement_verifier::unified_circuit_statement::verify_unrolled_or_unified_circuit_recursion_layer();
     riscv_common::zksync_os_finish_success_extended(&output);
 }
 
