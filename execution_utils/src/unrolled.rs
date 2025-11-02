@@ -12,6 +12,7 @@ use prover::field::*;
 use prover::prover_stages::unrolled_prover::UnrolledModeProof;
 use prover::prover_stages::Proof;
 use prover::risc_v_simulator;
+use setups::CompiledCircuitsSet;
 use trace_and_split::FinalRegisterValue;
 
 #[derive(Clone, Debug, Hash, serde::Serialize, serde::Deserialize)]
@@ -116,9 +117,7 @@ impl UnrolledProgramSetup {
 pub struct UnrolledProgramProof {
     pub final_pc: u32,
     pub final_timestamp: TimestampScalar,
-    pub compiled_circuit_families: BTreeMap<u8, CompiledCircuitArtifact<Mersenne31Field>>,
     pub circuit_families_proofs: BTreeMap<u8, Vec<UnrolledModeProof>>,
-    pub compiled_inits_and_teardowns: CompiledCircuitArtifact<Mersenne31Field>,
     pub inits_and_teardowns_proofs: Vec<UnrolledModeProof>,
     pub delegation_proofs: BTreeMap<u32, Vec<Proof>>,
     pub register_final_values: [FinalRegisterValue; 32],
@@ -127,7 +126,11 @@ pub struct UnrolledProgramProof {
 }
 
 impl UnrolledProgramProof {
-    pub fn flatten_into_responses(&self, allowed_delegation_circuits: &[u32]) -> Vec<u32> {
+    pub fn flatten_into_responses(
+        &self,
+        allowed_delegation_circuits: &[u32],
+        compiled_layouts: &CompiledCircuitsSet,
+    ) -> Vec<u32> {
         let mut responses = Vec::with_capacity(32 + 32 * 2);
 
         assert_eq!(self.register_final_values.len(), 32);
@@ -153,7 +156,7 @@ impl UnrolledProgramProof {
             for proof in proofs.iter() {
                 let t = verifier_common::proof_flattener::flatten_full_unrolled_proof(
                     proof,
-                    &self.compiled_circuit_families[family],
+                    &compiled_layouts.compiled_circuit_families[family],
                 );
                 responses.extend(t);
             }
@@ -161,13 +164,19 @@ impl UnrolledProgramProof {
 
         // inits and teardowns
         {
-            responses.push(self.inits_and_teardowns_proofs.len() as u32);
-            for proof in self.inits_and_teardowns_proofs.iter() {
-                let t = verifier_common::proof_flattener::flatten_full_unrolled_proof(
-                    proof,
-                    &self.compiled_inits_and_teardowns,
-                );
-                responses.extend(t);
+            if let Some(compiled_inits_and_teardowns) =
+                compiled_layouts.compiled_inits_and_teardowns.as_ref()
+            {
+                responses.push(self.inits_and_teardowns_proofs.len() as u32);
+                for proof in self.inits_and_teardowns_proofs.iter() {
+                    let t = verifier_common::proof_flattener::flatten_full_unrolled_proof(
+                        proof,
+                        &compiled_inits_and_teardowns,
+                    );
+                    responses.extend(t);
+                }
+            } else {
+                responses.push(0u32);
             }
         }
 
@@ -245,12 +254,13 @@ pub fn compute_setup_for_machine_configuration<C: MachineConfig>(
 pub fn verify_unrolled_base_layer_for_machine_configuration<C: MachineConfig>(
     proof: &UnrolledProgramProof,
     setup: &UnrolledProgramSetup,
+    compiled_layouts: &CompiledCircuitsSet,
 ) -> Result<[u32; 16], ()> {
     for (k, v) in proof.circuit_families_proofs.iter() {
         println!("{} proofs for family {}", v.len(), k);
     }
 
-    let responses = proof.flatten_into_responses(C::ALLOWED_DELEGATION_CSRS);
+    let responses = proof.flatten_into_responses(C::ALLOWED_DELEGATION_CSRS, compiled_layouts);
 
     let params = if setups::is_default_machine_configuration::<C>() {
         full_statement_verifier::unrolled_proof_statement::FULL_MACHINE_UNROLLED_CIRCUITS_VERIFICATION_PARAMETERS
@@ -301,6 +311,7 @@ pub fn verify_unrolled_base_layer_for_machine_configuration<C: MachineConfig>(
 pub fn verify_unrolled_base_layer_via_full_statement_verifier(
     proof: &UnrolledProgramProof,
     setup: &UnrolledProgramSetup,
+    compiled_layouts: &CompiledCircuitsSet,
 ) -> Result<[u32; 16], ()> {
     for (k, v) in proof.circuit_families_proofs.iter() {
         println!("{} proofs for family {}", v.len(), k);
@@ -311,7 +322,7 @@ pub fn verify_unrolled_base_layer_via_full_statement_verifier(
         common_constants::delegation_types::blake2s_with_control::BLAKE2S_DELEGATION_CSR_REGISTER,
         common_constants::delegation_types::bigint_with_control::BIGINT_OPS_WITH_CONTROL_CSR_REGISTER,
         common_constants::delegation_types::keccak_special5::KECCAK_SPECIAL5_CSR_REGISTER,
-    ]));
+    ], compiled_layouts));
 
     println!("Running the verifier");
 
@@ -339,12 +350,13 @@ pub fn verify_unrolled_base_layer_via_full_statement_verifier(
 pub fn verify_unrolled_recursion_layer_for_machine_configuration<C: MachineConfig>(
     proof: &UnrolledProgramProof,
     setup: &UnrolledProgramSetup,
+    compiled_layouts: &CompiledCircuitsSet,
 ) -> Result<[u32; 16], ()> {
     for (k, v) in proof.circuit_families_proofs.iter() {
         println!("{} proofs for family {}", v.len(), k);
     }
 
-    let responses = proof.flatten_into_responses(C::ALLOWED_DELEGATION_CSRS);
+    let responses = proof.flatten_into_responses(C::ALLOWED_DELEGATION_CSRS, compiled_layouts);
 
     let params = if setups::is_default_machine_configuration::<C>() {
         panic!(
@@ -401,6 +413,7 @@ pub fn verify_unrolled_recursion_layer_for_machine_configuration<C: MachineConfi
 pub fn verify_unrolled_recursion_layer_via_full_statement_verifier(
     proof: &UnrolledProgramProof,
     setup: &UnrolledProgramSetup,
+    compiled_layouts: &CompiledCircuitsSet,
 ) -> Result<[u32; 16], ()> {
     for (k, v) in proof.circuit_families_proofs.iter() {
         println!("{} proofs for family {}", v.len(), k);
@@ -409,7 +422,7 @@ pub fn verify_unrolled_recursion_layer_via_full_statement_verifier(
     let mut responses = setup.flatten_for_recursion();
     responses.extend(proof.flatten_into_responses(&[
         common_constants::delegation_types::blake2s_with_control::BLAKE2S_DELEGATION_CSR_REGISTER,
-    ]));
+    ], compiled_layouts));
 
     println!("Running the verifier");
 
@@ -460,11 +473,6 @@ pub fn prove_unrolled_for_machine_configuration_into_program_proof<C: MachineCon
         &worker,
     );
 
-    let (families, inits_and_teardowns) =
-        setups::unrolled_circuits::get_unrolled_circuits_artifacts_for_machine_type::<C>(
-            &binary_image,
-        );
-
     let (
         main_proofs,
         inits_and_teardowns_proofs,
@@ -476,9 +484,7 @@ pub fn prove_unrolled_for_machine_configuration_into_program_proof<C: MachineCon
     let program_proofs = UnrolledProgramProof {
         final_pc,
         final_timestamp,
-        compiled_circuit_families: families,
         circuit_families_proofs: main_proofs,
-        compiled_inits_and_teardowns: inits_and_teardowns,
         inits_and_teardowns_proofs,
         delegation_proofs: BTreeMap::from_iter(delegation_proofs.into_iter()),
         register_final_values: register_final_state,
@@ -711,7 +717,7 @@ mod test {
             register_final_state,
             (final_pc, final_timestamp),
         ) = proofs;
-        let (families, inits_and_teardowns) =
+        let compiled_circuits_set =
             setups::unrolled_circuits::get_unrolled_circuits_artifacts_for_machine_type::<C>(
                 &binary_image,
             );
@@ -721,9 +727,7 @@ mod test {
         let program_proofs = UnrolledProgramProof {
             final_pc,
             final_timestamp,
-            compiled_circuit_families: families,
             circuit_families_proofs: main_proofs,
-            compiled_inits_and_teardowns: inits_and_teardowns,
             inits_and_teardowns_proofs,
             delegation_proofs: BTreeMap::from_iter(delegation_proofs.into_iter()),
             register_final_values: register_final_state,
@@ -735,7 +739,8 @@ mod test {
             println!("{} proofs for family {}", v.len(), k);
         }
 
-        let responses = program_proofs.flatten_into_responses(C::ALLOWED_DELEGATION_CSRS);
+        let responses = program_proofs
+            .flatten_into_responses(C::ALLOWED_DELEGATION_CSRS, &compiled_circuits_set);
 
         let families_setups = setups::compute_unrolled_circuits_params_for_machine_configuration::<C>(
             binary_image,

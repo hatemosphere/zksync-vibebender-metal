@@ -2140,7 +2140,7 @@ fn prove_delegation_circuit_with_replayer_format<
 }
 
 #[cfg(test)]
-mod test {
+pub(crate) mod test {
     use super::*;
     use crate::bincode_deserialize_from_file;
     use crate::deserialize_from_file;
@@ -2163,7 +2163,6 @@ mod test {
         pub inits_and_teardowns_proofs: Vec<UnrolledModeProof>,
         pub delegation_proofs: BTreeMap<u32, Vec<Proof>>,
         pub register_final_values: [FinalRegisterValue; 32],
-        pub end_params: [u32; 8],
         pub recursion_chain_preimage: Option<[u32; 16]>,
         pub recursion_chain_hash: Option<[u32; 8]>,
     }
@@ -2319,23 +2318,26 @@ mod test {
 
         let (_, binary_image) =
             setups::read_and_pad_binary(&Path::new("../../examples/basic_fibonacci/app.bin"));
-        let (families, inits_and_teardowns) =
+        let compiled_circuits_set =
             setups::unrolled_circuits::get_unrolled_circuits_artifacts_for_machine_type::<
                 IMStandardIsaConfigWithUnsignedMulDiv,
             >(&binary_image);
 
         // flatten and set iterator
+        let CompiledCircuitsSet {
+            compiled_circuit_families,
+            compiled_inits_and_teardowns,
+        } = compiled_circuits_set;
 
         let program_proofs = UnrolledProgramProof {
             final_pc,
             final_timestamp,
-            compiled_circuit_families: families,
+            compiled_circuit_families,
             circuit_families_proofs: main_proofs,
-            compiled_inits_and_teardowns: inits_and_teardowns,
+            compiled_inits_and_teardowns: compiled_inits_and_teardowns.unwrap(),
             inits_and_teardowns_proofs,
             delegation_proofs: BTreeMap::from_iter(delegation_proofs.into_iter()),
             register_final_values: register_final_state,
-            end_params: [0u32; 8],
             recursion_chain_hash: None,
             recursion_chain_preimage: None,
         };

@@ -34,13 +34,16 @@ pub use mul_div_unsigned_circuit::*;
 pub use shift_binary_csr_circuit::*;
 pub use unifier_reduced_machine_circuit::*;
 
+#[derive(Clone, Debug, Hash, serde::Serialize, serde::Deserialize)]
+pub struct CompiledCircuitsSet {
+    pub compiled_circuit_families: BTreeMap<u8, CompiledCircuitArtifact<Mersenne31Field>>,
+    pub compiled_inits_and_teardowns: Option<CompiledCircuitArtifact<Mersenne31Field>>,
+}
+
 pub fn get_unrolled_circuits_artifacts_for_machine_type<C: MachineConfig>(
     binary_image: &[u32],
     // text_section: &[u32],
-) -> (
-    BTreeMap<u8, CompiledCircuitArtifact<Mersenne31Field>>,
-    CompiledCircuitArtifact<Mersenne31Field>,
-) {
+) -> CompiledCircuitsSet {
     let t: Vec<(u8, fn(&[u32]) -> CompiledCircuitArtifact<Mersenne31Field>)> =
         if is_default_machine_configuration::<C>() {
             vec![
@@ -119,13 +122,16 @@ pub fn get_unrolled_circuits_artifacts_for_machine_type<C: MachineConfig>(
     let families = artifacts_for_unrolled_circuits_params_impl(binary_image, &t);
     let inits_and_teardowns = ::inits_and_teardowns::get_circuit(binary_image);
 
-    (families, inits_and_teardowns)
+    CompiledCircuitsSet {
+        compiled_circuit_families: families,
+        compiled_inits_and_teardowns: Some(inits_and_teardowns),
+    }
 }
 
 pub fn get_unified_circuit_artifact_for_machine_type<C: MachineConfig>(
     binary_image: &[u32],
     // text_section: &[u32],
-) -> CompiledCircuitArtifact<Mersenne31Field> {
+) -> CompiledCircuitsSet {
     let t: Vec<(u8, fn(&[u32]) -> CompiledCircuitArtifact<Mersenne31Field>)> =
         if is_default_machine_configuration::<C>() {
             panic!("Unknown configuration {:?}", std::any::type_name::<C>());
@@ -140,11 +146,14 @@ pub fn get_unified_circuit_artifact_for_machine_type<C: MachineConfig>(
             panic!("Unknown configuration {:?}", std::any::type_name::<C>());
         };
 
-    let mut families = artifacts_for_unrolled_circuits_params_impl(binary_image, &t);
+    let families = artifacts_for_unrolled_circuits_params_impl(binary_image, &t);
+    assert_eq!(families.len(), 1);
+    assert!(families.contains_key(&::unified_reduced_machine::FAMILY_IDX));
 
-    families
-        .remove(&::unified_reduced_machine::FAMILY_IDX)
-        .expect("must have setup")
+    CompiledCircuitsSet {
+        compiled_circuit_families: families,
+        compiled_inits_and_teardowns: None,
+    }
 }
 
 fn artifacts_for_unrolled_circuits_params_impl(
