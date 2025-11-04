@@ -1,3 +1,5 @@
+use core::mem::MaybeUninit;
+
 use super::*;
 use common_constants::*;
 
@@ -10,43 +12,365 @@ const PRECOMPILE_CHI1: u32 = 5;
 const PRECOMPILE_CHI2: u32 = 6;
 
 #[inline(always)]
-fn peek_u64_words<R: RAM, const N: usize>(
+fn peek_u64_words<R: RAM>(
     addr_base: usize,
-    offsets: [usize; N],
+    offsets: [u8; KECCAK_SPECIAL5_NUM_VARIABLE_OFFSETS],
     ram: &R,
-) -> [u64; N] {
-    core::array::from_fn(|i| {
-        let offset = offsets[i];
-        let addr_low = (addr_base + offset * core::mem::size_of::<u64>()) as u32;
-        let addr_high =
-            (addr_base + offset * core::mem::size_of::<u64>() + core::mem::size_of::<u32>()) as u32;
-        let low = ram.peek_word(addr_low);
-        let high = ram.peek_word(addr_high);
-        low as u64 | (high as u64) << 32
-    })
+) -> [u64; KECCAK_SPECIAL5_NUM_VARIABLE_OFFSETS] {
+    // array::from_fn is not our best friend here
+    let mut result: [MaybeUninit<u64>; KECCAK_SPECIAL5_NUM_VARIABLE_OFFSETS] = [const { MaybeUninit::uninit() }; KECCAK_SPECIAL5_NUM_VARIABLE_OFFSETS];
+    seq_macro::seq!(N in 0..6 {
+        let offset = offsets[N];
+        let offset_major = (offset as usize) * core::mem::size_of::<u64>();
+        let addr_low = addr_base + offset_major;
+        let addr_high = addr_base + offset_major + core::mem::size_of::<u32>();
+        let low = ram.peek_word(addr_low as u32);
+        let high = ram.peek_word(addr_high as u32);
+        result[N].write(low as u64 | (high as u64) << 32);
+    });
+
+    unsafe {
+        result.map(|el| el.assume_init())
+    }
 }
 
+// #[inline(always)]
+// fn peek_u64_words<R: RAM>(
+//     addr_base: usize,
+//     offsets: [u8; KECCAK_SPECIAL5_NUM_VARIABLE_OFFSETS],
+//     ram: &R,
+// ) -> [u64; KECCAK_SPECIAL5_NUM_VARIABLE_OFFSETS] {
+//     // array::from_fn is not our best friend here
+//     unsafe {
+//         #[allow(invalid_value)]
+//         let mut result: [u64; KECCAK_SPECIAL5_NUM_VARIABLE_OFFSETS] = MaybeUninit::uninit().assume_init();
+//         let ptr = result.as_mut_ptr();
+//         seq_macro::seq!(N in 0..6 {
+//             let offset = offsets[N];
+//             let offset_major = (offset as usize) * core::mem::size_of::<u64>();
+//             let addr = addr_base + offset_major;
+//             ptr.add(N).write(ram.peek_u64(addr as u32));
+//         });
+
+//         result
+//     }
+// }
+
+// #[inline(always)]
+// fn write_u64_words<C: Counters, S: Snapshotter<C>, R: RAM>(
+//     addr_base: usize,
+//     offsets: [u8; N],
+//     values: [u64; N],
+//     ram: &mut R,
+//     snapshotter: &mut S,
+//     write_timestamp: TimestampScalar,
+// ) {
+//     for i in 0..N {
+//         let offset = offsets[i];
+//         let value = values[i];
+//         let low = value as u32;
+//         let high = (value >> 32) as u32;
+//         let addr_low = addr_base + (offset as usize) * core::mem::size_of::<u64>();
+//         let addr_high = addr_low + core::mem::size_of::<u32>();
+//         let (read_timestamp, old_value) = ram.write_word(addr_low as u32, low, write_timestamp);
+//         snapshotter.append_memory_read(addr_low as u32, old_value, read_timestamp, write_timestamp);
+//         let (read_timestamp, old_value) = ram.write_word(addr_high as u32, high, write_timestamp);
+//         snapshotter.append_memory_read(addr_high as u32, old_value, read_timestamp, write_timestamp);
+//     }
+// }
+
 #[inline(always)]
-fn write_u64_words<C: Counters, S: Snapshotter<C>, R: RAM, const N: usize>(
+fn write_u64_words<C: Counters, S: Snapshotter<C>, R: RAM>(
     addr_base: usize,
-    offsets: [usize; N],
-    values: [u64; N],
+    offsets: [u8; KECCAK_SPECIAL5_NUM_VARIABLE_OFFSETS],
+    values: [u64; KECCAK_SPECIAL5_NUM_VARIABLE_OFFSETS],
     ram: &mut R,
     snapshotter: &mut S,
     write_timestamp: TimestampScalar,
 ) {
-    for i in 0..N {
-        let offset = offsets[i];
-        let value = values[i];
+    seq_macro::seq!(N in 0..6 {
+        let offset = offsets[N];
+        let value = values[N];
         let low = value as u32;
         let high = (value >> 32) as u32;
-        let addr_low = (addr_base + offset * core::mem::size_of::<u64>()) as u32;
-        let addr_high =
-            (addr_base + offset * core::mem::size_of::<u64>() + core::mem::size_of::<u32>()) as u32;
-        let (read_timestamp, old_value) = ram.write_word(addr_low, low, write_timestamp);
-        snapshotter.append_memory_read(addr_low, old_value, read_timestamp, write_timestamp);
-        let (read_timestamp, old_value) = ram.write_word(addr_high, high, write_timestamp);
-        snapshotter.append_memory_read(addr_low, old_value, read_timestamp, write_timestamp);
+        let offset_major = (offset as usize) * core::mem::size_of::<u64>();
+        let addr_low = addr_base + offset_major;
+        let addr_high = addr_base + offset_major + core::mem::size_of::<u32>();
+        let (read_timestamp, old_value) = ram.write_word(addr_low as u32, low, write_timestamp);
+        snapshotter.append_memory_read(addr_low as u32, old_value, read_timestamp, write_timestamp);
+        let (read_timestamp, old_value) = ram.write_word(addr_high as u32, high, write_timestamp);
+        snapshotter.append_memory_read(addr_high as u32, old_value, read_timestamp, write_timestamp);
+    });
+}
+
+static ROUND_CONSTANTS_ADJUSTED: [u64; 25] = [
+    0,
+    1,
+    32898,
+    9223372036854808714,
+    9223372039002292224,
+    32907,
+    2147483649,
+    9223372039002292353,
+    9223372036854808585,
+    138,
+    136,
+    2147516425,
+    2147483658,
+    2147516555,
+    9223372036854775947,
+    9223372036854808713,
+    9223372036854808579,
+    9223372036854808578,
+    9223372036854775936,
+    32778,
+    9223372039002259466,
+    9223372039002292353,
+    9223372036854808704,
+    2147483649,
+    9223372039002292232,
+];
+
+static PERMUTATIONS_ADJUSTED: [usize; 25 * 25] = {
+    let perms = [
+        0, 1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12, 13, 14, 15, 16, 17, 18, 19, 20, 21, 22, 23,
+        24, 0, 6, 12, 18, 24, 3, 9, 10, 16, 22, 1, 7, 13, 19, 20, 4, 5, 11, 17, 23, 2, 8, 14,
+        15, 21, 0, 9, 13, 17, 21, 18, 22, 1, 5, 14, 6, 10, 19, 23, 2, 24, 3, 7, 11, 15, 12, 16,
+        20, 4, 8, 0, 22, 19, 11, 8, 17, 14, 6, 3, 20, 9, 1, 23, 15, 12, 21, 18, 10, 7, 4, 13,
+        5, 2, 24, 16, 0, 14, 23, 7, 16, 11, 20, 9, 18, 2, 22, 6, 15, 4, 13, 8, 17, 1, 10, 24,
+        19, 3, 12, 21, 5, 0, 20, 15, 10, 5, 7, 2, 22, 17, 12, 14, 9, 4, 24, 19, 16, 11, 6, 1,
+        21, 23, 18, 13, 8, 3, 0, 2, 4, 1, 3, 10, 12, 14, 11, 13, 20, 22, 24, 21, 23, 5, 7, 9,
+        6, 8, 15, 17, 19, 16, 18, 0, 12, 24, 6, 18, 1, 13, 20, 7, 19, 2, 14, 21, 8, 15, 3, 10,
+        22, 9, 16, 4, 11, 23, 5, 17, 0, 13, 21, 9, 17, 6, 19, 2, 10, 23, 12, 20, 8, 16, 4, 18,
+        1, 14, 22, 5, 24, 7, 15, 3, 11, 0, 19, 8, 22, 11, 9, 23, 12, 1, 15, 13, 2, 16, 5, 24,
+        17, 6, 20, 14, 3, 21, 10, 4, 18, 7, 0, 23, 16, 14, 7, 22, 15, 13, 6, 4, 19, 12, 5, 3,
+        21, 11, 9, 2, 20, 18, 8, 1, 24, 17, 10, 0, 15, 5, 20, 10, 14, 4, 19, 9, 24, 23, 13, 3,
+        18, 8, 7, 22, 12, 2, 17, 16, 6, 21, 11, 1, 0, 4, 3, 2, 1, 20, 24, 23, 22, 21, 15, 19,
+        18, 17, 16, 10, 14, 13, 12, 11, 5, 9, 8, 7, 6, 0, 24, 18, 12, 6, 2, 21, 15, 14, 8, 4,
+        23, 17, 11, 5, 1, 20, 19, 13, 7, 3, 22, 16, 10, 9, 0, 21, 17, 13, 9, 12, 8, 4, 20, 16,
+        24, 15, 11, 7, 3, 6, 2, 23, 19, 10, 18, 14, 5, 1, 22, 0, 8, 11, 19, 22, 13, 16, 24, 2,
+        5, 21, 4, 7, 10, 18, 9, 12, 15, 23, 1, 17, 20, 3, 6, 14, 0, 16, 7, 23, 14, 19, 5, 21,
+        12, 3, 8, 24, 10, 1, 17, 22, 13, 4, 15, 6, 11, 2, 18, 9, 20, 0, 5, 10, 15, 20, 23, 3,
+        8, 13, 18, 16, 21, 1, 6, 11, 14, 19, 24, 4, 9, 7, 12, 17, 22, 2, 0, 3, 1, 4, 2, 15, 18,
+        16, 19, 17, 5, 8, 6, 9, 7, 20, 23, 21, 24, 22, 10, 13, 11, 14, 12, 0, 18, 6, 24, 12, 4,
+        17, 5, 23, 11, 3, 16, 9, 22, 10, 2, 15, 8, 21, 14, 1, 19, 7, 20, 13, 0, 17, 9, 21, 13,
+        24, 11, 3, 15, 7, 18, 5, 22, 14, 1, 12, 4, 16, 8, 20, 6, 23, 10, 2, 19, 0, 11, 22, 8,
+        19, 21, 7, 18, 4, 10, 17, 3, 14, 20, 6, 13, 24, 5, 16, 2, 9, 15, 1, 12, 23, 0, 7, 14,
+        16, 23, 8, 10, 17, 24, 1, 11, 18, 20, 2, 9, 19, 21, 3, 5, 12, 22, 4, 6, 13, 15, 0, 10,
+        20, 5, 15, 16, 1, 11, 21, 6, 7, 17, 2, 12, 22, 23, 8, 18, 3, 13, 14, 24, 9, 19, 4, 0,
+        1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12, 13, 14, 15, 16, 17, 18, 19, 20, 21, 22, 23, 24,
+    ];
+    let mut i = 0;
+    while i < perms.len() {
+        assert!(perms[i] < 25);
+        i += 1;
+    }
+    perms
+};
+
+const PERMUTATIONS_ADJUSTED_AS_ARRAY: [[usize; 25]; 25] = {
+    let perms: [usize; 625] = [
+        0, 1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12, 13, 14, 15, 16, 17, 18, 19, 20, 21, 22, 23,
+        24, 0, 6, 12, 18, 24, 3, 9, 10, 16, 22, 1, 7, 13, 19, 20, 4, 5, 11, 17, 23, 2, 8, 14,
+        15, 21, 0, 9, 13, 17, 21, 18, 22, 1, 5, 14, 6, 10, 19, 23, 2, 24, 3, 7, 11, 15, 12, 16,
+        20, 4, 8, 0, 22, 19, 11, 8, 17, 14, 6, 3, 20, 9, 1, 23, 15, 12, 21, 18, 10, 7, 4, 13,
+        5, 2, 24, 16, 0, 14, 23, 7, 16, 11, 20, 9, 18, 2, 22, 6, 15, 4, 13, 8, 17, 1, 10, 24,
+        19, 3, 12, 21, 5, 0, 20, 15, 10, 5, 7, 2, 22, 17, 12, 14, 9, 4, 24, 19, 16, 11, 6, 1,
+        21, 23, 18, 13, 8, 3, 0, 2, 4, 1, 3, 10, 12, 14, 11, 13, 20, 22, 24, 21, 23, 5, 7, 9,
+        6, 8, 15, 17, 19, 16, 18, 0, 12, 24, 6, 18, 1, 13, 20, 7, 19, 2, 14, 21, 8, 15, 3, 10,
+        22, 9, 16, 4, 11, 23, 5, 17, 0, 13, 21, 9, 17, 6, 19, 2, 10, 23, 12, 20, 8, 16, 4, 18,
+        1, 14, 22, 5, 24, 7, 15, 3, 11, 0, 19, 8, 22, 11, 9, 23, 12, 1, 15, 13, 2, 16, 5, 24,
+        17, 6, 20, 14, 3, 21, 10, 4, 18, 7, 0, 23, 16, 14, 7, 22, 15, 13, 6, 4, 19, 12, 5, 3,
+        21, 11, 9, 2, 20, 18, 8, 1, 24, 17, 10, 0, 15, 5, 20, 10, 14, 4, 19, 9, 24, 23, 13, 3,
+        18, 8, 7, 22, 12, 2, 17, 16, 6, 21, 11, 1, 0, 4, 3, 2, 1, 20, 24, 23, 22, 21, 15, 19,
+        18, 17, 16, 10, 14, 13, 12, 11, 5, 9, 8, 7, 6, 0, 24, 18, 12, 6, 2, 21, 15, 14, 8, 4,
+        23, 17, 11, 5, 1, 20, 19, 13, 7, 3, 22, 16, 10, 9, 0, 21, 17, 13, 9, 12, 8, 4, 20, 16,
+        24, 15, 11, 7, 3, 6, 2, 23, 19, 10, 18, 14, 5, 1, 22, 0, 8, 11, 19, 22, 13, 16, 24, 2,
+        5, 21, 4, 7, 10, 18, 9, 12, 15, 23, 1, 17, 20, 3, 6, 14, 0, 16, 7, 23, 14, 19, 5, 21,
+        12, 3, 8, 24, 10, 1, 17, 22, 13, 4, 15, 6, 11, 2, 18, 9, 20, 0, 5, 10, 15, 20, 23, 3,
+        8, 13, 18, 16, 21, 1, 6, 11, 14, 19, 24, 4, 9, 7, 12, 17, 22, 2, 0, 3, 1, 4, 2, 15, 18,
+        16, 19, 17, 5, 8, 6, 9, 7, 20, 23, 21, 24, 22, 10, 13, 11, 14, 12, 0, 18, 6, 24, 12, 4,
+        17, 5, 23, 11, 3, 16, 9, 22, 10, 2, 15, 8, 21, 14, 1, 19, 7, 20, 13, 0, 17, 9, 21, 13,
+        24, 11, 3, 15, 7, 18, 5, 22, 14, 1, 12, 4, 16, 8, 20, 6, 23, 10, 2, 19, 0, 11, 22, 8,
+        19, 21, 7, 18, 4, 10, 17, 3, 14, 20, 6, 13, 24, 5, 16, 2, 9, 15, 1, 12, 23, 0, 7, 14,
+        16, 23, 8, 10, 17, 24, 1, 11, 18, 20, 2, 9, 19, 21, 3, 5, 12, 22, 4, 6, 13, 15, 0, 10,
+        20, 5, 15, 16, 1, 11, 21, 6, 7, 17, 2, 12, 22, 23, 8, 18, 3, 13, 14, 24, 9, 19, 4, 0,
+        1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12, 13, 14, 15, 16, 17, 18, 19, 20, 21, 22, 23, 24,
+    ];
+    let mut i = 0;
+    while i < perms.len() {
+        assert!(perms[i] < 25);
+        i += 1;
+    }
+    
+    unsafe {
+        core::mem::transmute(perms)
+    }
+};
+
+// we will make some lookup tables to get everything at once. Total size of control bits is 2^11, and we want to get
+// precompile type + iteration + round for the NEXT one (3 + 3 + 5 bits in total). We have functions below to that implement bumps,
+// so we can just make single lookup table
+
+static NEXT_CONTROL_REGISTER: [u32; 1 << 11] = const {
+    let mut result = [0u32; 1 << 11];
+    let mut control = 0u32;
+    while control < 1 << 11 {
+        let (precompile, iteration, round) = keccak_special5_impl_decode_control_ignore_invalid(control);
+        let control_next = keccak_special5_impl_bump_control_ignore_invalid(precompile, iteration, round);
+        result[control as usize] = control_next;
+        control += 1;
+    }
+
+    result
+};
+
+#[inline(always)]
+pub(crate) const fn keccak_special5_impl_decode_control_ignore_invalid(control: u32) -> (u32, usize, usize) {
+    let precompile = control & 0b111;
+    let iteration = ((control >> 3) & 0b111) as usize;
+    let round = ((control >> 6) & 0b111111 )as usize;
+    (precompile, iteration, round)
+}
+
+#[inline(always)]
+pub(crate) const fn keccak_special5_impl_bump_control_ignore_invalid(
+    precompile: u32,
+    iteration: usize,
+    round: usize,
+) -> u32 {
+    let (precompile_next, iteration_next, round_next) = match precompile {
+        PRECOMPILE_IOTA_COLUMNXOR | PRECOMPILE_THETA | PRECOMPILE_RHO => {
+            let precompile_next = if iteration == 4 {
+                precompile + 1
+            } else {
+                precompile
+            };
+            let iteration_next = (iteration + 1) % 5;
+            let round_next = round;
+            (precompile_next, iteration_next, round_next)
+        }
+        PRECOMPILE_COLUMNMIX1 | PRECOMPILE_COLUMNMIX2 | PRECOMPILE_CHI1 => {
+            let precompile_next = precompile + 1;
+            let iteration_next = iteration;
+            let round_next = round;
+            (precompile_next, iteration_next, round_next)
+        }
+        PRECOMPILE_CHI2 => {
+            let precompile_next = if iteration == 4 {
+                PRECOMPILE_IOTA_COLUMNXOR
+            } else {
+                precompile - 1
+            };
+            let iteration_next = (iteration + 1) % 5;
+            let round_next = if iteration == 4 { round + 1 } else { round };
+            (precompile_next, iteration_next, round_next)
+        }
+        _ => (0, 0, 0)
+    };
+    precompile_next | (iteration_next as u32) << 3 | (round_next as u32) << 6
+}
+
+static OFFSETS_TABLE: [[u8; KECCAK_SPECIAL5_NUM_VARIABLE_OFFSETS]; 1 << 11] = const {
+    let mut result = [[0u8; KECCAK_SPECIAL5_NUM_VARIABLE_OFFSETS]; 1 << 11];
+    let mut control = 0u32;
+    while control < 1 << 11 {
+        let (precompile, iteration, round) = keccak_special5_impl_decode_control_ignore_invalid(control);
+        let ops = keccak_special5_impl_extract_indices_ignore_invalid(precompile, iteration, round);
+        result[control as usize] = ops;
+        control += 1;
+    }
+
+    result
+};
+
+#[inline(always)]
+pub(crate) const fn keccak_special5_impl_extract_indices_ignore_invalid(
+    precompile: u32,
+    iteration: usize,
+    round: usize,
+) -> [u8; KECCAK_SPECIAL5_NUM_VARIABLE_OFFSETS] {
+    if round >= 25 {
+        return [0u8; KECCAK_SPECIAL5_NUM_VARIABLE_OFFSETS];
+    }
+    match precompile {
+        PRECOMPILE_IOTA_COLUMNXOR => {
+            let pi = &PERMUTATIONS_ADJUSTED_AS_ARRAY[round]; // indices before applying round permutation
+            let idcol = 25 + iteration;
+            if iteration + 20 >= 25 {
+                return [0u8; KECCAK_SPECIAL5_NUM_VARIABLE_OFFSETS];
+            }
+            let idx0 = pi[iteration];
+            let idx5 = pi[iteration + 5];
+            let idx10 = pi[iteration + 10];
+            let idx15 = pi[iteration + 15];
+            let idx20 = pi[iteration + 20];
+            [idx0 as u8, idx5 as u8, idx10 as u8, idx15 as u8, idx20 as u8, idcol as u8]
+        }
+        PRECOMPILE_COLUMNMIX1 => [25, 26, 27, 28, 29, 30],
+        PRECOMPILE_COLUMNMIX2 => [25, 26, 27, 28, 29, 30],
+        PRECOMPILE_THETA => {
+            const IDCOLS: [usize; 5] = [29, 25, 26, 27, 28];
+            let pi = &PERMUTATIONS_ADJUSTED_AS_ARRAY[round]; // indices before applying round permutation
+            if iteration >= 5 {
+                return [0u8; KECCAK_SPECIAL5_NUM_VARIABLE_OFFSETS];
+            }
+            let idcol = IDCOLS[iteration];
+            if iteration + 20 >= 25 {
+                return [0u8; KECCAK_SPECIAL5_NUM_VARIABLE_OFFSETS];
+            }
+            let idx0 = pi[iteration];
+            let idx5 = pi[iteration + 5];
+            let idx10 = pi[iteration + 10];
+            let idx15 = pi[iteration + 15];
+            let idx20 = pi[iteration + 20];
+            [idx0 as u8, idx5 as u8, idx10 as u8, idx15 as u8, idx20 as u8, idcol as u8]
+        }
+        PRECOMPILE_RHO => {
+            let pi = &PERMUTATIONS_ADJUSTED_AS_ARRAY[round]; // indices before applying round permutation
+            if iteration + 20 >= 25 {
+                return [0u8; KECCAK_SPECIAL5_NUM_VARIABLE_OFFSETS];
+            }
+            let idx0 = pi[iteration];
+            let idx5 = pi[iteration + 5];
+            let idx10 = pi[iteration + 10];
+            let idx15 = pi[iteration + 15];
+            let idx20 = pi[iteration + 20];
+            [idx0 as u8, idx5 as u8, idx10 as u8, idx15 as u8, idx20 as u8, 25]
+        }
+        PRECOMPILE_CHI1 => {
+            if round + 1 >= 25 {
+                return [0u8; KECCAK_SPECIAL5_NUM_VARIABLE_OFFSETS];
+            }
+            let pi = &PERMUTATIONS_ADJUSTED_AS_ARRAY[round + 1]; // indices after applying round permutation
+            let idx = iteration * 5;
+            if idx + 4 >= 25 {
+                return [0u8; KECCAK_SPECIAL5_NUM_VARIABLE_OFFSETS];
+            }
+            let _idx0 = pi[idx];
+            let idx1 = pi[idx + 1];
+            let idx2 = pi[idx + 2];
+            let idx3 = pi[idx + 3];
+            let idx4 = pi[idx + 4];
+            [idx1 as u8, idx2 as u8, idx3 as u8, idx4 as u8, 25, 26]
+        }
+        PRECOMPILE_CHI2 => {
+            if round + 1 >= 25 {
+                return [0u8; KECCAK_SPECIAL5_NUM_VARIABLE_OFFSETS];
+            }
+            let pi = &PERMUTATIONS_ADJUSTED_AS_ARRAY[round + 1]; // indices after applying round permutation
+            let idx = iteration * 5;
+            if idx + 4 >= 25 {
+                return [0u8; KECCAK_SPECIAL5_NUM_VARIABLE_OFFSETS];
+            }
+            let idx0 = pi[idx];
+            let _idx1 = pi[idx + 1];
+            let _idx2 = pi[idx + 2];
+            let idx3 = pi[idx + 3];
+            let idx4 = pi[idx + 4];
+            [idx0 as u8, idx3 as u8, idx4 as u8, 25, 26, 27]
+        }
+        _ => [0u8; KECCAK_SPECIAL5_NUM_VARIABLE_OFFSETS],
     }
 }
 
@@ -58,7 +382,9 @@ pub(crate) fn keccak_special5_call<C: Counters, S: Snapshotter<C>, R: RAM>(
 ) {
     let x10 = state.registers[10].value; // don't process it just yet, wait for write!
     let x11 = read_register::<C, 3>(state, 11);
-    assert!(x11 >= 1 << 21, "state ptr is not in RAM");
+
+    assert!(x11 >= common_constants::ROM_BYTE_SIZE as u32);
+
     assert!(x10 < 1 << 11, "control info is too big");
     assert!(x11 % 256 == 0, "state ptr is not aligned");
 
@@ -67,12 +393,20 @@ pub(crate) fn keccak_special5_call<C: Counters, S: Snapshotter<C>, R: RAM>(
     let (precompile, iteration, round) = keccak_special5_impl_decode_control(control);
 
     // update control
-    let control_next = keccak_special5_impl_bump_control(precompile, iteration, round);
+
+    let control_next = NEXT_CONTROL_REGISTER[control as usize];
+    #[cfg(debug_assertions)] {
+        let _control_next = keccak_special5_impl_bump_control(precompile, iteration, round);
+    }
+
     let mut x10_next = control_next;
     write_register::<C, 3>(state, 10, &mut x10_next); // extremely strange &mut
 
     // get indexes
-    let state_indexes = keccak_special5_impl_extract_indices(precompile, iteration, round);
+    let state_indexes = OFFSETS_TABLE[control as usize];
+    #[cfg(debug_assertions)] {
+        let _state_indexes = keccak_special5_impl_extract_indices(precompile, iteration, round);
+    }
 
     // get inputs
     let state_inputs = peek_u64_words(x11 as usize, state_indexes, ram);
@@ -96,7 +430,7 @@ pub(crate) fn keccak_special5_call<C: Counters, S: Snapshotter<C>, R: RAM>(
 }
 
 #[inline(always)]
-pub(crate) const fn keccak_special5_impl_decode_control(control: u32) -> (u32, usize, usize) {
+pub(crate) fn keccak_special5_impl_decode_control(control: u32) -> (u32, usize, usize) {
     let precompile = control & 0b111;
     let iteration = ((control >> 3) & 0b111) as usize;
     let round = (control >> 6) as usize;
@@ -109,7 +443,7 @@ pub(crate) const fn keccak_special5_impl_decode_control(control: u32) -> (u32, u
 }
 
 #[inline(always)]
-pub(crate) const fn keccak_special5_impl_bump_control(
+pub(crate) fn keccak_special5_impl_bump_control(
     precompile: u32,
     iteration: usize,
     round: usize,
@@ -152,42 +486,6 @@ pub(crate) fn keccak_special5_impl_extract_indices(
     iteration: usize,
     round: usize,
 ) -> [usize; KECCAK_SPECIAL5_NUM_VARIABLE_OFFSETS] {
-    const PERMUTATIONS_ADJUSTED: [usize; 25 * 25] = {
-        let perms = [
-            0, 1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12, 13, 14, 15, 16, 17, 18, 19, 20, 21, 22, 23,
-            24, 0, 6, 12, 18, 24, 3, 9, 10, 16, 22, 1, 7, 13, 19, 20, 4, 5, 11, 17, 23, 2, 8, 14,
-            15, 21, 0, 9, 13, 17, 21, 18, 22, 1, 5, 14, 6, 10, 19, 23, 2, 24, 3, 7, 11, 15, 12, 16,
-            20, 4, 8, 0, 22, 19, 11, 8, 17, 14, 6, 3, 20, 9, 1, 23, 15, 12, 21, 18, 10, 7, 4, 13,
-            5, 2, 24, 16, 0, 14, 23, 7, 16, 11, 20, 9, 18, 2, 22, 6, 15, 4, 13, 8, 17, 1, 10, 24,
-            19, 3, 12, 21, 5, 0, 20, 15, 10, 5, 7, 2, 22, 17, 12, 14, 9, 4, 24, 19, 16, 11, 6, 1,
-            21, 23, 18, 13, 8, 3, 0, 2, 4, 1, 3, 10, 12, 14, 11, 13, 20, 22, 24, 21, 23, 5, 7, 9,
-            6, 8, 15, 17, 19, 16, 18, 0, 12, 24, 6, 18, 1, 13, 20, 7, 19, 2, 14, 21, 8, 15, 3, 10,
-            22, 9, 16, 4, 11, 23, 5, 17, 0, 13, 21, 9, 17, 6, 19, 2, 10, 23, 12, 20, 8, 16, 4, 18,
-            1, 14, 22, 5, 24, 7, 15, 3, 11, 0, 19, 8, 22, 11, 9, 23, 12, 1, 15, 13, 2, 16, 5, 24,
-            17, 6, 20, 14, 3, 21, 10, 4, 18, 7, 0, 23, 16, 14, 7, 22, 15, 13, 6, 4, 19, 12, 5, 3,
-            21, 11, 9, 2, 20, 18, 8, 1, 24, 17, 10, 0, 15, 5, 20, 10, 14, 4, 19, 9, 24, 23, 13, 3,
-            18, 8, 7, 22, 12, 2, 17, 16, 6, 21, 11, 1, 0, 4, 3, 2, 1, 20, 24, 23, 22, 21, 15, 19,
-            18, 17, 16, 10, 14, 13, 12, 11, 5, 9, 8, 7, 6, 0, 24, 18, 12, 6, 2, 21, 15, 14, 8, 4,
-            23, 17, 11, 5, 1, 20, 19, 13, 7, 3, 22, 16, 10, 9, 0, 21, 17, 13, 9, 12, 8, 4, 20, 16,
-            24, 15, 11, 7, 3, 6, 2, 23, 19, 10, 18, 14, 5, 1, 22, 0, 8, 11, 19, 22, 13, 16, 24, 2,
-            5, 21, 4, 7, 10, 18, 9, 12, 15, 23, 1, 17, 20, 3, 6, 14, 0, 16, 7, 23, 14, 19, 5, 21,
-            12, 3, 8, 24, 10, 1, 17, 22, 13, 4, 15, 6, 11, 2, 18, 9, 20, 0, 5, 10, 15, 20, 23, 3,
-            8, 13, 18, 16, 21, 1, 6, 11, 14, 19, 24, 4, 9, 7, 12, 17, 22, 2, 0, 3, 1, 4, 2, 15, 18,
-            16, 19, 17, 5, 8, 6, 9, 7, 20, 23, 21, 24, 22, 10, 13, 11, 14, 12, 0, 18, 6, 24, 12, 4,
-            17, 5, 23, 11, 3, 16, 9, 22, 10, 2, 15, 8, 21, 14, 1, 19, 7, 20, 13, 0, 17, 9, 21, 13,
-            24, 11, 3, 15, 7, 18, 5, 22, 14, 1, 12, 4, 16, 8, 20, 6, 23, 10, 2, 19, 0, 11, 22, 8,
-            19, 21, 7, 18, 4, 10, 17, 3, 14, 20, 6, 13, 24, 5, 16, 2, 9, 15, 1, 12, 23, 0, 7, 14,
-            16, 23, 8, 10, 17, 24, 1, 11, 18, 20, 2, 9, 19, 21, 3, 5, 12, 22, 4, 6, 13, 15, 0, 10,
-            20, 5, 15, 16, 1, 11, 21, 6, 7, 17, 2, 12, 22, 23, 8, 18, 3, 13, 14, 24, 9, 19, 4, 0,
-            1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12, 13, 14, 15, 16, 17, 18, 19, 20, 21, 22, 23, 24,
-        ];
-        let mut i = 0;
-        while i < perms.len() {
-            assert!(perms[i] < 25);
-            i += 1;
-        }
-        perms
-    };
     match precompile {
         PRECOMPILE_IOTA_COLUMNXOR => {
             let pi = &PERMUTATIONS_ADJUSTED[round * 25..]; // indices before applying round permutation
@@ -257,33 +555,6 @@ pub(crate) fn keccak_special5_impl_compute_outputs(
             let [idx0, idx5, idx10, idx15, idx20, _idcol] = state_inputs;
             let idx0_new = {
                 let chosen_round_constant = {
-                    const ROUND_CONSTANTS_ADJUSTED: [u64; 25] = [
-                        0,
-                        1,
-                        32898,
-                        9223372036854808714,
-                        9223372039002292224,
-                        32907,
-                        2147483649,
-                        9223372039002292353,
-                        9223372036854808585,
-                        138,
-                        136,
-                        2147516425,
-                        2147483658,
-                        2147516555,
-                        9223372036854775947,
-                        9223372036854808713,
-                        9223372036854808579,
-                        9223372036854808578,
-                        9223372036854775936,
-                        32778,
-                        9223372039002259466,
-                        9223372039002292353,
-                        9223372036854808704,
-                        2147483649,
-                        9223372039002292232,
-                    ];
                     let round_if_iter0 = if iteration == 0 { round } else { 0 };
                     ROUND_CONSTANTS_ADJUSTED[round_if_iter0]
                 };

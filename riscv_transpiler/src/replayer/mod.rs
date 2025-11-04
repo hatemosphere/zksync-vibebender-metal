@@ -28,6 +28,7 @@ pub struct ReplayerNonDeterminism<'a> {
 impl<'a, const ROM_BOUND_SECOND_WORD_BITS: usize> RAM
     for ReplayerRam<'a, ROM_BOUND_SECOND_WORD_BITS>
 {
+    #[inline(always)]
     fn peek_word(&self, address: u32) -> u32 {
         debug_assert_eq!(address % 4, 0);
         debug_assert!(self.ram_log.len() > 0);
@@ -35,6 +36,19 @@ impl<'a, const ROM_BOUND_SECOND_WORD_BITS: usize> RAM
             let (value, _) = *self.ram_log.get_unchecked(0).get_unchecked(0);
 
             value
+        }
+    }
+
+    #[inline(always)]
+    fn peek_u64(&self, address: u32) -> u64 {
+        debug_assert_eq!(address % 4, 0);
+        debug_assert!(self.ram_log.len() > 1);
+        unsafe {
+            let t = self.ram_log.get_unchecked(0);
+            let (low, _) = *t.get_unchecked(0);
+            let (high, _) = *t.get_unchecked(1);
+
+            (low as u64) | ((high as u64) << 32)
         }
     }
 
@@ -243,9 +257,9 @@ impl<C: Counters> ReplayerVM<C> {
                         InstructionName::ZicsrDelegation => {
                             zicsr::call_delegation::<C, R>(state, ram, instr, tracer)
                         }
-                        a @ _ => {
-                            panic!("Unknown instruction {:?}", a);
-                        }
+                        // a @ _ => {
+                        //     panic!("Unknown instruction {:?}", a);
+                        // }
                         _ => core::hint::unreachable_unchecked(),
                     }
                     if state.pc == pc {

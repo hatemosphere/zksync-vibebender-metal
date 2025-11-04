@@ -18,6 +18,8 @@ risc_v_simulator = { workspace = true, features = ["delegation"] }
 worker = { workspace = true }
 serde = { workspace = true }
 serde-big-array = "*"
+seq-macro = { workspace = true }
 
 [dev-dependencies]
 lib-rv32-asm = {git = "https://github.com/shamatar/lib-rv32.git" }
+hex = "*"

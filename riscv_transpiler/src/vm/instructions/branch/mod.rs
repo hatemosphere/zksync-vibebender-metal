@@ -6,10 +6,17 @@ pub(crate) fn branch<C: Counters, S: Snapshotter<C>, R: RAM>(
     ram: &mut R,
     snapshotter: &mut S,
     instr: Instruction,
+    tape: &impl InstructionTape,
 ) {
     let rs1_value = read_register::<C, 0>(state, instr.rs1);
-    let rs2_value = read_register::<C, 1>(state, instr.rs2); // formal
+    let rs2_value = read_register::<C, 1>(state, instr.rs2);
+    unsafe {
+        core::hint::assert_unchecked(instr.imm % 4 == 0)
+    };
     let jump_address = state.pc.wrapping_add(instr.imm);
+    unsafe {
+        core::hint::assert_unchecked(jump_address % 4 == 0)
+    };
     let funct3 = instr.rd;
     let negate = funct3 & 0b001 > 0; // lowest bit indicates eq <=> ne, lt <=> gte and so on
 
@@ -26,15 +33,17 @@ pub(crate) fn branch<C: Counters, S: Snapshotter<C>, R: RAM>(
         should_jump = !should_jump;
     }
     if should_jump {
-        if core::hint::unlikely(jump_address & 0x3 != 0) {
-            // unaligned PC
-            panic!("Unaligned jump address 0x{:08x}", jump_address);
-        } else {
-            state.pc = jump_address;
-        }
+        state.pc = jump_address;
+        // if core::hint::unlikely(jump_address & 0x3 != 0) {
+        //     // unaligned PC
+        //     panic!("Unaligned jump address 0x{:08x}", jump_address);
+        // } else {
+        //     state.pc = jump_address;
+        // }
     } else {
         default_increase_pc::<C>(state);
     }
-    write_register::<C, 2>(state, 0, &mut 0);
+    tape.prefetch_instruction(state.pc);
+    touch_x0::<C, 2>(state);
     increment_family_counter::<C, JUMP_BRANCH_SLT_CIRCUIT_FAMILY_IDX>(state);
 }

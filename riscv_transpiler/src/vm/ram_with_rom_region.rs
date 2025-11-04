@@ -49,6 +49,21 @@ impl<const ROM_BOUND_SECOND_WORD_BITS: usize> RAM for RamWithRomRegion<ROM_BOUND
             value
         }
     }
+    #[inline(always)]
+    fn peek_u64(&self, address: u32) -> u64 {
+        debug_assert_eq!(address % 4, 0);
+        unsafe {
+            let word_idx = (address / 4) as usize;
+            debug_assert!(word_idx < self.backing.len());
+            debug_assert!(word_idx + 1 < self.backing.len());
+            let slot = self.backing.get_unchecked(word_idx);
+            let low = slot.value;
+            let next_slot = self.backing.get_unchecked(word_idx + 1);
+            let high = next_slot.value;
+
+            (low as u64) | ((high as u64) << 32)
+        }
+    }
 
     #[inline(always)]
     fn mask_read_for_witness(&self, _address: &mut u32, _value: &mut u32) {
@@ -168,5 +183,88 @@ impl<const ROM_BOUND_SECOND_WORD_BITS: usize> RamWithRomRegion<ROM_BOUND_SECOND_
         });
 
         chunks
+    }
+}
+
+pub struct BenchmarkingRAM {
+    backing: Vec<u32>,
+}
+
+impl BenchmarkingRAM {
+    pub fn from_rom_content(content: &[u32], total_size_bytes: usize) -> Self {
+        assert!(total_size_bytes.is_power_of_two());
+        let ram_words = total_size_bytes / core::mem::size_of::<u32>();
+
+        let mut backing = vec![
+            0u32;
+            ram_words
+        ];
+        backing[..content.len()].copy_from_slice(content);
+
+        Self { backing }
+    }
+}
+
+impl RAM for BenchmarkingRAM {
+    #[inline(always)]
+    fn peek_word(&self, address: u32) -> u32 {
+        debug_assert_eq!(address % 4, 0);
+        unsafe {
+            let word_idx = (address / 4) as usize;
+            debug_assert!(word_idx < self.backing.len());
+            let value = *self.backing.get_unchecked(word_idx);
+
+            value
+        }
+    }
+
+    #[inline(always)]
+    fn peek_u64(&self, address: u32) -> u64 {
+        debug_assert_eq!(address % 4, 0);
+        unsafe {
+            let word_idx = (address / 4) as usize;
+            debug_assert!(word_idx < self.backing.len());
+            debug_assert!(word_idx + 1 < self.backing.len());
+            let low = *self.backing.get_unchecked(word_idx);
+            let high = *self.backing.get_unchecked(word_idx + 1);
+
+            (low as u64) | ((high as u64) << 32)
+        }
+    }
+
+    #[inline(always)]
+    fn mask_read_for_witness(&self, _address: &mut u32, _value: &mut u32) {
+        // we do not do anything here
+    }
+
+    #[inline(always)]
+    fn read_word(&mut self, address: u32, _timestamp: TimestampScalar) -> (TimestampScalar, u32) {
+        debug_assert_eq!(address % 4, 0);
+        unsafe {
+            let word_idx = (address / 4) as usize;
+            debug_assert!(word_idx < self.backing.len());
+            let value = *self.backing.get_unchecked(word_idx);
+
+            (0usize as TimestampScalar, value)
+        }
+    }
+
+    #[inline(always)]
+    fn write_word(
+        &mut self,
+        address: u32,
+        word: u32,
+        _timestamp: TimestampScalar,
+    ) -> (TimestampScalar, u32) {
+        debug_assert_eq!(address % 4, 0);
+        unsafe {
+            let word_idx = (address / 4) as usize;
+            debug_assert!(word_idx < self.backing.len());
+            let slot = self.backing.get_unchecked_mut(word_idx);
+            let old_value = *slot;
+            *slot = word;
+
+            (0usize as TimestampScalar, old_value)
+        }
     }
 }

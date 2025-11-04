@@ -16,6 +16,8 @@ pub use self::ram_with_rom_region::RamWithRomRegion;
 pub use self::replay_snapshotter::*;
 pub use self::simple_tape::SimpleTape;
 
+pub(crate) use self::ram_with_rom_region::BenchmarkingRAM;
+
 pub trait Counters: 'static + Clone + Copy + Debug + PartialEq + Eq + Send + Sync {
     fn bump_bigint(&mut self);
     fn bump_blake2_round_function(&mut self);
@@ -25,11 +27,54 @@ pub trait Counters: 'static + Clone + Copy + Debug + PartialEq + Eq + Send + Syn
     fn get_calls_to_circuit_family<const FAMILY: u8>(&self) -> usize;
 }
 
+// Some dummy implementation for profiling baseline
+
+impl Counters for () {
+    #[inline(always)]
+    fn bump_bigint(&mut self) {
+
+    }
+    #[inline(always)]
+    fn bump_blake2_round_function(&mut self) {
+
+    }
+    #[inline(always)]
+    fn bump_keccak_special5(&mut self) {
+
+    }
+    #[inline(always)]
+    fn bump_non_determinism(&mut self) {
+
+    }
+    #[inline(always)]
+    fn log_circuit_family<const FAMILY: u8>(&mut self) {}
+    #[inline(always)]
+    fn get_calls_to_circuit_family<const FAMILY: u8>(&self) -> usize {
+        panic!("Should not be used");
+    }
+}
+
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 #[repr(C, align(16))]
 pub struct Register {
     pub timestamp: TimestampScalar,
     pub value: u32,
+}
+
+impl Register {
+    #[inline(always)]
+    pub fn from_value_and_timestamp(value: u32, timestamp: TimestampScalar) -> Self {
+        Self {
+            timestamp,
+            value,
+        }
+    }
+
+    #[inline(always)]
+    pub fn set_value_and_timestamp(&mut self, value: u32, timestamp: TimestampScalar) {
+        self.value = value;
+        self.timestamp = timestamp;
+    }
 }
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
@@ -67,8 +112,24 @@ pub trait Snapshotter<C: Counters> {
     );
 }
 
+impl<C: Counters> Snapshotter<C> for () {
+    #[inline(always)]
+    fn take_snapshot(&mut self, _state: &State<C>) {}
+    #[inline(always)]
+    fn append_non_determinism_read(&mut self, _value: u32) {}
+    #[inline(always)]
+    fn append_memory_read(
+        &mut self,
+        _address: u32,
+        _read_value: u32,
+        _read_timestamp: TimestampScalar,
+        _write_timestamp: TimestampScalar,
+    ) {}
+}
+
 pub trait RAM {
     fn peek_word(&self, address: u32) -> u32;
+    fn peek_u64(&self, address: u32) -> u64;
     fn read_word(&mut self, address: u32, timestamp: TimestampScalar) -> (TimestampScalar, u32);
     fn mask_read_for_witness(&self, address: &mut u32, value: &mut u32);
     fn write_word(
@@ -80,6 +141,10 @@ pub trait RAM {
 }
 
 pub trait InstructionTape: Send + Sync {
+    #[inline(always)]
+    fn prefetch_instruction(&self, _pc: u32) {
+
+    }
     fn read_instruction(&self, pc: u32) -> Instruction;
 }
 
@@ -117,6 +182,7 @@ pub struct VM<C: Counters> {
 }
 
 impl<C: Counters> VM<C> {
+    #[inline(always)]
     pub fn run_basic_unrolled<S: Snapshotter<C>, R: RAM, ND: NonDeterminismCSRSource<R>>(
         state: &mut State<C>,
         num_snapshots: usize,
@@ -131,6 +197,7 @@ impl<C: Counters> VM<C> {
         for _ in 0..num_snapshots {
             for _ in 0..snapshot_period {
                 unsafe {
+                    core::hint::assert_unchecked(state.pc % 4 == 0);
                     let pc = state.pc;
                     let instr = instruction_tape.read_instruction(pc);
                     match instr.name {
@@ -143,10 +210,10 @@ impl<C: Counters> VM<C> {
                         }
 
                         InstructionName::Jal => {
-                            jal_jalr::jal::<C, S, R>(state, ram, snapshotter, instr)
+                            jal_jalr::jal::<C, S, R>(state, ram, snapshotter, instr, instruction_tape)
                         }
                         InstructionName::Jalr => {
-                            jal_jalr::jalr::<C, S, R>(state, ram, snapshotter, instr)
+                            jal_jalr::jalr::<C, S, R>(state, ram, snapshotter, instr, instruction_tape)
                         }
 
                         InstructionName::Slt => {
@@ -164,7 +231,7 @@ impl<C: Counters> VM<C> {
                         }
 
                         InstructionName::Branch => {
-                            branch::branch::<C, S, R>(state, ram, snapshotter, instr)
+                            branch::branch::<C, S, R>(state, ram, snapshotter, instr, instruction_tape)
                         }
 
                         InstructionName::Sw => {
@@ -271,9 +338,9 @@ impl<C: Counters> VM<C> {
                         InstructionName::ZicsrDelegation => {
                             zicsr::call_delegation::<C, S, R>(state, ram, snapshotter, instr)
                         }
-                        a @ _ => {
-                            panic!("Unknown instruction {:?}", a);
-                        }
+                        // a @ _ => {
+                        //     panic!("Unknown instruction {:?}", a);
+                        // }
                         _ => core::hint::unreachable_unchecked(),
                     }
                     state.timestamp += TIMESTAMP_STEP;

@@ -68,8 +68,8 @@ pub(crate) fn blake2_round_function_call<C: Counters, S: Snapshotter<C>, R: RAM>
     let x11 = read_register::<C, 3>(state, 11);
     let x12 = read_register::<C, 3>(state, 12);
 
-    assert!(x10 >= 1 << 21);
-    assert!(x11 >= 1 << 21);
+    assert!(x10 >= common_constants::ROM_BYTE_SIZE as u32);
+    assert!(x11 >= common_constants::ROM_BYTE_SIZE as u32);
 
     assert!(x10 != x11);
 

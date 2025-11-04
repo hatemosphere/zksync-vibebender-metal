@@ -78,6 +78,8 @@ pub fn decode<OPT: DecodingOptions>(opcode: u32) -> Instruction {
             // J format
             let mut imm: u32 = JTypeOpcode::imm(opcode);
             sign_extend(&mut imm, 21);
+            // as we add IMM to PC, then it must be 0 mod 4 as we do not support compressed format
+            assert_eq!(imm % 4, 0);
 
             Instruction::from_imm(InstructionName::Jal, formal_rs1, formal_rs2, rd, imm)
         }
@@ -92,6 +94,10 @@ pub fn decode<OPT: DecodingOptions>(opcode: u32) -> Instruction {
             // B format
             let mut imm = BTypeOpcode::imm(opcode);
             sign_extend(&mut imm, 13);
+
+            // we do not support compressed opcode, so imm must be 0 mod 4, as PC is 0 mod 4
+
+            assert_eq!(imm % 4, 0);
 
             // NOTE: branch instructions do not write, and we always model it as RD = 0 and write of 0 for tracing purposes.
             // And we will put funct3 into rd here to reduce code size

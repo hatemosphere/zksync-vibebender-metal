@@ -12,7 +12,7 @@ categories.workspace = true
 [dependencies]
 serde.workspace = true
 rand = { workspace = true, default-features = false }
-seq-macro = "0.3"
+seq-macro = { workspace = true }
 proc-macro2 = {version = "1", optional = true }
 syn = {version = "2", optional = true }
 quote = {version = "1", optional = true }
