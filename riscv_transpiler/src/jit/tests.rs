@@ -10,12 +10,11 @@ fn test_jit_simple_fibonacci() {
     // let (_, binary) = read_binary(&Path::new("riscv_transpiler/examples/fibonacci/app.bin"));
     // let (_, text) = read_binary(&Path::new("riscv_transpiler/examples/fibonacci/app.text"));
 
-    let (_, binary) = read_binary(&Path::new("examples/fibonacci/app.bin"));
-    let (_, text) = read_binary(&Path::new("examples/fibonacci/app.text"));
-    
-    run_alternative_simulator(
-        &text,
-        &mut (),
-        &binary,
-    );
+    // let (_, binary) = read_binary(&Path::new("examples/fibonacci/app.bin"));
+    // let (_, text) = read_binary(&Path::new("examples/fibonacci/app.text"));
+
+    let (_, binary) = read_binary(&Path::new("examples/keccak_f1600/app.bin"));
+    let (_, text) = read_binary(&Path::new("examples/keccak_f1600/app.text"));
+
+    run_alternative_simulator(&text, &mut (), &binary);
 }

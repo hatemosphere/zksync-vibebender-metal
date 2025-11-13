@@ -3,7 +3,7 @@ use super::*;
 use common_constants::NON_DETERMINISM_CSR;
 
 #[inline(always)]
-pub(crate) fn nd_read<C: Counters, R: RAM, ND: NonDeterminismCSRSource<R>>(
+pub(crate) fn nd_read<C: Counters, R: RAM, ND: NonDeterminismCSRSource>(
     state: &mut State<C>,
     ram: &mut R,
     instr: Instruction,

@@ -5,7 +5,7 @@ use crate::vm::Counters;
 use crate::vm::InstructionTape;
 use crate::vm::NonDeterminismCSRSource;
 use crate::vm::State;
-use crate::vm::RAM;
+use crate::vm::{RamPeek, RAM};
 use crate::witness::WitnessTracer;
 use common_constants::circuit_families::*;
 use common_constants::TimestampScalar;
@@ -25,7 +25,7 @@ pub struct ReplayerNonDeterminism<'a> {
     pub non_determinism_reads_log: &'a mut [&'a [u32]],
 }
 
-impl<'a, const ROM_BOUND_SECOND_WORD_BITS: usize> RAM
+impl<'a, const ROM_BOUND_SECOND_WORD_BITS: usize> RamPeek
     for ReplayerRam<'a, ROM_BOUND_SECOND_WORD_BITS>
 {
     fn peek_word(&self, address: u32) -> u32 {
@@ -37,7 +37,11 @@ impl<'a, const ROM_BOUND_SECOND_WORD_BITS: usize> RAM
             value
         }
     }
+}
 
+impl<'a, const ROM_BOUND_SECOND_WORD_BITS: usize> RAM
+    for ReplayerRam<'a, ROM_BOUND_SECOND_WORD_BITS>
+{
     #[track_caller]
     #[inline(always)]
     fn read_word(&mut self, address: u32, timestamp: TimestampScalar) -> (TimestampScalar, u32) {
@@ -99,7 +103,7 @@ impl<'a, const ROM_BOUND_SECOND_WORD_BITS: usize> RAM
     }
 }
 
-impl<'a, R: RAM> NonDeterminismCSRSource<R> for ReplayerNonDeterminism<'a> {
+impl<'a> NonDeterminismCSRSource for ReplayerNonDeterminism<'a> {
     fn read(&mut self) -> u32 {
         debug_assert!(self.non_determinism_reads_log.len() > 0);
         unsafe {
@@ -117,7 +121,7 @@ impl<'a, R: RAM> NonDeterminismCSRSource<R> for ReplayerNonDeterminism<'a> {
         }
     }
     #[inline(always)]
-    fn write_with_memory_access(&mut self, _ram: &R, _value: u32) {}
+    fn write_with_memory_access<R: RamPeek + ?Sized>(&mut self, _ram: &R, _value: u32) {}
 }
 
 pub struct ReplayerVM<C: Counters> {
@@ -125,7 +129,7 @@ pub struct ReplayerVM<C: Counters> {
 }
 
 impl<C: Counters> ReplayerVM<C> {
-    pub fn replay_basic_unrolled<R: RAM, ND: NonDeterminismCSRSource<R>>(
+    pub fn replay_basic_unrolled<R: RAM, ND: NonDeterminismCSRSource>(
         state: &mut State<C>,
         num_snapshots: usize,
         ram: &mut R,

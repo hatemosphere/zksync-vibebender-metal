@@ -1,9 +1,14 @@
-use std::{mem::offset_of, ptr::addr_of_mut};
-use common_constants::TimestampScalar;
+use common_constants::{TimestampScalar, NUM_DELEGATION_CALLS_FOR_KECCAK_F1600};
 use dynasmrt::{dynasm, x64, DynasmApi, DynasmLabelApi};
 use riscv_decode::Instruction;
+use std::collections::HashSet;
+use std::{mem::offset_of, ptr::addr_of_mut};
 
 use crate::vm::*;
+
+mod delegations;
+
+pub use self::delegations::*;
 
 #[cfg(test)]
 mod tests;
@@ -33,23 +38,55 @@ const NUM_RAM_WORDS: usize = RAM_SIZE / core::mem::size_of::<u32>();
 
 // On the stack we will have a structure that will allows us to pass in a single pointer all the global machine state.
 
+// We will measure trace chunk in a number of memory accesses and not in a almost fixed number of cycles that did pass between them.
+// At most we extend a chunk by the number of accesses in delegation
+// const TRACE_CHUNK_LEN: usize = 1 << 4;
+const TRACE_CHUNK_LEN: usize = 1 << 20;
+const MAX_TRACE_CHUNK_LEN: usize = const {
+    let mut max = core::cmp::max(24 + 16, 31 * 2);
+
+    TRACE_CHUNK_LEN + max
+};
+
 #[repr(C, align(8))]
 #[derive(Debug)]
-pub struct TraceChunk<const CHUNK_SIZE: usize> {
-    pub values: [u32; CHUNK_SIZE],
-    pub timestamps: [TimestampScalar; CHUNK_SIZE],
+pub struct TraceChunk {
+    pub values: [u32; MAX_TRACE_CHUNK_LEN],
+    pub timestamps: [TimestampScalar; MAX_TRACE_CHUNK_LEN],
+    pub len: u64,
 }
 
-impl<const CHUNK_SIZE: usize> TraceChunk<CHUNK_SIZE> {
+impl TraceChunk {
+    pub fn empty() -> Self {
+        Self {
+            values: [0u32; MAX_TRACE_CHUNK_LEN],
+            timestamps: [0; MAX_TRACE_CHUNK_LEN],
+            len: 0,
+        }
+    }
+
+    #[inline(always)]
+    pub fn add_element(&mut self, value: u32, ts: TimestampScalar) {
+        assert!((self.len as usize) < MAX_TRACE_CHUNK_LEN);
+        unsafe {
+            self.values.as_mut_ptr().add(self.len as usize).write(value);
+            self.timestamps
+                .as_mut_ptr()
+                .add(self.len as usize)
+                .write(ts);
+
+            self.len += 1;
+        }
+    }
+
     const TIMESTAMPS_OFFSET: usize = offset_of!(Self, timestamps);
+    const LEN_OFFSET: usize = offset_of!(Self, len);
 }
 
-// We will measure trace chunk in a number of memory accesses and not in a fixed number of cycles that did pass between them
-const TRACE_CHUNK_LEN: usize = 1 << 4;
-// const TRACE_CHUNK_LEN: usize = 1 << 20;
-
-pub type ReceiveTraceFn = extern "sysv64" fn(*mut (), &mut TraceChunk<TRACE_CHUNK_LEN>, &MachineState) -> *mut TraceChunk<TRACE_CHUNK_LEN>;
-pub type ReceiveFinalStateFn = extern "sysv64" fn(*mut (), &mut TraceChunk<TRACE_CHUNK_LEN>, &MachineState, final_pc: u32);
+pub type ReceiveTraceFn =
+    extern "sysv64" fn(*mut (), &mut TraceChunk, &MachineState) -> *mut TraceChunk;
+pub type ReceiveFinalStateFn =
+    extern "sysv64" fn(*mut (), &mut TraceChunk, &MachineState, final_pc: u32);
 
 const MAX_NUM_COUNTERS: usize = 16;
 
@@ -77,7 +114,7 @@ pub struct MachineState {
     registers: [u32; 32], // aligned at 16, so we can write XMMs directly into the stack
     register_timestamps: [TimestampScalar; 32],
     counters: [u32; MAX_NUM_COUNTERS],
-    pc_or_partial_trace_chunk: u32,
+    pc: u32,
     timestamp: TimestampScalar,
     context_ptr: *mut (),
 }
@@ -92,7 +129,7 @@ impl MachineState {
     const SIZE_IN_QWORDS: usize = Self::SIZE / core::mem::size_of::<u64>();
     const REGISTER_TIMESTAMPS_OFFSET: usize = offset_of!(Self, register_timestamps);
     const COUNTERS_OFFSET: usize = offset_of!(Self, counters);
-    const PC_OR_PARTIAL_TRACE_CHUNK_OFFSET: usize = offset_of!(Self, pc_or_partial_trace_chunk);
+    const PC_OFFSET: usize = offset_of!(Self, pc);
     const TIMESTAMP_OFFSET: usize = offset_of!(Self, timestamp);
     const CONTEXT_PTR_OFFSET: usize = offset_of!(Self, context_ptr);
 }
@@ -104,6 +141,13 @@ pub struct MemoryHolder {
 }
 
 impl MemoryHolder {
+    pub fn empty() -> Self {
+        Self {
+            memory: [0u32; NUM_RAM_WORDS],
+            timestamps: [0; NUM_RAM_WORDS],
+        }
+    }
+
     const TIMESTAMPS_OFFSET: usize = offset_of!(Self, timestamps);
 }
 
@@ -115,6 +159,8 @@ impl MemoryHolder {
 
 // NOTE: stack on x86 must be 16-byte aligned, so we should carefully adjust stack when we push/pop
 
+// In general, callee-saved as rbx, r12-r15 and rbp. RSP is also callee saved, but it's special-case.
+
 // The prologue saves all callee-saved registers
 // This allows us to use all but rbp and rsp
 // Using rbp would mess with debuggers
@@ -123,7 +169,7 @@ impl MemoryHolder {
 macro_rules! prologue {
     ($ops:ident) => {
         dynasm!($ops
-            // this is "enter 0, 0"
+            // stack is 8 mod 16 here
             ; push rbp
             ; mov rbp, rsp
 
@@ -134,7 +180,7 @@ macro_rules! prologue {
             ; push r15
 
             // align stack
-            ; add rsp, 8
+            ; sub rsp, 8
         )
     };
 }
@@ -142,7 +188,7 @@ macro_rules! prologue {
 macro_rules! epilogue {
     ($ops:ident) => {
         dynasm!($ops
-            ; sub rsp, 8
+            ; add rsp, 8
 
             ; pop r15
             ; pop r14
@@ -159,33 +205,29 @@ macro_rules! epilogue {
 macro_rules! receive_trace {
     ($ops:ident, $recv:expr) => {
         dynasm!($ops
-            // handler for full trace chunk. In r9 we expect the current PC
+            // handler for full trace chunk. In r9 we expect the current PC, and RDX is expected to have a pointer to the MachineState
             ; ->trace_buffer_full:
             // we only call this function after executing the opcode in full,
             // so we do not care about rax (for stores), rdx (for loads) or rcx (scratch)
 
-            // put current RSP into RDX - it's our pointer to MachineState
-            ; mov rdx, rsp
-            // add 8 as we did CALL into here
-            ; add rdx, 8
-
+            ;; before_call!($ops) // actual structure is 8 bytes above RSP
             // ; push rax
             // ; push rcx
-            // ; push rdx
-            ;; before_call!($ops, 8) // actual structure is 8 bytes above RSP
+            ; push rdx
             ; mov rax, QWORD $recv as _
             ; mov rsi, rdi // second argument is our trace chunk
             ; mov rdi, [rdx + (MachineState::CONTEXT_PTR_OFFSET as i32)] // first argument is pointer to the context
             // third is our machine state - already in RDX - no need to load it
-            ; add rsp, 8 // align stack
+            // ; add rsp, 8 // align stack
             ; call rax
-            ; sub rsp, 8
-            ;; after_call!($ops, 8) // actual structure is 8 bytes above RSP
-            // and in RAX we expect the return value, that is a NEW pointer to the scratch space if needed
-            ; mov rdi, rax
-            // ; pop rdx
+            // ; sub rsp, 8
+            ; pop rdx
             // ; pop rcx
             // ; pop rax
+            ;; after_call!($ops) // actual structure is 8 bytes above RSP
+            // and in RAX we expect the return value, that is a NEW pointer to the scratch space if needed
+            ; mov rdi, rax
+
             ; xor r9, r9 // reset counter of snapshots
             ; ret
         )
@@ -193,42 +235,47 @@ macro_rules! receive_trace {
 }
 
 macro_rules! quit {
-    ($ops:ident, $recv:expr) => {
+    ($ops:ident, $recv:expr, $final_pc:expr) => {
         dynasm!($ops
-            // handler for final trace chunk. In r9 we have a counter of snapshotted data in the last chunk, and in RCX we have a final PC
+            // handler for final trace chunk. In r9 we have a counter of snapshotted data in the last chunk, in RCX we have a final PC. RDX should have MachineState
             ; ->quit:
             // we only call this function after executing the opcode in full,
             // so we do not care about rax (for stores), rdx (for loads) or rcx (scratch)
-
-            // put current RSP into RDX - it's our pointer to MachineState
-            ; mov rdx, rsp
-
+            ; mov [rdi + (TraceChunk::LEN_OFFSET as i32)], r9 // write length
+            ; mov r9d, $final_pc as i32 // use r9 to store PC for final PC for `before_call`
+            ;; before_call!($ops) // structure is at RSP
             // ; push rax
             // ; push rcx
-            // ; push rdx
-            ;; before_call!($ops, 0) // structure is at RSP
+            ; push rdx
             ; mov rax, QWORD $recv as _
             ; mov rsi, rdi // second argument is our trace chunk
             ; mov rdi, [rdx + (MachineState::CONTEXT_PTR_OFFSET as i32)] // first argument is pointer to the context
             // third is our machine state - already in RDX - no need to load it
             // fourth is final pc - already in RCX - no need to load it
+            ; sub rsp, 8
             ; call rax
-            ;; after_call!($ops, 0) // structure is at RSP
-            // and in RAX we expect the return value, that is a NEW pointer to the scratch space if needed
-            ; mov rdi, rax
-            // ; pop rdx
+            ; add rsp, 8
+            ; pop rdx
             // ; pop rcx
             // ; pop rax
+            ;; after_call!($ops) // structure is at RSP
+            // and in RAX we expect the return value, that is a NEW pointer to the scratch space if needed
+            ; mov rdi, rax
 
-            // we return nothing
+            // we return nothing, but should cleanup the stack
+
+            // forget machine state
+            ; add rsp, (MachineState::SIZE as i32)
+            // do normal epilogue, and we return nothing
             ;; epilogue!($ops)
         )
     };
 }
 
-// this macro saves registers, and "updates" a machine state structure on the stack to reflect the current state
+// This macro saves registers, and "updates" a machine state structure on the stack to reflect the current state.
+// Assumes that in RDX we have a pointer to the MachineState
 macro_rules! before_call {
-    ($ops:ident, $off:expr) => {
+    ($ops:ident) => {
         dynasm!($ops
             ; push rsi
             ; push rdi
@@ -241,48 +288,50 @@ macro_rules! before_call {
 
             // 2 pushes
 
-            ;; save_machine_state!($ops, 2 * 8 + $off)
+            ;; save_machine_state!($ops)
         )
     }
 }
 
-// this macro saves registers, and "updates" a machine state structure on the stack to reflect the current state
+// This macro saves registers, and "updates" a machine state structure on the stack to reflect the current state
+// Assumes that in RDX we have a pointer to the MachineState
 macro_rules! save_machine_state {
-    ($ops:ident, $offset:expr) => {
+    ($ops:ident) => {
         dynasm!($ops
             // offset is an offset of our MachineState from RSP
 
             // First write all registers that are mapped into XMMs
-            ; movdqu [rsp + ($offset as i32) + 0], xmm0
-            ; movdqu [rsp + ($offset as i32) + 16], xmm1
-            ; movdqu [rsp + ($offset as i32) + 32], xmm2 // r8 fits here
-            // ; movdqu [rsp + ($offset as i32) + 48], xmm3
-            ; movdqu [rsp + ($offset as i32) + 64], xmm4
-            ; movdqu [rsp + ($offset as i32) + 80], xmm5
-            ; movdqu [rsp + ($offset as i32) + 96], xmm6
-            ; movdqu [rsp + ($offset as i32) + 112], xmm7
+            ; movdqu [rdx + 0], xmm0
+            ; movdqu [rdx + 16], xmm1
+            ; movdqu [rdx + 32], xmm2 // r8 fits here
+            // ; movdqu [rdx + 48], xmm3
+            ; movdqu [rdx + 64], xmm4
+            ; movdqu [rdx + 80], xmm5
+            ; movdqu [rdx + 96], xmm6
+            ; movdqu [rdx + 112], xmm7
 
             // Save RV registers that are mapped into X86 GPRs (r9-r15)
-            ; mov [rsp + ($offset as i32) + (9 * 4 as i32)], ebx // R9 -> RBX
-            ; mov [rsp + ($offset as i32) + (10 * 4 as i32)], r10d // R10 -> R10
-            ; mov [rsp + ($offset as i32) + (11 * 4 as i32)], r11d // R11 -> R11
-            ; mov [rsp + ($offset as i32) + (12 * 4 as i32)], r12d // R12 -> R12
-            ; mov [rsp + ($offset as i32) + (13 * 4 as i32)], r13d // R13 -> R13
-            ; mov [rsp + ($offset as i32) + (14 * 4 as i32)], r14d // R14 -> R14
-            ; mov [rsp + ($offset as i32) + (15 * 4 as i32)], r15d // R15 -> R15
+            ; mov [rdx + (9 * 4 as i32)], ebx // R9 -> RBX
+            ; mov [rdx + (10 * 4 as i32)], r10d // R10 -> R10
+            ; mov [rdx + (11 * 4 as i32)], r11d // R11 -> R11
+            ; mov [rdx + (12 * 4 as i32)], r12d // R12 -> R12
+            ; mov [rdx + (13 * 4 as i32)], r13d // R13 -> R13
+            ; mov [rdx + (14 * 4 as i32)], r14d // R14 -> R14
+            ; mov [rdx + (15 * 4 as i32)], r15d // R15 -> R15
 
             // put current timestamp (without asumptions about mod 4)
-            ; mov [rsp + ($offset as i32) + (MachineState::TIMESTAMP_OFFSET as i32)], r8
+            ; mov [rdx + (MachineState::TIMESTAMP_OFFSET as i32)], r8
             // and PC (that should be in r9) if we care
-            ; mov [rsp + ($offset as i32) + (MachineState::PC_OR_PARTIAL_TRACE_CHUNK_OFFSET as i32)], r9d
+            ; mov [rdx + (MachineState::PC_OFFSET as i32)], r9d
         )
     }
 }
 
+// Assumes that in RDX we have a pointer to the MachineState
 macro_rules! after_call {
-    ($ops:ident, $off:expr) => {
+    ($ops:ident) => {
         dynasm!($ops
-            ;; update_machine_state_post_call!($ops, 2 * 8 + $off)
+            ;; update_machine_state_post_call!($ops)
 
             // restored above
             // ; pop r11
@@ -296,33 +345,34 @@ macro_rules! after_call {
     }
 }
 
-// this macro updates machine state out of 
+// This macro updates machine state from the stack structure after call.
+// Assumes that in RDX we have a pointer to the MachineState
 macro_rules! update_machine_state_post_call {
-    ($ops:ident, $offset:expr) => {
+    ($ops:ident) => {
         dynasm!($ops
             // offset is an offset of our MachineState from RSP
 
             // take updated timestamp (also without assumptions)
-            ; mov r8, [rsp + ($offset as i32) + (MachineState::TIMESTAMP_OFFSET as i32)]
+            ; mov r8, [rdx + (MachineState::TIMESTAMP_OFFSET as i32)]
             // and r9 is not important
 
-            // Restore RV registers that are mapped into X86 GPRs (r9-r15) 
-            ; mov ebx, [rsp + ($offset as i32) + (9 * 4 as i32)]  // R9 -> RBX
-            ; mov r10d, [rsp + ($offset as i32) + (10 * 4 as i32)]  // R10 -> R10
-            ; mov r11d, [rsp + ($offset as i32) + (11 * 4 as i32)]  // R11 -> R11
-            ; mov r12d, [rsp + ($offset as i32) + (12 * 4 as i32)]  // R12 -> R12
-            ; mov r13d, [rsp + ($offset as i32) + (13 * 4 as i32)]  // R13 -> R13
-            ; mov r14d, [rsp + ($offset as i32) + (14 * 4 as i32)]  // R14 -> R14
-            ; mov r15d, [rsp + ($offset as i32) + (15 * 4 as i32)]  // R15 -> R15
+            // Restore RV registers that are mapped into X86 GPRs (r9-r15)
+            ; mov ebx, [rdx + (9 * 4 as i32)]  // R9 -> RBX
+            ; mov r10d, [rdx + (10 * 4 as i32)]  // R10 -> R10
+            ; mov r11d, [rdx + (11 * 4 as i32)]  // R11 -> R11
+            ; mov r12d, [rdx + (12 * 4 as i32)]  // R12 -> R12
+            ; mov r13d, [rdx + (13 * 4 as i32)]  // R13 -> R13
+            ; mov r14d, [rdx + (14 * 4 as i32)]  // R14 -> R14
+            ; mov r15d, [rdx + (15 * 4 as i32)]  // R15 -> R15
 
-            ; movdqu xmm0, [rsp + ($offset as i32) + 0]
-            ; movdqu xmm1, [rsp + ($offset as i32) + 16] 
-            ; movdqu xmm2, [rsp + ($offset as i32) + 32] 
-            // ; movdqu xmm3, [rsp + ($offset as i32) + 48]
-            ; movdqu xmm4, [rsp + ($offset as i32) + 64]
-            ; movdqu xmm5, [rsp + ($offset as i32) + 80] 
-            ; movdqu xmm6, [rsp + ($offset as i32) + 96] 
-            ; movdqu xmm7, [rsp + ($offset as i32) + 112] 
+            ; movdqu xmm0, [rdx + 0]
+            ; movdqu xmm1, [rdx + 16]
+            ; movdqu xmm2, [rdx + 32]
+            // ; movdqu xmm3, [rdx + 48]
+            ; movdqu xmm4, [rdx + 64]
+            ; movdqu xmm5, [rdx + 80]
+            ; movdqu xmm6, [rdx + 96]
+            ; movdqu xmm7, [rdx + 112]
         )
     }
 }
@@ -482,7 +532,9 @@ macro_rules! increment_trace {
             ; inc r9
             ; cmp r9, TRACE_CHUNK_LEN as _
             ; jne >skip
-            ; mov r9d, ($pc as i32) // abuse r9 for it
+            ; mov [rdi + (TraceChunk::LEN_OFFSET as i32)], r9 // save length
+            ; mov r9d, ($pc as i32) // reuse r9 for pc
+            ; mov rdx, rsp // put MachineState into RDX
             ; call ->trace_buffer_full
             ; skip:
         );
@@ -498,12 +550,9 @@ fn record_circuit_type(ops: &mut x64::Assembler, circuit_type: CounterType, by: 
             ; inc DWORD [rsp + 4 * (x as i32) + (MachineState::COUNTERS_OFFSET as i32)]
         );
     } else {
-        todo!();
-        // dynasm!(ops
-        //     ; pextrd ecx, Rx(xmm_register), imm as i8
-        //     ; add ecx, (by as i32)
-        //     ; pinsrd Rx(xmm_register), ecx, imm as i8
-        // );
+        dynasm!(ops
+            ; add DWORD [rsp + 4 * (x as i32) + (MachineState::COUNTERS_OFFSET as i32)], by as i32
+        );
     }
 }
 
@@ -550,7 +599,7 @@ macro_rules! emit_runtime_error {
     };
 }
 
-pub fn run_alternative_simulator<'a, N: NonDeterminismCSRSource<RamWithRomRegion< {common_constants::rom::ROM_SECOND_WORD_BITS } >>>(
+pub fn run_alternative_simulator<'a, N: NonDeterminismCSRSource>(
     program: &[u32],
     non_determinism_source: &'a mut N,
     initial_memory: &[u32],
@@ -592,24 +641,29 @@ pub fn run_alternative_simulator<'a, N: NonDeterminismCSRSource<RamWithRomRegion
         ; mov [rsp + (MachineState::CONTEXT_PTR_OFFSET as i32)], rdx
     );
 
-    // Static jump targets for JAL and branch instructions
+    // Static jump targets for JAL and branch instructions - we may NOT use some of them, but it is ok
     let instruction_labels = (0..program.len())
         .map(|_| ops.new_dynamic_label())
         .collect::<Vec<_>>();
 
-    // Jump target array for Jalr
+    // Jump target array for Jalr - we will create them upfront, but track which are meaningful
     // Records the position of each RISC-V instruction relative to the start
-    let mut jump_offsets = vec![];
+    let mut jump_offsets = vec![0; program.len()];
+    let mut initialized_jump_offsets = HashSet::new();
+    let mut final_pc = None;
 
-    for (i, raw_instruction) in program.iter().enumerate() {
+    let mut i = 0;
+    while i < program.len() {
+        let raw_instruction = program[i];
         let pc = i as u32 * 4;
 
         dynasm!(ops
-            ; =>instruction_labels[i]
+            ; => instruction_labels[i]
         );
-        jump_offsets.push(ops.offset().0);
+        jump_offsets[i] = ops.offset().0;
+        initialized_jump_offsets.insert(i);
 
-        let Ok(instruction) = riscv_decode::decode(*raw_instruction) else {
+        let Ok(instruction) = riscv_decode::decode(raw_instruction) else {
             emit_runtime_error!(ops);
             continue;
         };
@@ -755,8 +809,9 @@ pub fn run_alternative_simulator<'a, N: NonDeterminismCSRSource<RamWithRomRegion
                 }
                 Instruction::Auipc(parts) => {
                     pre_bump_timestamp_and_touch!(ops, 2, 0);
+                    // NOTE: result is wrapping
                     dynasm!(ops
-                        ; mov Rd(out), (pc + parts.imm()) as i32
+                        ; mov Rd(out), (pc.wrapping_add(parts.imm())) as i32
                     );
                     record_circuit_type(&mut ops, CounterType::AddSubLui, 1);
                 }
@@ -866,42 +921,90 @@ pub fn run_alternative_simulator<'a, N: NonDeterminismCSRSource<RamWithRomRegion
 
                 // Loads
                 Instruction::Lb(parts) => {
-                    emit_runtime_error!(ops);
-                    // let address = load(&mut ops, parts.rs1());
-                    // dynasm!(ops
-                    //     ; movsx Rq(out), Rd(address)
-                    //     ; movsx Rd(out), BYTE [rsi + Rq(out) + sign_extend::<12>(parts.imm())]
-                    // );
+                    let address = load(&mut ops, parts.rs1());
+                    dynasm!(ops
+                        ; movsx Rq(SCRATCH_REGISTER), Rd(address)
+                        ; add Rq(SCRATCH_REGISTER), sign_extend::<12>(parts.imm()) // compute address, as we will need it a lot
+                        ; mov rax, Rq(SCRATCH_REGISTER) // put word(!) index in to RAX
+                        ; shr rax, 2
+                    );
+                    touch_register_and_increment_timestamp!(ops, parts.rs1());
+                    dynasm!(ops
+                        ; movzx Rd(out), BYTE [rsi + Rq(SCRATCH_REGISTER)] // load value into destination, sign-extend
+                        ; mov Rd(SCRATCH_REGISTER), [rsi + 4 * rdx] // load old word(!) value into scratch
+                        ; mov rdx, [rsi + (MemoryHolder::TIMESTAMPS_OFFSET as i32) + 8 * rax] // reuse RDX for read timestamp
+                        ; mov [rsi + (MemoryHolder::TIMESTAMPS_OFFSET as i32) + 8 * rax], r8 // update timestamp
+                        ; mov [rdi + r9 * 4], Rd(SCRATCH_REGISTER) // write value into trace
+                        ; mov [rdi + r9 * 8 + (TraceChunk::TIMESTAMPS_OFFSET as i32)], rdx // write old value into trace
+                    );
+                    bump_timestamp!(ops, 1);
                     record_circuit_type(&mut ops, CounterType::MemSubword, 1);
+                    increment_trace!(ops, pc);
                 }
                 Instruction::Lbu(parts) => {
-                    emit_runtime_error!(ops);
-                    // let address = load(&mut ops, parts.rs1());
-                    // dynasm!(ops
-                    //     ; movsx Rq(out), Rd(address)
-                    //     ; movzx Rd(out), BYTE [rsi + Rq(out) + sign_extend::<12>(parts.imm())]
-                    // );
+                    let address = load(&mut ops, parts.rs1());
+                    dynasm!(ops
+                        ; movsx Rq(SCRATCH_REGISTER), Rd(address)
+                        ; add Rq(SCRATCH_REGISTER), sign_extend::<12>(parts.imm()) // compute address, as we will need it a lot
+                        ; mov rax, Rq(SCRATCH_REGISTER) // put word(!) index in to RAX
+                        ; shr rax, 2
+                    );
+                    touch_register_and_increment_timestamp!(ops, parts.rs1());
+                    dynasm!(ops
+                        ; movzx Rd(out), BYTE [rsi + Rq(SCRATCH_REGISTER)] // load value into destination, zero-extend
+                        ; mov Rd(SCRATCH_REGISTER), [rsi + 4 * rdx] // load old word(!) value into scratch
+                        ; mov rdx, [rsi + (MemoryHolder::TIMESTAMPS_OFFSET as i32) + 8 * rax] // reuse RDX for read timestamp
+                        ; mov [rsi + (MemoryHolder::TIMESTAMPS_OFFSET as i32) + 8 * rax], r8 // update timestamp
+                        ; mov [rdi + r9 * 4], Rd(SCRATCH_REGISTER) // write value into trace
+                        ; mov [rdi + r9 * 8 + (TraceChunk::TIMESTAMPS_OFFSET as i32)], rdx // write old value into trace
+                    );
+                    bump_timestamp!(ops, 1);
                     record_circuit_type(&mut ops, CounterType::MemSubword, 1);
+                    increment_trace!(ops, pc);
                 }
                 Instruction::Lh(parts) => {
-                    emit_runtime_error!(ops);
-                    // // TODO: exception on misalignment
-                    // let address = load(&mut ops, parts.rs1());
-                    // dynasm!(ops
-                    //     ; movsx Rq(out), Rd(address)
-                    //     ; movsx Rd(out), WORD [rsi + Rq(out) + sign_extend::<12>(parts.imm())]
-                    // );
+                    // TODO: exception on misalignment
+                    let address = load(&mut ops, parts.rs1());
+                    dynasm!(ops
+                        ; movsx Rq(SCRATCH_REGISTER), Rd(address)
+                        ; add Rq(SCRATCH_REGISTER), sign_extend::<12>(parts.imm()) // compute address, as we will need it a lot
+                        ; mov rax, Rq(SCRATCH_REGISTER) // put word(!) index in to RAX
+                        ; shr rax, 2
+                    );
+                    touch_register_and_increment_timestamp!(ops, parts.rs1());
+                    dynasm!(ops
+                        ; movsx Rd(out), WORD [rsi + Rq(SCRATCH_REGISTER)] // load value into destination, sign-extend
+                        ; mov Rd(SCRATCH_REGISTER), [rsi + 4 * rdx] // load old word(!) value into scratch
+                        ; mov rdx, [rsi + (MemoryHolder::TIMESTAMPS_OFFSET as i32) + 8 * rax] // reuse RDX for read timestamp
+                        ; mov [rsi + (MemoryHolder::TIMESTAMPS_OFFSET as i32) + 8 * rax], r8 // update timestamp
+                        ; mov [rdi + r9 * 4], Rd(SCRATCH_REGISTER) // write value into trace
+                        ; mov [rdi + r9 * 8 + (TraceChunk::TIMESTAMPS_OFFSET as i32)], rdx // write old value into trace
+                    );
+                    bump_timestamp!(ops, 1);
                     record_circuit_type(&mut ops, CounterType::MemSubword, 1);
+                    increment_trace!(ops, pc);
                 }
                 Instruction::Lhu(parts) => {
-                    emit_runtime_error!(ops);
-                    // // TODO: exception on misalignment
-                    // let address = load(&mut ops, parts.rs1());
-                    // dynasm!(ops
-                    //     ; movsx Rq(out), Rd(address)
-                    //     ; movzx Rd(out), WORD [rsi + Rq(out) + sign_extend::<12>(parts.imm())]
-                    // );
+                    // TODO: exception on misalignment
+                    let address = load(&mut ops, parts.rs1());
+                    dynasm!(ops
+                        ; movsx Rq(SCRATCH_REGISTER), Rd(address)
+                        ; add Rq(SCRATCH_REGISTER), sign_extend::<12>(parts.imm()) // compute address, as we will need it a lot
+                        ; mov rax, Rq(SCRATCH_REGISTER) // put word(!) index in to RAX
+                        ; shr rax, 2
+                    );
+                    touch_register_and_increment_timestamp!(ops, parts.rs1());
+                    dynasm!(ops
+                        ; movzx Rd(out), WORD [rsi + Rq(SCRATCH_REGISTER)] // load value into destination, zero-extend
+                        ; mov Rd(SCRATCH_REGISTER), [rsi + 4 * rdx] // load old word(!) value into scratch
+                        ; mov rdx, [rsi + (MemoryHolder::TIMESTAMPS_OFFSET as i32) + 8 * rax] // reuse RDX for read timestamp
+                        ; mov [rsi + (MemoryHolder::TIMESTAMPS_OFFSET as i32) + 8 * rax], r8 // update timestamp
+                        ; mov [rdi + r9 * 4], Rd(SCRATCH_REGISTER) // write value into trace
+                        ; mov [rdi + r9 * 8 + (TraceChunk::TIMESTAMPS_OFFSET as i32)], rdx // write old value into trace
+                    );
+                    bump_timestamp!(ops, 1);
                     record_circuit_type(&mut ops, CounterType::MemSubword, 1);
+                    increment_trace!(ops, pc);
                 }
                 Instruction::Lw(parts) => {
                     // TODO: exception on misalignment
@@ -916,7 +1019,7 @@ pub fn run_alternative_simulator<'a, N: NonDeterminismCSRSource<RamWithRomRegion
                         ; mov rdx, [rsi + (MemoryHolder::TIMESTAMPS_OFFSET as i32) + 2 * Rq(SCRATCH_REGISTER)] // reuse RDX for read timestamp
                         ; mov [rsi + (MemoryHolder::TIMESTAMPS_OFFSET as i32) + 2 * Rq(SCRATCH_REGISTER)], r8 // update timestamp
                         ; mov [rdi + r9 * 4], Rd(out) // write value into trace
-                        ; mov [rdi + r9 * 8 + (TraceChunk::<TRACE_CHUNK_LEN>::TIMESTAMPS_OFFSET as i32)], rdx // write old value into trace
+                        ; mov [rdi + r9 * 8 + (TraceChunk::TIMESTAMPS_OFFSET as i32)], rdx // write old value into trace
                     );
                     bump_timestamp!(ops, 1);
                     record_circuit_type(&mut ops, CounterType::MemWord, 1);
@@ -981,6 +1084,7 @@ pub fn run_alternative_simulator<'a, N: NonDeterminismCSRSource<RamWithRomRegion
             touch_register_and_bump_timestamp!(ops, rd, 2);
             // trace_register!(ops, out);
             store_result(&mut ops, rd);
+            i += 1;
             continue;
         }
 
@@ -1007,24 +1111,28 @@ pub fn run_alternative_simulator<'a, N: NonDeterminismCSRSource<RamWithRomRegion
                 let offset = sign_extend::<21>(parts.imm());
                 let jump_target = pc as i32 + offset;
                 if offset == 0 {
+                    assert!(final_pc.is_none());
+                    final_pc = Some(pc);
                     // An infinite loop is used to signal end of execution
                     dynasm!(ops
                         ; mov ecx, pc as i32 // final PC into RCX
+                        ; mov rdx, rsp // put MachineState into RDX
                         ; jmp ->quit
                     );
                 } else if jump_target % 4 != 0 {
-                    panic!("Unaligned just destination");
+                    panic!("Unaligned jump destination");
                     // emit_runtime_error!(ops)
                 } else {
                     if let Some(&label) = instruction_labels.get((jump_target / 4) as usize) {
                         dynasm!(ops
-                            ; jmp =>label
+                            ; jmp => label
                         );
                     } else {
-                        panic!("Unknown just destination");
+                        panic!("Unknown jump destination");
                         // emit_runtime_error!(ops)
                     }
                 }
+                i += 1;
             }
             Instruction::Jalr(parts) => {
                 let rd = (raw_instruction >> 7) & 0x1F;
@@ -1065,6 +1173,7 @@ pub fn run_alternative_simulator<'a, N: NonDeterminismCSRSource<RamWithRomRegion
                     ; misaligned:
                     ;; emit_runtime_error!(ops)
                 );
+                i += 1;
             }
             Instruction::Beq(parts)
             | Instruction::Bne(parts)
@@ -1074,7 +1183,7 @@ pub fn run_alternative_simulator<'a, N: NonDeterminismCSRSource<RamWithRomRegion
             | Instruction::Bgeu(parts) => {
                 let jump_target = pc as i32 + sign_extend::<13>(parts.imm());
                 if jump_target % 4 != 0 {
-                    panic!("Unaligned just destination");
+                    panic!("Unaligned jump destination");
                     // emit_runtime_error!(ops);
                 } else {
                     let a = load(&mut ops, parts.rs1());
@@ -1126,38 +1235,61 @@ pub fn run_alternative_simulator<'a, N: NonDeterminismCSRSource<RamWithRomRegion
                     } else {
                         emit_runtime_error!(ops)
                     }
-
-                    // print_registers!(ops);
+                    i += 1;
                 }
             }
 
             // Stores
             Instruction::Sb(parts) => {
-                emit_runtime_error!(ops);
-                // let address = load(&mut ops, parts.rs1());
-                // dynasm!(ops
-                //     ; movsx Rq(SCRATCH_REGISTER), Rd(address)
-                // );
-                // let value = load(&mut ops, parts.rs2());
-                // dynasm!(ops
-                //     ; mov [rsi + Rq(SCRATCH_REGISTER) + sign_extend::<12>(parts.imm())], Rb(value)
-                // );
-                // trace_zero!(ops);
+                let address = load(&mut ops, parts.rs1());
+                dynasm!(ops
+                    ; movsx Rq(SCRATCH_REGISTER), Rd(address)
+                    ; add Rq(SCRATCH_REGISTER), sign_extend::<12>(parts.imm()) // compute address, as we will need it a lot
+                    ; mov rax, Rq(SCRATCH_REGISTER) // put word(!) index in to RAX
+                    ; shr rax, 2
+                );
+                let value = load(&mut ops, parts.rs2());
+                touch_register_and_increment_timestamp!(ops, parts.rs1());
+                touch_register_and_increment_timestamp!(ops, parts.rs2());
+                dynasm!(ops
+                    // this sequence of operations is: read old value and timestamp, save it, write new value and timestamp
+                    ; mov eax, [rsi + 4 * rax] // load old word(!) value into RAX
+                    ; mov [rsi + Rq(SCRATCH_REGISTER)], Rb(value) // store new value - just enough bytes
+                    ; mov Rq(value), [rsi + (MemoryHolder::TIMESTAMPS_OFFSET as i32) + 8 * rax] // reuse Rq(value) for read timestamp
+                    ; mov [rsi + (MemoryHolder::TIMESTAMPS_OFFSET as i32) + 2 * rax], r8 // update timestamp
+                    ; mov [rdi + r9 * 4], eax // write old value into trace
+                    ; mov [rdi + r9 * 8 + (TraceChunk::TIMESTAMPS_OFFSET as i32)], Rq(value) // write timestamp value into trace
+                );
+                bump_timestamp!(ops, 2);
                 record_circuit_type(&mut ops, CounterType::MemSubword, 1);
+                increment_trace!(ops, pc);
+                i += 1;
             }
             Instruction::Sh(parts) => {
-                emit_runtime_error!(ops);
-                // // TODO: exception on misalignment
-                // let address = load(&mut ops, parts.rs1());
-                // dynasm!(ops
-                //     ; movsx Rq(SCRATCH_REGISTER), Rd(address)
-                // );
-                // let value = load(&mut ops, parts.rs2());
-                // dynasm!(ops
-                //     ; mov [rsi + Rq(SCRATCH_REGISTER) + sign_extend::<12>(parts.imm())], Rw(value)
-                // );
-                // trace_zero!(ops);
+                // TODO: exception on misalignment
+                let address = load(&mut ops, parts.rs1());
+                dynasm!(ops
+                    ; movsx Rq(SCRATCH_REGISTER), Rd(address)
+                    ; add Rq(SCRATCH_REGISTER), sign_extend::<12>(parts.imm()) // compute address, as we will need it a lot
+                    ; mov rax, Rq(SCRATCH_REGISTER) // put word(!) index in to RAX
+                    ; shr rax, 2
+                );
+                let value = load(&mut ops, parts.rs2());
+                touch_register_and_increment_timestamp!(ops, parts.rs1());
+                touch_register_and_increment_timestamp!(ops, parts.rs2());
+                dynasm!(ops
+                    // this sequence of operations is: read old value and timestamp, save it, write new value and timestamp
+                    ; mov eax, [rsi + 4 * rax] // load old word(!) value into RAX
+                    ; mov [rsi + Rq(SCRATCH_REGISTER)], Rw(value) // store new value - just enough bytes
+                    ; mov Rq(value), [rsi + (MemoryHolder::TIMESTAMPS_OFFSET as i32) + 8 * rax] // reuse Rq(value) for read timestamp
+                    ; mov [rsi + (MemoryHolder::TIMESTAMPS_OFFSET as i32) + 2 * rax], r8 // update timestamp
+                    ; mov [rdi + r9 * 4], eax // write old value into trace
+                    ; mov [rdi + r9 * 8 + (TraceChunk::TIMESTAMPS_OFFSET as i32)], Rq(value) // write timestamp value into trace
+                );
+                bump_timestamp!(ops, 2);
                 record_circuit_type(&mut ops, CounterType::MemSubword, 1);
+                increment_trace!(ops, pc);
+                i += 1;
             }
             Instruction::Sw(parts) => {
                 // TODO: exception on misalignment
@@ -1176,141 +1308,202 @@ pub fn run_alternative_simulator<'a, N: NonDeterminismCSRSource<RamWithRomRegion
                     ; mov Rq(value), [rsi + (MemoryHolder::TIMESTAMPS_OFFSET as i32) + 2 * Rq(SCRATCH_REGISTER)] // reuse Rq(value) for read timestamp
                     ; mov [rsi + (MemoryHolder::TIMESTAMPS_OFFSET as i32) + 2 * Rq(SCRATCH_REGISTER)], r8 // update timestamp
                     ; mov [rdi + r9 * 4], eax // write old value into trace
-                    ; mov [rdi + r9 * 8 + (TraceChunk::<TRACE_CHUNK_LEN>::TIMESTAMPS_OFFSET as i32)], Rq(value) // write timestamp value into trace
+                    ; mov [rdi + r9 * 8 + (TraceChunk::TIMESTAMPS_OFFSET as i32)], Rq(value) // write timestamp value into trace
                 );
                 bump_timestamp!(ops, 2);
                 record_circuit_type(&mut ops, CounterType::MemWord, 1);
                 increment_trace!(ops, pc);
+                i += 1;
             }
-
             Instruction::Csrrw(parts) => {
-                todo!();
+                assert!(parts.rs1() == 0 || parts.rd() == 0);
+                match parts.csr() {
+                    NON_DETERMINISM_CSR => {
+                        if parts.rd() != 0 {
+                            let rd = (raw_instruction >> 7) & 0x1F;
+                            let out = destination_gpr(rd);
+                            // We want to read non-determinism value into RD
+                            assert!(parts.rs1() == 0);
+                            // as usual, we will stash our machine state into stack, and call external implementation
+                            pre_bump_timestamp_and_touch!(ops, 2, 0);
+                            dynasm!(ops
+                                ; mov rdx, rsp
+                                ;; before_call!(ops)
+                                ; push rdx
+                                ; sub rsp, 8
+                                ; mov rax, QWORD Context::<N>::read_nondeterminism as _
+                                ; call rax
+                                ; add rsp, 8
+                                ; pop rdx
+                                ;; after_call!(ops)
+                                ; mov Rd(out), eax
+                                ; mov [rdi + r9 * 4], eax // use commong trace for non-determinism reads
+                                ; mov QWORD [rdi + r9 * 8 + (TraceChunk::TIMESTAMPS_OFFSET as i32)], 0 // use 0 for timestamp
+                            );
+                            store_result(&mut ops, rd);
+                            touch_register_and_increment_timestamp!(ops, rd);
+                            bump_timestamp!(ops, 1);
+                            record_circuit_type(&mut ops, CounterType::ShiftBinaryCsr, 1);
+                            increment_trace!(ops, pc);
+                        } else if parts.rs1() != 0 {
+                            let rd = (raw_instruction >> 7) & 0x1F;
+                            assert_eq!(rd, 0);
+                            load_into(&mut ops, parts.rs1(), SCRATCH_REGISTER);
+                            touch_register_and_increment_timestamp!(ops, parts.rs1());
+                            dynasm!(ops
+                                ; mov rdx, rsp
+                                ;; before_call!(ops)
+                                ; push rdx
+                                ; sub rsp, 8
+                                ; mov rax, QWORD Context::<N>::write_nondeterminism as _
+                                ; mov esi, Rd(SCRATCH_REGISTER)
+                                ; call rax
+                                ; add rsp, 8
+                                ; pop rdx
+                                ;; after_call!(ops)
+                            );
+                            pre_bump_timestamp_and_touch!(ops, 2, 0);
+                            bump_timestamp!(ops, 1);
+                            record_circuit_type(&mut ops, CounterType::ShiftBinaryCsr, 1);
+                            increment_trace!(ops, pc);
+                        } else {
+                            panic!();
+                        }
+                        i += 1;
+                    }
+                    csr => {
+                        use common_constants::*;
+                        // NOTE: all the increment below happen before moving RSP
+                        let function: *const () = match csr {
+                            BLAKE2S_DELEGATION_CSR_REGISTER => {
+                                // we should expect 7 or 10 calls
+                                let mut num_calls = 0;
+                                for j in 1..=10 {
+                                    if program[i + j] == raw_instruction {
+                                        continue;
+                                    } else {
+                                        num_calls = j;
+                                        break;
+                                    }
+                                }
+                                assert!(num_calls == 7 || num_calls == 10);
+                                i += num_calls;
+                                record_circuit_type(
+                                    &mut ops,
+                                    CounterType::BlakeDelegation,
+                                    num_calls as u16,
+                                );
+                                process_csr::<BLAKE2S_DELEGATION_CSR_REGISTER> as _
+                            }
+                            BIGINT_OPS_WITH_CONTROL_CSR_REGISTER => {
+                                record_circuit_type(&mut ops, CounterType::BigintDelegation, 1);
+                                i += 1;
+                                process_csr::<BIGINT_OPS_WITH_CONTROL_CSR_REGISTER> as _
+                            }
+                            KECCAK_SPECIAL5_CSR_REGISTER => {
+                                // we expect exactly 649 calls for single keccak_f1600
+                                let mut num_calls = 0;
+                                for j in 1..=NUM_DELEGATION_CALLS_FOR_KECCAK_F1600 {
+                                    if program[i + j] == raw_instruction {
+                                        continue;
+                                    } else {
+                                        num_calls = j;
+                                        break;
+                                    }
+                                }
+                                assert_eq!(num_calls, NUM_DELEGATION_CALLS_FOR_KECCAK_F1600);
+                                i += num_calls;
+                                record_circuit_type(
+                                    &mut ops,
+                                    CounterType::KeccakDelegation,
+                                    num_calls as u16,
+                                );
+                                process_csr::<KECCAK_SPECIAL5_CSR_REGISTER> as _
+                            }
+                            x => {
+                                // we do not panic with unknown CSR here, as csrrw x0, cycle, x0 is a canonical panic
+                                emit_runtime_error!(ops);
+                                i += 1;
+                                continue;
+                            }
+                        };
+                        assert!(i <= program.len());
+
+                        // Those are markers in nature
+                        assert_eq!(parts.rs1(), 0);
+                        assert_eq!(parts.rd(), 0);
+                        pre_bump_timestamp_and_touch!(ops, 2, 0); // touch x0 at 0/1/2 formally
+                        bump_timestamp!(ops, 1); // 3 mod 4
+
+                        dynasm!(ops
+                            ; mov rdx, rsp
+                            ;; before_call!(ops) // will save rsi and rdi
+                            ; push rdx
+                            ; sub rsp, 8
+                            ; mov rax, QWORD function as _
+                            // we already have trace chunk in RDI, memory in RSI, and MachineState in rds
+                            ; call rax
+                            ; add rsp, 8
+                            ; pop rdx
+                            ;; after_call!(ops) // restore save rsi and rdi
+                            // we return an indeger whether we should flush a chunk or not (if it's oversized)
+                            ; cmp rax, 0
+                            ; jne >update
+                            ; mov r9d, (pc as i32) // reuse r9 for pc
+                            // we have MachineState in RDX
+                            ; call ->trace_buffer_full
+                            ; jmp >continue_exec
+                            ; update:
+                            // otherwise just read it back into register
+                            ; mov r9, [rdi + (TraceChunk::LEN_OFFSET as i32)]
+                            ; continue_exec:
+                        );
+
+                        // delegation implementations are themselves responsible to call trace finalizers
+                        bump_timestamp!(ops, 1); // 0 mod 4
+                        record_circuit_type(&mut ops, CounterType::ShiftBinaryCsr, 1);
+                    }
+                }
             }
-
-            // Instruction::Csrrw(parts) => match parts.csr() {
-            //     todo!();
-
-            //     NON_DETERMINISM_CSR => {
-            //         if rd != 0 {
-            //             before_call!(ops);
-            //             dynasm!(ops
-            //                 ; mov rax, QWORD Context::<N>::read_nondeterminism as _
-            //                 ; call rax
-            //             );
-            //             after_call!(ops);
-            //             dynasm!(ops
-            //                 ; mov Rd(out), eax
-            //             );
-            //             trace_register!(ops, out);
-            //             store_result(&mut ops, rd);
-            //         } else {
-            //             trace_zero!(ops);
-            //         }
-            //         if parts.rs1() != 0 {
-            //             load_into(&mut ops, parts.rs1(), SCRATCH_REGISTER);
-            //             before_call!(ops);
-            //             dynasm!(ops
-            //                 ; mov rax, QWORD Context::<N>::write_nondeterminism as _
-            //                 ; mov esi, Rd(SCRATCH_REGISTER)
-            //                 ; call rax
-            //             );
-            //             after_call!(ops);
-            //         }
-            //     }
-            //     csr => {
-            //         let function = match csr {
-            //             BLAKE2_ROUND_FUNCTION_WITH_EXTENDED_CONTROL_ACCESS_ID => {
-            //                 Context::<N>::process_csr::<
-            //                     BLAKE2_ROUND_FUNCTION_WITH_EXTENDED_CONTROL_ACCESS_ID,
-            //                 > as _
-            //             }
-            //             U256_OPS_WITH_CONTROL_ACCESS_ID => {
-            //                 Context::<N>::process_csr::<U256_OPS_WITH_CONTROL_ACCESS_ID> as _
-            //             }
-            //             x => {
-            //                 emit_runtime_error!(ops);
-            //                 continue;
-            //             }
-            //         };
-
-            //         dynasm!(ops
-            //             ; sub rsp, 32 * 4
-            //             ; mov DWORD [rsp], 0
-            //         );
-            //         for i in 1..32 {
-            //             let reg = load(&mut ops, i);
-            //             dynasm!(ops
-            //                 ; mov [rsp + 4 * i as i32], Rd(reg)
-            //             );
-            //         }
-
-            //         load_into(&mut ops, parts.rs1(), x64::Rq::RCX as u8);
-
-            //         dynasm!(ops
-            //             ; mov rdx, rsp
-
-            //             ; push rdi
-            //             ; push rsi
-            //             ; push r8
-            //             ; push r9
-
-            //             ; mov rax, QWORD function
-            //             ; mov esi, ecx
-            //             ; call rax
-
-            //             ; pop r9
-            //             ; pop r8
-            //             ; pop rsi
-            //             ; pop rdi
-            //         );
-
-            //         for i in 1..32 {
-            //             let out = destination_gpr(i);
-            //             dynasm!(ops
-            //                 ; mov Rd(out), [rsp + 4 * i as i32]
-            //             );
-            //             store_result(&mut ops, i);
-            //         }
-            //         dynasm!(ops
-            //             ; add rsp, 32 * 4
-            //         );
-
-            //         if rd != 0 {
-            //             dynasm!(ops
-            //                 ; mov Rd(out), eax
-            //             );
-            //             trace_register!(ops, out);
-            //             store_result(&mut ops, rd);
-            //         } else {
-            //             trace_zero!(ops);
-            //         }
-            //     }
-            // },
-
             _ => {
-                emit_runtime_error!(ops)
+                emit_runtime_error!(ops);
+                i += 1;
             }
         }
     }
+    assert_eq!(i, program.len());
 
     // if we even come here without exit condition - it's an error
     emit_runtime_error!(ops);
 
-    // now service functions
+    let exit_with_error_offset = ops.offset().0;
     dynasm!(ops
-        ; ->jump_offsets:
-        ; .bytes jump_offsets.into_iter().flat_map(|x| x.to_le_bytes())
-
         ; ->exit_with_error:
         ; mov rax, QWORD print_complaint as _
         ; call rax
     );
 
+    // map jump offsets that were no initialized to point into error
+    for (i, offset) in jump_offsets.iter_mut().enumerate() {
+        if initialized_jump_offsets.contains(&i) == false {
+            assert_eq!(*offset, 0);
+            *offset = exit_with_error_offset;
+        }
+    }
+
+    // record all jump offsets
+    dynasm!(ops
+        ; ->jump_offsets:
+        ; .bytes jump_offsets.into_iter().flat_map(|x| x.to_le_bytes())
+    );
+
     let receive_trace_fn = Context::<N>::receive_trace;
     receive_trace!(ops, receive_trace_fn);
 
+    let final_pc = final_pc.expect("Must final exit PC");
+
     let quit_trace_fn = Context::<N>::receive_final_trace_piece;
-    quit!(ops, quit_trace_fn);
+    quit!(ops, quit_trace_fn, final_pc);
 
     let code = ops.finalize().unwrap();
 
@@ -1327,22 +1520,29 @@ pub fn run_alternative_simulator<'a, N: NonDeterminismCSRSource<RamWithRomRegion
     };
 
     let mut memory: Box<MemoryHolder> = unsafe {
-        let mut memory: Box<MemoryHolder> = Box::new_uninit().assume_init();
+        // let mut memory: Box<MemoryHolder> = Box::new_uninit().assume_init();
+        let mut memory: Box<MemoryHolder> = Box::new_zeroed().assume_init();
+        // let mut memory: Box<MemoryHolder> = Box::new(MemoryHolder::empty());
         for i in 0..initial_memory.len() {
-            core::ptr::write(addr_of_mut!(memory.memory).cast::<u32>().add(i), initial_memory[i]);
+            core::ptr::write(
+                addr_of_mut!(memory.memory).cast::<u32>().add(i),
+                initial_memory[i],
+            );
         }
-        for i in initial_memory.len()..NUM_RAM_WORDS {
-            core::ptr::write(addr_of_mut!(memory.memory).cast::<u32>().add(i), 0);
-        }
-        for i in 0..NUM_RAM_WORDS {
-            core::ptr::write(addr_of_mut!(memory.timestamps).cast::<u64>().add(i), 0);
-        }
+        // for i in initial_memory.len()..NUM_RAM_WORDS {
+        //     core::ptr::write(addr_of_mut!(memory.memory).cast::<u32>().add(i), 0);
+        // }
+        // for i in 0..NUM_RAM_WORDS {
+        //     core::ptr::write(addr_of_mut!(memory.timestamps).cast::<u64>().add(i), 0);
+        // }
 
         memory
     };
 
-    let mut trace: Box<TraceChunk<TRACE_CHUNK_LEN>> = unsafe {
-        let trace = Box::new_uninit().assume_init();
+    let mut trace: Box<TraceChunk> = unsafe {
+        // let trace = Box::new_uninit().assume_init();
+        let trace: Box<TraceChunk> = Box::new_zeroed().assume_init();
+        // let trace: Box<TraceChunk> = Box::new(TraceChunk::empty());
 
         trace
     };
@@ -1354,73 +1554,110 @@ pub fn run_alternative_simulator<'a, N: NonDeterminismCSRSource<RamWithRomRegion
     //     );
     // };
 
-    let before = std::time::Instant::now();
-
     let context_ref_mut = &mut context;
-    dbg!((context_ref_mut as *mut Context<N>).addr());
 
-    let run_program: extern "sysv64" fn(&mut TraceChunk<TRACE_CHUNK_LEN>, &mut MemoryHolder, &mut Context<N>) =
+    let run_program: extern "sysv64" fn(&mut TraceChunk, &mut MemoryHolder, &mut Context<N>) =
         unsafe { std::mem::transmute(code.ptr(start)) };
 
+    println!("Running JITed result");
+
+    let before = std::time::Instant::now();
     run_program(trace.as_mut(), memory.as_mut(), context_ref_mut);
+    let elapsed = before.elapsed();
 
     let final_timestamp = context.final_timestamp;
     assert_eq!(final_timestamp % TIMESTAMP_STEP, 0);
     use common_constants::*;
     let num_instructions = (final_timestamp - INITIAL_TIMESTAMP) / TIMESTAMP_STEP;
     println!(
-        "Frequency is {} MHz over {} instructions",
-        (num_instructions as f64)/(before.elapsed().as_micros() as f64),
-        num_instructions
+        "Frequency is {} MHz over {} instructions (0x{:x} ns run time)",
+        (num_instructions as f64) * 1000f64 / (elapsed.as_nanos() as f64),
+        num_instructions,
+        elapsed.as_nanos()
     );
 }
 
+extern "sysv64" fn process_csr<const CSR_NUMBER: u32>(
+    trace_piece: &mut TraceChunk,
+    memory_holder: &mut MemoryHolder,
+    machine_state: &mut MachineState,
+) -> u64 {
+    debug_assert!(
+        (machine_state as *const MachineState).is_aligned_to(core::mem::align_of::<MachineState>())
+    );
+    debug_assert!(
+        (trace_piece as *const TraceChunk).is_aligned_to(core::mem::align_of::<TraceChunk>())
+    );
+    debug_assert!(
+        (memory_holder as *const MemoryHolder).is_aligned_to(core::mem::align_of::<MemoryHolder>())
+    );
+    use common_constants::*;
+    if CSR_NUMBER == KECCAK_SPECIAL5_CSR_REGISTER {
+        keccak_unrolled_implementation(trace_piece, memory_holder, machine_state)
+    } else {
+        panic!("Unknown CSR number {}", CSR_NUMBER);
+    }
+}
+
 #[repr(C)]
-pub struct Context<'a, N: NonDeterminismCSRSource<RamWithRomRegion<{common_constants::rom::ROM_SECOND_WORD_BITS }>>> {
+pub struct Context<'a, N: NonDeterminismCSRSource> {
     non_determinism_source: &'a mut N,
     trace_len: usize,
     final_timestamp: TimestampScalar,
     final_pc: u32,
 }
 
-impl<'a, N: NonDeterminismCSRSource<RamWithRomRegion<{common_constants::rom::ROM_SECOND_WORD_BITS }>>> Context<'a, N> {
+impl<'a, N: NonDeterminismCSRSource> Context<'a, N> {
     extern "sysv64" fn read_nondeterminism(&mut self) -> u32 {
         self.non_determinism_source.read()
     }
-    extern "sysv64" fn write_nondeterminism(&mut self, value: u32, memory: &[u32; 1 << 28]) {
-        todo!();
-        // self.non_determinism_source
-            // .write_with_memory_access(&self.memory, value);
-    }
-    extern "sysv64" fn process_csr<const CSR_NUMBER: u32>(
-        &mut self,
-        registers: &mut [u32; 32],
-    ) -> u32 {
-        todo!();
+
+    extern "sysv64" fn write_nondeterminism(&mut self, value: u32, memory: &[u32; RAM_SIZE]) {
+        self.non_determinism_source
+            .write_with_memory_access(memory, value);
     }
 
-    extern "sysv64" fn receive_trace(&mut self, trace_piece: &mut TraceChunk<TRACE_CHUNK_LEN>, machine_state: &MachineState) -> *mut TraceChunk<TRACE_CHUNK_LEN> {
-        debug_assert!((machine_state as *const MachineState).is_aligned_to(core::mem::align_of::<MachineState>()));
-        dbg!(machine_state);
-        dbg!(self.trace_len);
+    extern "sysv64" fn receive_trace(
+        &mut self,
+        trace_piece: &mut TraceChunk,
+        machine_state: &MachineState,
+    ) -> *mut TraceChunk {
+        debug_assert!((machine_state as *const MachineState)
+            .is_aligned_to(core::mem::align_of::<MachineState>()));
+        debug_assert!(
+            (trace_piece as *const TraceChunk).is_aligned_to(core::mem::align_of::<TraceChunk>())
+        );
         use common_constants::*;
-        println!("{} cycles passed", (machine_state.timestamp - INITIAL_TIMESTAMP) / TIMESTAMP_STEP);
-        println!("PC = 0x{:08x}", machine_state.pc_or_partial_trace_chunk);
+        println!(
+            "{} cycles passed",
+            (machine_state.timestamp - INITIAL_TIMESTAMP) / TIMESTAMP_STEP
+        );
+        println!("PC = 0x{:08x}", machine_state.pc);
         self.trace_len += TRACE_CHUNK_LEN;
 
-        dbg!(&*trace_piece);
-
-        trace_piece as *mut TraceChunk<TRACE_CHUNK_LEN>
+        trace_piece.len = 0;
+        trace_piece as *mut TraceChunk
     }
 
-    extern "sysv64" fn receive_final_trace_piece(&mut self, trace_piece: &mut TraceChunk<TRACE_CHUNK_LEN>, machine_state: &MachineState, final_pc: u32) {
-        debug_assert!((machine_state as *const MachineState).is_aligned_to(core::mem::align_of::<MachineState>()));
-        dbg!(machine_state);
+    extern "sysv64" fn receive_final_trace_piece(
+        &mut self,
+        trace_piece: &mut TraceChunk,
+        machine_state: &MachineState,
+        final_pc: u32,
+    ) {
+        debug_assert!((machine_state as *const MachineState)
+            .is_aligned_to(core::mem::align_of::<MachineState>()));
+        debug_assert!(
+            (trace_piece as *const TraceChunk).is_aligned_to(core::mem::align_of::<TraceChunk>())
+        );
         use common_constants::*;
-        println!("In total {} cycles passed", (machine_state.timestamp - INITIAL_TIMESTAMP) / TIMESTAMP_STEP);
-        println!("Final trace chunk len = {}", machine_state.pc_or_partial_trace_chunk);
+        println!(
+            "In total {} cycles passed",
+            (machine_state.timestamp - INITIAL_TIMESTAMP) / TIMESTAMP_STEP
+        );
+        println!("Final trace chunk len = {}", machine_state.pc);
         println!("Final PC = 0x{:08x}", final_pc);
-        self.trace_len += machine_state.pc_or_partial_trace_chunk as usize;
+        self.trace_len += trace_piece.len as usize;
         self.final_timestamp = machine_state.timestamp;
         self.final_pc = final_pc;
     }
@@ -1452,8 +1689,8 @@ fn view_assembly(assembly: &[u8], start: usize) {
         names.join(", ")
     }
 
-    use capstone::*;
     use capstone::arch::*;
+    use capstone::*;
 
     let cs = Capstone::new()
         .x86()
@@ -1463,7 +1700,8 @@ fn view_assembly(assembly: &[u8], start: usize) {
         .build()
         .expect("Failed to create Capstone object");
 
-    let insns = cs.disasm_all(assembly, start as u64)
+    let insns = cs
+        .disasm_all(assembly, start as u64)
         .expect("Failed to disassemble");
     println!("Found {} instructions", insns.len());
     for i in insns.as_ref() {

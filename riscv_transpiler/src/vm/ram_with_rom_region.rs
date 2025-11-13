@@ -2,7 +2,7 @@ use std::alloc::Allocator;
 
 use common_constants::TimestampScalar;
 
-use crate::vm::{Register, RAM};
+use crate::vm::{RamPeek, Register, RAM};
 
 pub struct RamWithRomRegion<const ROM_BOUND_SECOND_WORD_BITS: usize> {
     pub(crate) backing: Vec<Register>,
@@ -36,7 +36,9 @@ impl<const ROM_BOUND_SECOND_WORD_BITS: usize> RamWithRomRegion<ROM_BOUND_SECOND_
 // NOTE: we will not branch and special-case here to model ROM reads as reads from address 0 of 0 value,
 // and witness post-processing can track it. Instead we will only track last access for snapshotting purposes
 
-impl<const ROM_BOUND_SECOND_WORD_BITS: usize> RAM for RamWithRomRegion<ROM_BOUND_SECOND_WORD_BITS> {
+impl<const ROM_BOUND_SECOND_WORD_BITS: usize> RamPeek
+    for RamWithRomRegion<ROM_BOUND_SECOND_WORD_BITS>
+{
     #[inline(always)]
     fn peek_word(&self, address: u32) -> u32 {
         debug_assert_eq!(address % 4, 0);
@@ -49,7 +51,9 @@ impl<const ROM_BOUND_SECOND_WORD_BITS: usize> RAM for RamWithRomRegion<ROM_BOUND
             value
         }
     }
+}
 
+impl<const ROM_BOUND_SECOND_WORD_BITS: usize> RAM for RamWithRomRegion<ROM_BOUND_SECOND_WORD_BITS> {
     #[inline(always)]
     fn mask_read_for_witness(&self, _address: &mut u32, _value: &mut u32) {
         // we do not do anything here

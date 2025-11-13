@@ -67,8 +67,29 @@ pub trait Snapshotter<C: Counters> {
     );
 }
 
-pub trait RAM {
+pub trait RamPeek {
     fn peek_word(&self, address: u32) -> u32;
+}
+
+impl<const N: usize> RamPeek for [u32; N] {
+    fn peek_word(&self, address: u32) -> u32 {
+        debug_assert_eq!(address % 4, 0);
+        let word_idx = (address / 4) as usize;
+        debug_assert!(word_idx < N);
+        unsafe { *self.get_unchecked(word_idx) }
+    }
+}
+
+impl RamPeek for [u32] {
+    fn peek_word(&self, address: u32) -> u32 {
+        debug_assert_eq!(address % 4, 0);
+        let word_idx = (address / 4) as usize;
+        debug_assert!(word_idx < self.len());
+        unsafe { *self.get_unchecked(word_idx) }
+    }
+}
+
+pub trait RAM: RamPeek {
     fn read_word(&mut self, address: u32, timestamp: TimestampScalar) -> (TimestampScalar, u32);
     fn mask_read_for_witness(&self, address: &mut u32, value: &mut u32);
     fn write_word(
@@ -84,30 +105,28 @@ pub trait InstructionTape: Send + Sync {
 }
 
 // there is no interpretation of methods here, it's just read/write and that's all
-pub trait NonDeterminismCSRSource<R: RAM + ?Sized> {
+pub trait NonDeterminismCSRSource {
     fn read(&mut self) -> u32;
 
     // we in general can allow CSR source to peek into memory (readonly)
     // to perform adhoc computations to prepare result. This will allow to save on
     // passing large structures
-    fn write_with_memory_access(&mut self, ram: &R, value: u32);
+    fn write_with_memory_access<R: RamPeek + ?Sized>(&mut self, ram: &R, value: u32);
 }
 
-impl<R: RAM> NonDeterminismCSRSource<R> for () {
+impl NonDeterminismCSRSource for () {
     fn read(&mut self) -> u32 {
         0u32
     }
-    fn write_with_memory_access(&mut self, _ram: &R, _value: u32) {}
+    fn write_with_memory_access<R: RamPeek + ?Sized>(&mut self, _ram: &R, _value: u32) {}
 }
 
-impl<R: RAM> NonDeterminismCSRSource<R>
-    for risc_v_simulator::abstractions::non_determinism::QuasiUARTSource
-{
+impl NonDeterminismCSRSource for risc_v_simulator::abstractions::non_determinism::QuasiUARTSource {
     fn read(&mut self) -> u32 {
         self.oracle.pop_front().unwrap_or_default()
     }
 
-    fn write_with_memory_access(&mut self, _ram: &R, value: u32) {
+    fn write_with_memory_access<R: RamPeek + ?Sized>(&mut self, _ram: &R, value: u32) {
         self.write_state.process_write(value);
     }
 }
@@ -117,7 +136,7 @@ pub struct VM<C: Counters> {
 }
 
 impl<C: Counters> VM<C> {
-    pub fn run_basic_unrolled<S: Snapshotter<C>, R: RAM, ND: NonDeterminismCSRSource<R>>(
+    pub fn run_basic_unrolled<S: Snapshotter<C>, R: RAM, ND: NonDeterminismCSRSource>(
         state: &mut State<C>,
         num_snapshots: usize,
         ram: &mut R,

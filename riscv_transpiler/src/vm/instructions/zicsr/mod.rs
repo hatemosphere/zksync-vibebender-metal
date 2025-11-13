@@ -1,7 +1,7 @@
 use super::*;
 
 #[inline(always)]
-pub(crate) fn nd_read<C: Counters, S: Snapshotter<C>, R: RAM, ND: NonDeterminismCSRSource<R>>(
+pub(crate) fn nd_read<C: Counters, S: Snapshotter<C>, R: RAM, ND: NonDeterminismCSRSource>(
     state: &mut State<C>,
     ram: &mut R,
     snapshotter: &mut S,
@@ -19,7 +19,7 @@ pub(crate) fn nd_read<C: Counters, S: Snapshotter<C>, R: RAM, ND: NonDeterminism
 }
 
 #[inline(always)]
-pub(crate) fn nd_write<C: Counters, S: Snapshotter<C>, R: RAM, ND: NonDeterminismCSRSource<R>>(
+pub(crate) fn nd_write<C: Counters, S: Snapshotter<C>, R: RAM, ND: NonDeterminismCSRSource>(
     state: &mut State<C>,
     ram: &mut R,
     snapshotter: &mut S,

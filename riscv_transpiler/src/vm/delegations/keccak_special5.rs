@@ -58,9 +58,12 @@ pub(crate) fn keccak_special5_call<C: Counters, S: Snapshotter<C>, R: RAM>(
 ) {
     let x10 = state.registers[10].value; // don't process it just yet, wait for write!
     let x11 = read_register::<C, 3>(state, 11);
-    assert!(x11 >= 1 << 21, "state ptr is not in RAM");
+    assert!(
+        x11 as usize >= common_constants::rom::ROM_BYTE_SIZE,
+        "state ptr is not in RAM"
+    );
     assert!(x10 < 1 << 11, "control info is too big");
-    assert!(x11 % 256 == 0, "state ptr is not aligned");
+    assert_eq!(x11 % 256, 0, "state ptr is not aligned");
 
     // get control
     let control = x10;

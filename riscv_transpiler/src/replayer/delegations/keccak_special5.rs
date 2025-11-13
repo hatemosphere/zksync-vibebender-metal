@@ -46,9 +46,7 @@ pub(crate) fn keccak_special5_call<C: Counters, R: RAM>(
     // record registers
     let x10 = state.registers[10].value; // will proces later when writing..
     let (x11, x11_read_timestamp) = read_register_with_ts::<C, 3>(state, 11);
-    assert!(x11 >= 1 << 21, "state ptr is not in RAM");
-    assert!(x10 < 1 << 11, "control info is too big");
-    assert!(x11 % 256 == 0, "state ptr is not aligned");
+
     let control = x10;
     let (precompile, iteration, round) = keccak_special5_impl_decode_control(control);
     let control_next = keccak_special5_impl_bump_control(precompile, iteration, round);
