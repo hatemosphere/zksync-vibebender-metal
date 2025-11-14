@@ -22,16 +22,20 @@ pub fn keccak_unrolled_implementation(
 
     machine_state.registers[10] = FINAL_CONTROL_VALUE;
     machine_state.register_timestamps[10] +=
-        (NUM_DELEGATION_CALLS_FOR_KECCAK_F1600 as TimestampScalar) * TIMESTAMP_STEP;
+        ((NUM_DELEGATION_CALLS_FOR_KECCAK_F1600 - 1) as TimestampScalar) * TIMESTAMP_STEP;
 
     machine_state.register_timestamps[11] +=
-        (NUM_DELEGATION_CALLS_FOR_KECCAK_F1600 as TimestampScalar) * TIMESTAMP_STEP;
+        ((NUM_DELEGATION_CALLS_FOR_KECCAK_F1600 - 1) as TimestampScalar) * TIMESTAMP_STEP;
+
+    // save for accesses in individual cycles
+    let mut write_ts = machine_state.timestamp;
+
+    // and full machine state also moves!
+    machine_state.timestamp +=
+        ((NUM_DELEGATION_CALLS_FOR_KECCAK_F1600 - 1) as TimestampScalar) * TIMESTAMP_STEP;
 
     // now we need to be careful with accessed state elements. We always access u64s only, and for replaying purposes we will need
     // to read 31 state elements (for snapshot), and then we will work over the
-
-    let mut write_ts = machine_state.timestamp;
-    let mut should_flush = 0u64;
     unsafe {
         // we are fine to NOT keep track on the initial timestamps, as we only need final write ones
         let mut local_state: [MaybeUninit<(u64, TimestampScalar)>; 31] =
@@ -68,9 +72,6 @@ pub fn keccak_unrolled_implementation(
         }
 
         let mut local_state = local_state.map(|el| el.assume_init());
-
-        assert!((trace_piece.len as usize) < MAX_TRACE_CHUNK_LEN);
-        should_flush = ((trace_piece.len as usize) >= TRACE_CHUNK_LEN) as u64;
 
         let mut control_reg = INITIAL_CONTROL_VALUE;
         for round in 0..NUM_DELEGATION_CALLS_FOR_KECCAK_F1600 {
@@ -124,6 +125,13 @@ pub fn keccak_unrolled_implementation(
             ts_ptr = ts_ptr.add(1);
         }
     }
+
+    assert_eq!(machine_state.timestamp + TIMESTAMP_STEP, write_ts);
+
+    assert!((trace_piece.len as usize) < MAX_TRACE_CHUNK_LEN);
+    let should_flush = ((trace_piece.len as usize) >= TRACE_CHUNK_LEN) as u64;
+
+    // println!("Keccak, should flush = {}", should_flush);
 
     should_flush
 }

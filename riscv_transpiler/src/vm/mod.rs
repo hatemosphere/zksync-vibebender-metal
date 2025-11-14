@@ -67,11 +67,28 @@ pub trait Snapshotter<C: Counters> {
     );
 }
 
+impl<C: Counters> Snapshotter<C> for () {
+    #[inline(always)]
+    fn take_snapshot(&mut self, _state: &State<C>) {}
+    #[inline(always)]
+    fn append_non_determinism_read(&mut self, _value: u32) {}
+    #[inline(always)]
+    fn append_memory_read(
+        &mut self,
+        _address: u32,
+        _read_value: u32,
+        _read_timestamp: TimestampScalar,
+        _write_timestamp: TimestampScalar,
+    ) {
+    }
+}
+
 pub trait RamPeek {
     fn peek_word(&self, address: u32) -> u32;
 }
 
 impl<const N: usize> RamPeek for [u32; N] {
+    #[inline(always)]
     fn peek_word(&self, address: u32) -> u32 {
         debug_assert_eq!(address % 4, 0);
         let word_idx = (address / 4) as usize;
@@ -81,6 +98,7 @@ impl<const N: usize> RamPeek for [u32; N] {
 }
 
 impl RamPeek for [u32] {
+    #[inline(always)]
     fn peek_word(&self, address: u32) -> u32 {
         debug_assert_eq!(address % 4, 0);
         let word_idx = (address / 4) as usize;
@@ -123,7 +141,8 @@ impl NonDeterminismCSRSource for () {
 
 impl NonDeterminismCSRSource for risc_v_simulator::abstractions::non_determinism::QuasiUARTSource {
     fn read(&mut self) -> u32 {
-        self.oracle.pop_front().unwrap_or_default()
+        // self.oracle.pop_front().unwrap_or_default()
+        self.oracle.pop_front().expect("must have an answer")
     }
 
     fn write_with_memory_access<R: RamPeek + ?Sized>(&mut self, _ram: &R, value: u32) {

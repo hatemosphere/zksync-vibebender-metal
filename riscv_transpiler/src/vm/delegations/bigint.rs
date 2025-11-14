@@ -132,10 +132,10 @@ pub(crate) fn bigint_impl(a: U256, b: U256, x12: u32) -> (U256, bool) {
 
             of
         } else if control_mask & (1 << MUL_LOW_OP_BIT_IDX) != 0 {
-            let t: U512 = a.widening_mul(b);
-            result = U256::from_limbs(t.as_limbs()[..4].try_into().unwrap_unchecked());
+            let (t, of) = a.overflowing_mul(b);
+            result = t;
 
-            t.as_limbs()[4..].iter().any(|el| *el != 0)
+            of
         } else if control_mask & (1 << MUL_HIGH_OP_BIT_IDX) != 0 {
             let t: U512 = a.widening_mul(b);
             result = U256::from_limbs(t.as_limbs()[4..8].try_into().unwrap_unchecked());

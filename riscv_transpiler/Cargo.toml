@@ -25,3 +25,4 @@ capstone = "0.13"
 
 [dev-dependencies]
 lib-rv32-asm = {git = "https://github.com/shamatar/lib-rv32.git" }
+hex = "*"
