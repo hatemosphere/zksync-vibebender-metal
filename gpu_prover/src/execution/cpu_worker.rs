@@ -39,7 +39,7 @@ use std::collections::{HashSet, VecDeque};
 use std::mem::replace;
 use std::ops::Deref;
 use std::sync::Arc;
-use std::time::Instant;
+use std::time::{Duration, Instant};
 use trace_and_split::FinalRegisterValue;
 
 const ROM_ADDRESS_SPACE_SECOND_WORD_BITS: usize = common_constants::rom::ROM_SECOND_WORD_BITS;
@@ -67,13 +67,13 @@ pub(crate) fn run_split_simulator(
     results: Sender<WorkerResult<A>>,
     free_allocators: Receiver<A>,
 ) {
-    debug!("BATCH[{batch_id}] SIMULATOR started");
+    trace!("BATCH[{batch_id}] SIMULATOR started");
     let mut ram = Ram::new(&binary_image);
     let mut state = State::initial_with_counters(DelegationsAndFamiliesCounters::default());
     let mut snapshot_index = 0usize;
     let mut tracing_data_producers =
         SplitTracingDataProducers::new(machine_type, free_allocators.clone(), results.clone());
-    let instant = Instant::now();
+    let mut total_elapsed = Duration::default();
     loop {
         let initial_state = state.clone();
         let mut snapshotter = OnceSnapshotter::new_for_period(SNAPSHOT_PERIOD);
@@ -88,6 +88,7 @@ pub(crate) fn run_split_simulator(
             &mut non_determinism,
         );
         let elapsed = instant.elapsed();
+        total_elapsed += elapsed;
         let final_state = state.clone();
         let timestamp_diff = final_state.timestamp - initial_state.timestamp;
         assert!(timestamp_diff.is_multiple_of(TIMESTAMP_STEP));
@@ -124,13 +125,12 @@ pub(crate) fn run_split_simulator(
     }
     drop(snapshots);
     tracing_data_producers.finalize();
-    let elapsed = instant.elapsed();
     let timestamp_diff = state.timestamp - INITIAL_TIMESTAMP;
     assert!(timestamp_diff.is_multiple_of(TIMESTAMP_STEP));
     let cycles_count = (timestamp_diff / TIMESTAMP_STEP) as usize;
-    let elapsed_ms = elapsed.as_secs_f64() * 1000.0;
+    let elapsed_ms = total_elapsed.as_secs_f64() * 1000.0;
     let mhz = (cycles_count as f64) / (elapsed_ms * 1000.0);
-    trace!("BATCH[{batch_id}] SIMULATOR finished execution with {cycles_count} cycles in {elapsed_ms:.3} ms @ {mhz:.3} MHz");
+    debug!("BATCH[{batch_id}] SIMULATOR finished execution with {cycles_count} cycles in {elapsed_ms:.3} ms @ {mhz:.3} MHz");
     const PER_CIRCUIT_COUNT: usize = setups::inits_and_teardowns::NUM_INIT_AND_TEARDOWN_SETS
         * setups::inits_and_teardowns::NUM_CYCLES;
     let mut instant = Instant::now();
@@ -172,7 +172,7 @@ pub(crate) fn run_split_simulator(
     };
     let result = WorkerResult::SimulationResult(simulation_result);
     results.send(result).unwrap();
-    debug!("BATCH[{batch_id}] SIMULATOR finished");
+    trace!("BATCH[{batch_id}] SIMULATOR finished");
 }
 
 pub(crate) fn run_split_replayer(
@@ -182,7 +182,9 @@ pub(crate) fn run_split_replayer(
     snapshots: Receiver<SplitSnapshot>,
     results: Sender<WorkerResult<A>>,
 ) {
-    debug!("BATCH[{batch_id}] REPLAYER[{worker_id}] started");
+    trace!("BATCH[{batch_id}] REPLAYER[{worker_id}] started");
+    let mut total_elapsed = Duration::default();
+    let mut total_cycles = 0;
     for snapshot in snapshots {
         let SplitSnapshot {
             index,
@@ -213,13 +215,18 @@ pub(crate) fn run_split_replayer(
             &mut tracer,
         );
         let elapsed = instant.elapsed();
+        total_elapsed += elapsed;
+        total_cycles += cycles_count;
         let elapsed_ms = elapsed.as_secs_f64() * 1000.0;
         let mhz = (cycles_count as f64) / (elapsed_ms * 1000.0);
         trace!("BATCH[{batch_id}] REPLAYER[{worker_id}] processed SNAPSHOT[{index}] with {cycles_count} cycles in {elapsed_ms:.3} ms @ {mhz:.3} MHz");
         let result = WorkerResult::SnapshotReplayed(index);
         results.send(result).unwrap()
     }
-    debug!("BATCH[{batch_id}] REPLAYER[{worker_id}] finished");
+    let elapsed_ms = total_elapsed.as_secs_f64() * 1000.0;
+    let mhz = (total_cycles as f64) / (elapsed_ms * 1000.0);
+    debug!("BATCH[{batch_id}] REPLAYER[{worker_id}] replayed {total_cycles} cycles in {elapsed_ms:.3} ms @ {mhz:.3} MHz");
+    trace!("BATCH[{batch_id}] REPLAYER[{worker_id}] finished");
 }
 
 trait TracingDataProducerType: Sized {

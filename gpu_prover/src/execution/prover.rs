@@ -7,6 +7,7 @@ use crate::circuit_type::{
 use crate::cudart::device::get_device_count;
 use crate::cudart::memory::{CudaHostAllocFlags, HostAllocation};
 use crate::execution::cpu_worker::{run_split_replayer, run_split_simulator, NonDeterminism};
+use crate::execution::gpu_worker;
 use crate::execution::gpu_worker::{
     GpuWorkRequest, GpuWorkResult, MemoryCommitmentRequest, MemoryCommitmentResult, ProofRequest,
     ProofResult,
@@ -21,7 +22,7 @@ use crossbeam_utils::sync::WaitGroup;
 use cs::definitions::TimestampScalar;
 use itertools::Itertools;
 use log::{debug, info, trace};
-use prover::definitions::{ExternalChallenges, OPTIMAL_FOLDING_PROPERTIES};
+use prover::definitions::ExternalChallenges;
 use prover::merkle_trees::MerkleTreeCapVarLength;
 use prover::prover_stages::unrolled_prover::UnrolledModeProof;
 use rayon::iter::IntoParallelIterator;
@@ -30,13 +31,14 @@ use riscv_transpiler::ir::{
     decode, FullMachineDecoderConfig, FullUnsignedMachineDecoderConfig, ReducedMachineDecoderConfig,
 };
 use riscv_transpiler::vm::SimpleTape;
-use std::cell::LazyCell;
 use std::collections::{HashMap, HashSet, VecDeque};
 use std::fmt::Debug;
 use std::hash::Hash;
-use std::iter;
-use std::sync::{Arc, RwLock};
-use trace_and_split::FinalRegisterValue;
+use std::sync::Arc;
+use std::time::Instant;
+use trace_and_split::{
+    fs_transform_for_memory_and_delegation_arguments_for_unrolled_circuits, FinalRegisterValue,
+};
 use worker::Worker;
 
 type A = ConcurrentStaticHostAllocator;
@@ -88,31 +90,51 @@ impl Default for ExecutionProverConfiguration {
             prover_context_config: Default::default(),
             host_allocator_backing_allocation_size: 1 << 26, // 64 MB
             replay_worker_threads_count: 4,
-            host_allocators_per_worker_count: 64, // 4 GB
+            host_allocators_per_worker_count: 16, // 1 GB
             host_allocators_per_device_count: 64, // 4 GB
         }
     }
 }
 
+pub struct CommitMemoryResult {
+    pub final_register_values: [FinalRegisterValue; 32],
+    pub final_pc: u32,
+    pub final_timestamp: TimestampScalar,
+    pub cycles_used: usize,
+    pub circuit_families_memory_caps: Vec<(u32, Vec<Vec<MerkleTreeCapVarLength>>)>,
+    pub inits_and_teardowns_memory_caps: Vec<Vec<MerkleTreeCapVarLength>>,
+    pub delegation_circuits_memory_caps: Vec<(u32, Vec<Vec<MerkleTreeCapVarLength>>)>,
+}
+
+pub struct ProveResult {
+    pub final_register_values: [FinalRegisterValue; 32],
+    pub final_pc: u32,
+    pub final_timestamp: TimestampScalar,
+    pub cycles_used: usize,
+    pub circuit_families_proofs: Vec<(u32, Vec<UnrolledModeProof>)>,
+    pub inits_and_teardowns_proofs: Vec<UnrolledModeProof>,
+    pub delegation_circuits_proofs: Vec<(u32, Vec<UnrolledModeProof>)>,
+}
+
 enum ExecutionProverResult {
-    MemoryCommitment {
-        final_register_values: [FinalRegisterValue; 32],
-        final_pc: u32,
-        final_timestamp: TimestampScalar,
-        cycles_used: usize,
-        circuit_families_memory_caps: Vec<(u32, Vec<Vec<MerkleTreeCapVarLength>>)>,
-        inits_and_teardowns_memory_caps: Vec<Vec<MerkleTreeCapVarLength>>,
-        delegation_circuits_memory_caps: Vec<(u32, Vec<Vec<MerkleTreeCapVarLength>>)>,
-    },
-    Proof {
-        final_register_values: [FinalRegisterValue; 32],
-        final_pc: u32,
-        final_timestamp: TimestampScalar,
-        cycles_used: usize,
-        circuit_families_proofs: Vec<(u32, Vec<UnrolledModeProof>)>,
-        inits_and_teardowns_proofs: Vec<UnrolledModeProof>,
-        delegation_circuits_proofs: Vec<(u32, Vec<UnrolledModeProof>)>,
-    },
+    CommitMemory(CommitMemoryResult),
+    Prove(ProveResult),
+}
+
+impl ExecutionProverResult {
+    pub fn into_memory_commitment_result(self) -> CommitMemoryResult {
+        match self {
+            ExecutionProverResult::CommitMemory(result) => result,
+            _ => panic!("expected CommitMemoryResult"),
+        }
+    }
+
+    pub fn into_proof_result(self) -> ProveResult {
+        match self {
+            ExecutionProverResult::Prove(result) => result,
+            _ => panic!("expected ProveResult"),
+        }
+    }
 }
 
 pub struct ExecutionProver<K: Debug + Eq + Hash> {
@@ -191,10 +213,9 @@ impl<K: Clone + Debug + Eq + Hash> ExecutionProver<K> {
         key: K,
         execution_kind: ExecutionKind,
         machine_type: MachineType,
-        binary_image: &[u32],
-        text_section: &[u32],
+        mut binary_image: Vec<u32>,
+        mut text_section: Vec<u32>,
     ) {
-        let mut binary_image = binary_image.to_vec();
         setups::pad_bytecode_for_proving(&mut binary_image);
         let binary_image = Arc::new(binary_image.into_boxed_slice());
         let decode_fn = match machine_type {
@@ -203,7 +224,6 @@ impl<K: Clone + Debug + Eq + Hash> ExecutionProver<K> {
             MachineType::Reduced => decode::<ReducedMachineDecoderConfig>,
         };
         let preprocessed_bytecode = text_section.iter().copied().map(decode_fn).collect_vec();
-        let mut text_section = text_section.to_vec();
         setups::pad_bytecode_for_proving(&mut text_section);
         let instruction_tape = Arc::new(SimpleTape::new(&preprocessed_bytecode));
         let circuit_types = match execution_kind {
@@ -250,7 +270,7 @@ impl<K: Clone + Debug + Eq + Hash> ExecutionProver<K> {
         assert!(self.binary_holders.remove(key).is_some());
     }
 
-    fn get_results(
+    fn get_result(
         &self,
         proving: bool,
         batch_id: u64,
@@ -576,6 +596,7 @@ impl<K: Clone + Debug + Eq + Hash> ExecutionProver<K> {
                             .collect_vec(),
                     )
                 })
+                .sorted_by_key(|(i, _)| *i)
                 .collect_vec();
             let inits_and_teardowns_proofs = inits_and_teardowns_proofs
                 .into_iter()
@@ -593,8 +614,9 @@ impl<K: Clone + Debug + Eq + Hash> ExecutionProver<K> {
                             .collect_vec(),
                     )
                 })
+                .sorted_by_key(|(i, _)| *i)
                 .collect_vec();
-            ExecutionProverResult::Proof {
+            let result = ProveResult {
                 final_register_values,
                 final_pc,
                 final_timestamp,
@@ -602,7 +624,8 @@ impl<K: Clone + Debug + Eq + Hash> ExecutionProver<K> {
                 circuit_families_proofs,
                 inits_and_teardowns_proofs,
                 delegation_circuits_proofs,
-            }
+            };
+            ExecutionProverResult::Prove(result)
         } else {
             let count = circuit_families_memory_caps
                 .values()
@@ -625,6 +648,7 @@ impl<K: Clone + Debug + Eq + Hash> ExecutionProver<K> {
                             .collect_vec(),
                     )
                 })
+                .sorted_by_key(|(i, _)| *i)
                 .collect_vec();
             let inits_and_teardowns_memory_caps = inits_and_teardowns_memory_caps
                 .into_iter()
@@ -642,8 +666,9 @@ impl<K: Clone + Debug + Eq + Hash> ExecutionProver<K> {
                             .collect_vec(),
                     )
                 })
+                .sorted_by_key(|(i, _)| *i)
                 .collect_vec();
-            ExecutionProverResult::MemoryCommitment {
+            let result = CommitMemoryResult {
                 final_register_values,
                 final_pc,
                 final_timestamp,
@@ -651,845 +676,210 @@ impl<K: Clone + Debug + Eq + Hash> ExecutionProver<K> {
                 circuit_families_memory_caps,
                 inits_and_teardowns_memory_caps,
                 delegation_circuits_memory_caps,
-            }
+            };
+            ExecutionProverResult::CommitMemory(result)
         }
     }
 
-    //     fn get_results(
-    //         &self,
-    //         proving: bool,
-    //         chunks_cache: &mut Option<ChunksCache<A>>,
-    //         batch_id: u64,
-    //         binary_key: &K,
-    //         num_instances_upper_bound: usize,
-    //         non_determinism_source: impl NonDeterminism + Send + Sync + 'static,
-    //         external_challenges: Option<ExternalChallenges>,
-    //     ) -> (
-    //         [FinalRegisterValue; 32],
-    //         Vec<Vec<MerkleTreeCapVarLength>>,
-    //         Vec<(u32, Vec<Vec<MerkleTreeCapVarLength>>)>,
-    //         Vec<Proof>,
-    //         Vec<(u32, Vec<Proof>)>,
-    //     ) {
-    //         assert!(proving ^ external_challenges.is_none());
-    //         let binary = &self.binaries[&binary_key];
-    //         let trace_len = binary.precomputations.compiled_circuit.trace_len;
-    //         assert!(trace_len.is_power_of_two());
-    //         let cycles_per_circuit = trace_len - 1;
-    //         let (work_results_sender, worker_results_receiver) = unbounded();
-    //         let (gpu_work_requests_sender, gpu_work_requests_receiver) = unbounded();
-    //         let gpu_work_batch = GpuWorkBatch {
-    //             batch_id,
-    //             receiver: gpu_work_requests_receiver,
-    //             sender: work_results_sender.clone(),
-    //         };
-    //         trace!("BATCH[{batch_id}] PROVER sending work batch to GPU manager");
-    //         self.gpu_manager.send_batch(gpu_work_batch);
-    //         let skip_set = chunks_cache
-    //             .as_ref()
-    //             .map(|c| {
-    //                 c.queue
-    //                     .iter()
-    //                     .map(|entry| (entry.circuit_type, entry.circuit_sequence))
-    //                     .collect::<HashSet<(CircuitType, usize)>>()
-    //             })
-    //             .unwrap_or_default();
-    //         let mut main_work_requests_count = 0;
-    //         if proving {
-    //             if let Some(cache) = chunks_cache.take() {
-    //                 let external_challenges = external_challenges.unwrap();
-    //                 for entry in cache.queue.into_iter() {
-    //                     let ChunksCacheEntry {
-    //                         circuit_type,
-    //                         circuit_sequence,
-    //                         tracing_data,
-    //                     } = entry;
-    //                     match circuit_type {
-    //                         CircuitType::Main(main_circuit_type) => {
-    //                             assert_eq!(main_circuit_type, binary.circuit_type);
-    //                             let precomputations = binary.precomputations.clone();
-    //                             let request = ProofRequest {
-    //                                 batch_id,
-    //                                 circuit_type,
-    //                                 circuit_sequence,
-    //                                 precomputations,
-    //                                 tracing_data,
-    //                                 external_challenges,
-    //                             };
-    //                             let request = GpuWorkRequest::Proof(request);
-    //                             trace!("BATCH[{batch_id}] PROVER sending cached main circuit {main_circuit_type:?} chunk {circuit_sequence} proof request to GPU manager");
-    //                             gpu_work_requests_sender.send(request).unwrap();
-    //                             main_work_requests_count += 1;
-    //                         }
-    //                         CircuitType::Delegation(delegation_circuit_type) => {
-    //                             let precomputations = self.delegation_circuits_precomputations
-    //                                 [&delegation_circuit_type]
-    //                                 .clone();
-    //                             let request = ProofRequest {
-    //                                 batch_id,
-    //                                 circuit_type,
-    //                                 circuit_sequence,
-    //                                 precomputations,
-    //                                 tracing_data,
-    //                                 external_challenges,
-    //                             };
-    //                             let request = GpuWorkRequest::Proof(request);
-    //                             trace!("BATCH[{batch_id}] PROVER sending cached delegation circuit {delegation_circuit_type:?} chunk {circuit_sequence} proof request to GPU manager");
-    //                             gpu_work_requests_sender.send(request).unwrap();
-    //                         }
-    //                         CircuitType::Unrolled(_) => todo!(),
-    //                     }
-    //                 }
-    //             }
-    //         }
-    //         trace!("BATCH[{batch_id}] PROVER spawning CPU workers");
-    //         let non_determinism_source = Arc::new(non_determinism_source);
-    //         let mut cpu_worker_id = 0;
-    //         let ram_tracing_mode = CpuWorkerMode::TraceTouchedRam {
-    //             circuit_type: binary.circuit_type,
-    //             skip_set: skip_set.clone(),
-    //             free_allocator: self.free_allocator_receiver.clone(),
-    //         };
-    //         self.spawn_cpu_worker(
-    //             binary.circuit_type,
-    //             batch_id,
-    //             cpu_worker_id,
-    //             num_instances_upper_bound,
-    //             binary.bytecode.clone(),
-    //             non_determinism_source.clone(),
-    //             ram_tracing_mode,
-    //             work_results_sender.clone(),
-    //         );
-    //         cpu_worker_id += 1;
-    //         for split_index in 0..CYCLES_TRACING_WORKERS_COUNT {
-    //             let ram_tracing_mode = CpuWorkerMode::TraceCycles {
-    //                 circuit_type: binary.circuit_type,
-    //                 skip_set: skip_set.clone(),
-    //                 split_count: CYCLES_TRACING_WORKERS_COUNT,
-    //                 split_index,
-    //                 free_allocator: self.free_allocator_receiver.clone(),
-    //             };
-    //             self.spawn_cpu_worker(
-    //                 binary.circuit_type,
-    //                 batch_id,
-    //                 cpu_worker_id,
-    //                 num_instances_upper_bound,
-    //                 binary.bytecode.clone(),
-    //                 non_determinism_source.clone(),
-    //                 ram_tracing_mode,
-    //                 work_results_sender.clone(),
-    //             );
-    //             cpu_worker_id += 1;
-    //         }
-    //         let delegation_mode = CpuWorkerMode::TraceDelegations {
-    //             circuit_type: binary.circuit_type,
-    //             skip_set,
-    //             free_allocator: self.free_allocator_receiver.clone(),
-    //         };
-    //         self.spawn_cpu_worker(
-    //             binary.circuit_type,
-    //             batch_id,
-    //             cpu_worker_id,
-    //             num_instances_upper_bound,
-    //             binary.bytecode.clone(),
-    //             non_determinism_source.clone(),
-    //             delegation_mode,
-    //             work_results_sender.clone(),
-    //         );
-    //         trace!("BATCH[{batch_id}] PROVER CPU workers spawned");
-    //         drop(work_results_sender);
-    //         let mut final_main_chunks_count = None;
-    //         let mut final_register_values = None;
-    //         let mut final_delegation_chunks_counts = None;
-    //         let mut main_memory_commitments = HashMap::new();
-    //         let mut delegation_memory_commitments = HashMap::new();
-    //         let mut main_proofs = HashMap::new();
-    //         let mut delegation_proofs = HashMap::new();
-    //         let mut inits_and_teardowns_chunks = HashMap::new();
-    //         let mut cycles_chunks = HashMap::new();
-    //         let mut delegation_work_sender = Some(gpu_work_requests_sender.clone());
-    //         let send_main_work_request =
-    //             move |circuit_sequence: usize,
-    //                   inits_and_teardowns_chunk: Option<ShuffleRamSetupAndTeardown<_>>,
-    //                   cycles_chunk: CycleTracingData<_>| {
-    //                 let inits_and_teardowns = inits_and_teardowns_chunk.map(|chunk| chunk.into());
-    //                 let trace = MainTraceHost {
-    //                     cycles_traced: cycles_chunk.per_cycle_data.len(),
-    //                     cycle_data: Arc::new(cycles_chunk.per_cycle_data),
-    //                     num_cycles_chunk_size: cycles_per_circuit,
-    //                 };
-    //                 let tracing_data = TracingDataHost::Main {
-    //                     inits_and_teardowns,
-    //                     trace,
-    //                 };
-    //                 let main_circuit_type = binary.circuit_type;
-    //                 let circuit_type = CircuitType::Main(main_circuit_type);
-    //                 let precomputations = binary.precomputations.clone();
-    //                 let request = if proving {
-    //                     let proof_request = ProofRequest {
-    //                         batch_id,
-    //                         circuit_type,
-    //                         circuit_sequence,
-    //                         precomputations,
-    //                         tracing_data,
-    //                         external_challenges: external_challenges.unwrap(),
-    //                     };
-    //                     GpuWorkRequest::Proof(proof_request)
-    //                 } else {
-    //                     let memory_commitment_request = MemoryCommitmentRequest {
-    //                         batch_id,
-    //                         circuit_type,
-    //                         circuit_sequence,
-    //                         precomputations,
-    //                         tracing_data,
-    //                     };
-    //                     GpuWorkRequest::MemoryCommitment(memory_commitment_request)
-    //                 };
-    //                 if proving {
-    //                     trace!("BATCH[{batch_id}] PROVER sending main circuit {main_circuit_type:?} chunk {circuit_sequence} proof request to GPU manager");
-    //                 } else {
-    //                     trace!("BATCH[{batch_id}] PROVER sending main circuit {main_circuit_type:?} chunk {circuit_sequence} memory commitment request to GPU manager");
-    //                 }
-    //                 gpu_work_requests_sender.send(request).unwrap();
-    //             };
-    //         let mut send_main_work_request = Some(send_main_work_request);
-    //         for result in worker_results_receiver {
-    //             match result {
-    //                 WorkerResult::InitsAndTeardownsChunk(chunk) => {
-    //                     let InitsAndTeardownsChunk {
-    //                         index,
-    //                         chunk: inits_and_teardowns_chunk,
-    //                     } = chunk;
-    //                     trace!("BATCH[{batch_id}] PROVER received setup and teardown chunk {index}");
-    //                     if let Some(cycles_chunk) = cycles_chunks.remove(&index) {
-    //                         let send = send_main_work_request.as_ref().unwrap();
-    //                         send(index, inits_and_teardowns_chunk, cycles_chunk);
-    //                         main_work_requests_count += 1;
-    //                     } else {
-    //                         inits_and_teardowns_chunks.insert(index, inits_and_teardowns_chunk);
-    //                     }
-    //                 }
-    //                 WorkerResult::RAMTracingResult {
-    //                     chunks_traced_count,
-    //                     final_register_values: values,
-    //                 } => {
-    //                     trace!("BATCH[{batch_id}] PROVER received RAM tracing result with final register values and {chunks_traced_count} chunk(s) traced");
-    //                     let previous_count = final_main_chunks_count.replace(chunks_traced_count);
-    //                     assert!(previous_count.is_none_or(|v| v == chunks_traced_count));
-    //                     final_register_values = Some(values);
-    //                 }
-    //                 WorkerResult::CyclesChunk(chunk) => {
-    //                     let CyclesChunk { index, data } = chunk;
-    //                     trace!("BATCH[{batch_id}] PROVER received cycles chunk {index}");
-    //                     if let Some(inits_and_teardowns_chunk) =
-    //                         inits_and_teardowns_chunks.remove(&index)
-    //                     {
-    //                         let send = send_main_work_request.as_ref().unwrap();
-    //                         send(index, inits_and_teardowns_chunk, data);
-    //                         main_work_requests_count += 1;
-    //                     } else {
-    //                         cycles_chunks.insert(index, data);
-    //                     }
-    //                 }
-    //                 WorkerResult::CyclesTracingResult {
-    //                     chunks_traced_count,
-    //                 } => {
-    //                     trace!("BATCH[{batch_id}] PROVER received cycles tracing result with {chunks_traced_count} chunk(s) traced");
-    //                     let previous_count = final_main_chunks_count.replace(chunks_traced_count);
-    //                     assert!(previous_count.is_none_or(|count| count == chunks_traced_count));
-    //                 }
-    //                 WorkerResult::DelegationWitness {
-    //                     circuit_sequence,
-    //                     witness,
-    //                 } => {
-    //                     let id = witness.delegation_type;
-    //                     let delegation_circuit_type = DelegationCircuitType::from(id);
-    //                     if witness.write_timestamp.is_empty() {
-    //                         trace!("BATCH[{batch_id}] PROVER skipping empty delegation circuit {delegation_circuit_type:?} chunk {circuit_sequence}");
-    //                         let allocator = witness.write_timestamp.allocator().clone();
-    //                         drop(witness);
-    //                         assert_eq!(allocator.get_used_mem_current(), 0);
-    //                         self.free_allocator_sender.send(allocator).unwrap();
-    //                     } else {
-    //                         let circuit_type = CircuitType::Delegation(delegation_circuit_type);
-    //                         trace!("BATCH[{batch_id}] PROVER received delegation circuit {:?} chunk {circuit_sequence} witnesses", delegation_circuit_type);
-    //                         let precomputations = self.delegation_circuits_precomputations
-    //                             [&delegation_circuit_type]
-    //                             .clone();
-    //                         let tracing_data = TracingDataHost::Delegation(witness.into());
-    //                         let request = if proving {
-    //                             let proof_request = ProofRequest {
-    //                                 batch_id,
-    //                                 circuit_type,
-    //                                 circuit_sequence,
-    //                                 precomputations,
-    //                                 tracing_data,
-    //                                 external_challenges: external_challenges.unwrap(),
-    //                             };
-    //                             trace!("BATCH[{batch_id}] PROVER sending delegation circuit {delegation_circuit_type:?} chunk {circuit_sequence} proof request");
-    //                             GpuWorkRequest::Proof(proof_request)
-    //                         } else {
-    //                             let memory_commitment_request = MemoryCommitmentRequest {
-    //                                 batch_id,
-    //                                 circuit_type,
-    //                                 circuit_sequence,
-    //                                 precomputations,
-    //                                 tracing_data,
-    //                             };
-    //                             trace!("BATCH[{batch_id}] PROVER sending delegation circuit {delegation_circuit_type:?} chunk {circuit_sequence} memory commitment request");
-    //                             GpuWorkRequest::MemoryCommitment(memory_commitment_request)
-    //                         };
-    //                         delegation_work_sender
-    //                             .as_ref()
-    //                             .unwrap()
-    //                             .send(request)
-    //                             .unwrap();
-    //                     }
-    //                 }
-    //                 WorkerResult::DelegationTracingResult {
-    //                     delegation_chunks_counts,
-    //                 } => {
-    //                     for (id, count) in delegation_chunks_counts.iter() {
-    //                         let delegation_circuit_type = DelegationCircuitType::from(*id);
-    //                         trace!("BATCH[{batch_id}] PROVER received delegation circuit {delegation_circuit_type:?} tracing result with {count} chunk(s) produced", );
-    //                     }
-    //                     assert!(final_delegation_chunks_counts
-    //                         .replace(delegation_chunks_counts)
-    //                         .is_none());
-    //                     trace!(
-    //                         "BATCH[{batch_id}] PROVER sent all delegation memory commitment requests"
-    //                     );
-    //                     delegation_work_sender = None;
-    //                 }
-    //                 WorkerResult::MemoryCommitment(commitment) => {
-    //                     assert!(!proving);
-    //                     let MemoryCommitmentResult {
-    //                         batch_id: result_batch_id,
-    //                         circuit_type,
-    //                         circuit_sequence,
-    //                         tracing_data,
-    //                         merkle_tree_caps,
-    //                     } = commitment;
-    //                     assert_eq!(result_batch_id, batch_id);
-    //                     match tracing_data {
-    //                         TracingDataHost::Main {
-    //                             inits_and_teardowns,
-    //                             trace,
-    //                         } => {
-    //                             let circuit_type = circuit_type.as_main().unwrap();
-    //                             trace!("BATCH[{batch_id}] PROVER received main circuit {circuit_type:?} chunk {circuit_sequence} memory commitment");
-    //                             if chunks_cache
-    //                                 .as_ref()
-    //                                 .map_or(false, |cache| !cache.is_at_capacity())
-    //                             {
-    //                                 trace!("BATCH[{batch_id}] PROVER caching main circuit {circuit_type:?} chunk {circuit_sequence} trace");
-    //                                 let data = TracingDataHost::Main {
-    //                                     inits_and_teardowns,
-    //                                     trace,
-    //                                 };
-    //                                 let entry = ChunksCacheEntry {
-    //                                     circuit_type: CircuitType::Main(circuit_type),
-    //                                     circuit_sequence,
-    //                                     tracing_data: data,
-    //                                 };
-    //                                 chunks_cache.as_mut().unwrap().queue.push_back(entry);
-    //                             } else {
-    //                                 if let Some(inits_and_teardowns) = inits_and_teardowns {
-    //                                     let allocator =
-    //                                         inits_and_teardowns.inits_and_teardowns.allocator().clone();
-    //                                     drop(inits_and_teardowns);
-    //                                     assert_eq!(allocator.get_used_mem_current(), 0);
-    //                                     self.free_allocator_sender.send(allocator).unwrap();
-    //                                 }
-    //                                 let allocator = trace.cycle_data.allocator().clone();
-    //                                 drop(trace);
-    //                                 assert_eq!(allocator.get_used_mem_current(), 0);
-    //                                 self.free_allocator_sender.send(allocator).unwrap();
-    //                             }
-    //                             assert!(main_memory_commitments
-    //                                 .insert(circuit_sequence, merkle_tree_caps)
-    //                                 .is_none());
-    //                         }
-    //                         TracingDataHost::Delegation(witness) => {
-    //                             let circuit_type = circuit_type.as_delegation().unwrap();
-    //                             trace!("BATCH[{batch_id}] PROVER received memory commitment for delegation circuit {circuit_type:?} chunk {circuit_sequence}");
-    //                             if CACHE_DELEGATIONS
-    //                                 && chunks_cache
-    //                                     .as_ref()
-    //                                     .map_or(false, |cache| !cache.is_at_capacity())
-    //                             {
-    //                                 trace!("BATCH[{batch_id}] PROVER caching trace for delegation circuit {circuit_type:?} chunk {circuit_sequence}");
-    //                                 let data = TracingDataHost::Delegation(witness);
-    //                                 let entry = ChunksCacheEntry {
-    //                                     circuit_type: CircuitType::Delegation(circuit_type),
-    //                                     circuit_sequence,
-    //                                     tracing_data: data,
-    //                                 };
-    //                                 chunks_cache.as_mut().unwrap().queue.push_back(entry);
-    //                             } else {
-    //                                 let allocator = witness.write_timestamp.allocator().clone();
-    //                                 drop(witness);
-    //                                 assert_eq!(allocator.get_used_mem_current(), 0);
-    //                                 self.free_allocator_sender.send(allocator).unwrap();
-    //                             }
-    //                             assert!(delegation_memory_commitments
-    //                                 .entry(circuit_type)
-    //                                 .or_insert_with(HashMap::new)
-    //                                 .insert(circuit_sequence, merkle_tree_caps)
-    //                                 .is_none());
-    //                         }
-    //                         TracingDataHost::Unrolled(_) => todo!(),
-    //                     }
-    //                 }
-    //                 WorkerResult::Proof(proof) => {
-    //                     assert!(proving);
-    //                     let ProofResult {
-    //                         batch_id: result_batch_id,
-    //                         circuit_type,
-    //                         circuit_sequence,
-    //                         tracing_data,
-    //                         proof,
-    //                     } = proof;
-    //                     assert_eq!(result_batch_id, batch_id);
-    //                     match tracing_data {
-    //                         TracingDataHost::Main {
-    //                             inits_and_teardowns,
-    //                             trace,
-    //                         } => {
-    //                             let circuit_type = circuit_type.as_main().unwrap();
-    //                             trace!("BATCH[{batch_id}] PROVER received proof for main circuit {circuit_type:?} chunk {circuit_sequence}");
-    //                             if let Some(inits_and_teardowns) = inits_and_teardowns {
-    //                                 let allocator =
-    //                                     inits_and_teardowns.inits_and_teardowns.allocator().clone();
-    //                                 drop(inits_and_teardowns);
-    //                                 assert_eq!(allocator.get_used_mem_current(), 0);
-    //                                 self.free_allocator_sender.send(allocator).unwrap();
-    //                             }
-    //                             let allocator = trace.cycle_data.allocator().clone();
-    //                             drop(trace);
-    //                             assert_eq!(allocator.get_used_mem_current(), 0);
-    //                             self.free_allocator_sender.send(allocator).unwrap();
-    //                             assert!(main_proofs
-    //                                 .insert(circuit_sequence, proof.into_regular().unwrap())
-    //                                 .is_none());
-    //                         }
-    //                         TracingDataHost::Delegation(witness) => {
-    //                             let circuit_type = circuit_type.as_delegation().unwrap();
-    //                             trace!("BATCH[{batch_id}] PROVER received proof for delegation circuit: {circuit_type:?} chunk {circuit_sequence}");
-    //                             let circuit_type = DelegationCircuitType::from(witness.delegation_type);
-    //                             let allocator = witness.write_timestamp.allocator().clone();
-    //                             drop(witness);
-    //                             assert_eq!(allocator.get_used_mem_current(), 0);
-    //                             self.free_allocator_sender.send(allocator).unwrap();
-    //                             assert!(delegation_proofs
-    //                                 .entry(circuit_type)
-    //                                 .or_insert_with(HashMap::new)
-    //                                 .insert(circuit_sequence, proof.into_regular().unwrap())
-    //                                 .is_none());
-    //                         }
-    //                         TracingDataHost::Unrolled(_) => todo!(),
-    //                     }
-    //                 }
-    //             };
-    //             if send_main_work_request.is_some() {
-    //                 if let Some(count) = final_main_chunks_count {
-    //                     if main_work_requests_count == count {
-    //                         trace!("BATCH[{batch_id}] PROVER sent all main memory commitment requests");
-    //                         send_main_work_request = None;
-    //                     }
-    //                 }
-    //             }
-    //         }
-    //         assert!(send_main_work_request.is_none());
-    //         assert!(delegation_work_sender.is_none());
-    //         assert!(inits_and_teardowns_chunks.is_empty());
-    //         assert!(cycles_chunks.is_empty());
-    //         let final_main_chunks_count = final_main_chunks_count.unwrap();
-    //         assert_ne!(final_main_chunks_count, 0);
-    //         let final_register_values = final_register_values.unwrap();
-    //         if proving {
-    //             assert!(main_memory_commitments.is_empty());
-    //             assert!(delegation_memory_commitments.is_empty());
-    //             assert_eq!(main_proofs.len(), final_main_chunks_count);
-    //             for (id, count) in final_delegation_chunks_counts.unwrap() {
-    //                 assert_eq!(count, delegation_proofs.get(&id.into()).unwrap().len());
-    //             }
-    //         } else {
-    //             assert!(main_proofs.is_empty());
-    //             assert!(delegation_proofs.is_empty());
-    //             assert_eq!(main_memory_commitments.len(), final_main_chunks_count);
-    //             for (id, count) in final_delegation_chunks_counts.unwrap() {
-    //                 assert_eq!(
-    //                     count,
-    //                     delegation_memory_commitments.get(&id.into()).unwrap().len()
-    //                 );
-    //             }
-    //         }
-    //         let main_memory_commitments = main_memory_commitments
-    //             .into_iter()
-    //             .sorted_by_key(|(index, _)| *index)
-    //             .map(|(_, caps)| caps)
-    //             .collect_vec();
-    //         let delegation_memory_commitments = delegation_memory_commitments
-    //             .into_iter()
-    //             .sorted_by_key(|(t, _)| *t)
-    //             .map(|(t, c)| {
-    //                 let caps = c
-    //                     .into_iter()
-    //                     .sorted_by_key(|(index, _)| *index)
-    //                     .map(|(_, caps)| caps)
-    //                     .collect_vec();
-    //                 (t as u32, caps)
-    //             })
-    //             .collect_vec();
-    //         let main_proofs = main_proofs
-    //             .into_iter()
-    //             .sorted_by_key(|(index, _)| *index)
-    //             .map(|(_, proof)| proof)
-    //             .collect_vec();
-    //         let delegation_proofs = delegation_proofs
-    //             .into_iter()
-    //             .sorted_by_key(|(t, _)| *t)
-    //             .map(|(t, p)| {
-    //                 let proofs = p
-    //                     .into_iter()
-    //                     .sorted_by_key(|(id, _)| *id)
-    //                     .map(|(_, proofs)| proofs)
-    //                     .collect_vec();
-    //                 (t as u32, proofs)
-    //             })
-    //             .collect_vec();
-    //         (
-    //             final_register_values,
-    //             main_memory_commitments,
-    //             delegation_memory_commitments,
-    //             main_proofs,
-    //             delegation_proofs,
-    //         )
-    //     }
-    //
-    //     fn commit_memory_inner(
-    //         &self,
-    //         chunks_cache: &mut Option<ChunksCache<A>>,
-    //         batch_id: u64,
-    //         binary_key: &K,
-    //         num_instances_upper_bound: usize,
-    //         non_determinism_source: impl NonDeterminism + Send + Sync + 'static,
-    //     ) -> (
-    //         [FinalRegisterValue; 32],
-    //         Vec<Vec<MerkleTreeCapVarLength>>,
-    //         Vec<(u32, Vec<Vec<MerkleTreeCapVarLength>>)>,
-    //     ) {
-    //         info!(
-    //             "BATCH[{batch_id}] PROVER producing memory commitments for binary with key {:?}",
-    //             &binary_key
-    //         );
-    //         let timer = Instant::now();
-    //         let (
-    //             final_register_values,
-    //             main_memory_commitments,
-    //             delegation_memory_commitments,
-    //             main_proofs,
-    //             delegation_proofs,
-    //         ) = self.get_results(
-    //             false,
-    //             chunks_cache,
-    //             batch_id,
-    //             binary_key,
-    //             num_instances_upper_bound,
-    //             non_determinism_source,
-    //             None,
-    //         );
-    //         assert!(main_proofs.is_empty());
-    //         assert!(delegation_proofs.is_empty());
-    //         info!(
-    //             "BATCH[{batch_id}] PROVER produced memory commitments for binary with key {:?} in {:.3}s",
-    //             binary_key,
-    //             timer.elapsed().as_secs_f64()
-    //         );
-    //         (
-    //             final_register_values,
-    //             main_memory_commitments,
-    //             delegation_memory_commitments,
-    //         )
-    //     }
-    //
-    //     ///  Produces memory commitments.
-    //     ///
-    //     /// # Arguments
-    //     ///
-    //     /// * `batch_id`: a unique identifier for the batch of work, used to distinguish batches in a multithreaded scenario
-    //     /// * `binary_key`: a key that identifies the binary to work with, this key must match one of the keys in the `binaries` map provided during the creation of the `ExecutionProver`
-    //     /// * `num_instances_upper_bound`: maximum number of main circuit instances that the prover will try to trace, if the simulation does not end within this limit, it will fail
-    //     /// * `non_determinism_source`: a value implementing the `NonDeterminism` trait that provides non-deterministic values for the simulation
-    //     ///
-    //     /// returns: a tuple containing:
-    //     ///     - final register values for the main circuit,
-    //     ///     - a vector of memory commitments for the chunks of the main circuit,
-    //     ///     - a vector of memory commitments for the chunks of the delegation circuits, where each element is a tuple containing the delegation circuit type and a vector of memory commitments for that type
-    //     ///
-    //     pub fn commit_memory(
-    //         &self,
-    //         batch_id: u64,
-    //         binary_key: &K,
-    //         num_instances_upper_bound: usize,
-    //         non_determinism_source: impl NonDeterminism + Send + Sync + 'static,
-    //     ) -> (
-    //         [FinalRegisterValue; 32],
-    //         Vec<Vec<MerkleTreeCapVarLength>>,
-    //         Vec<(u32, Vec<Vec<MerkleTreeCapVarLength>>)>,
-    //     ) {
-    //         self.commit_memory_inner(
-    //             &mut None,
-    //             batch_id,
-    //             binary_key,
-    //             num_instances_upper_bound,
-    //             non_determinism_source,
-    //         )
-    //     }
-    //
-    //     fn prove_inner(
-    //         &self,
-    //         chunks_cache: &mut Option<ChunksCache<A>>,
-    //         batch_id: u64,
-    //         binary_key: &K,
-    //         num_instances_upper_bound: usize,
-    //         non_determinism_source: impl NonDeterminism + Send + Sync + 'static,
-    //         external_challenges: ExternalChallenges,
-    //     ) -> ([FinalRegisterValue; 32], Vec<Proof>, Vec<(u32, Vec<Proof>)>) {
-    //         info!(
-    //             "BATCH[{batch_id}] PROVER producing proofs for binary with key {:?}",
-    //             &binary_key
-    //         );
-    //         let timer = Instant::now();
-    //         let (
-    //             final_register_values,
-    //             main_memory_commitments,
-    //             delegation_memory_commitments,
-    //             main_proofs,
-    //             delegation_proofs,
-    //         ) = self.get_results(
-    //             true,
-    //             chunks_cache,
-    //             batch_id,
-    //             binary_key,
-    //             num_instances_upper_bound,
-    //             non_determinism_source,
-    //             Some(external_challenges),
-    //         );
-    //         assert!(main_memory_commitments.is_empty());
-    //         assert!(delegation_memory_commitments.is_empty());
-    //         info!(
-    //             "BATCH[{batch_id}] PROVER produced proofs for binary with key {:?} in {:.3}s",
-    //             binary_key,
-    //             timer.elapsed().as_secs_f64()
-    //         );
-    //         (final_register_values, main_proofs, delegation_proofs)
-    //     }
-    //
-    //     ///  Produces proofs.
-    //     ///
-    //     /// # Arguments
-    //     ///
-    //     /// * `batch_id`: a unique identifier for the batch of work, used to distinguish batches in a multithreaded scenario
-    //     /// * `binary_key`: a key that identifies the binary to work with, this key must match one of the keys in the `binaries` map provided during the creation of the `ExecutionProver`
-    //     /// * `num_instances_upper_bound`: maximum number of main circuit instances that the prover will try to trace, if the simulation does not end within this limit, it will fail
-    //     /// * `non_determinism_source`: a value implementing the `NonDeterminism` trait that provides non-deterministic values for the simulation
-    //     /// * `external_challenges`: an instance of `ExternalChallenges` that contains the challenges to be used in the proof generation
-    //     ///
-    //     /// returns: a tuple containing:
-    //     ///     - final register values for the main circuit,
-    //     ///     - a vector of proofs for the chunks of the main circuit,
-    //     ///     - a vector of proofs for the chunks of the delegation circuits, where each element is a tuple containing the delegation circuit type and a vector of memory commitments for that type
-    //     ///
-    //     pub fn prove(
-    //         &self,
-    //         batch_id: u64,
-    //         binary_key: &K,
-    //         num_instances_upper_bound: usize,
-    //         non_determinism_source: impl NonDeterminism + Send + Sync + 'static,
-    //         external_challenges: ExternalChallenges,
-    //     ) -> ([FinalRegisterValue; 32], Vec<Proof>, Vec<(u32, Vec<Proof>)>) {
-    //         self.prove_inner(
-    //             &mut None,
-    //             batch_id,
-    //             binary_key,
-    //             num_instances_upper_bound,
-    //             non_determinism_source,
-    //             external_challenges,
-    //         )
-    //     }
-    //
-    //     ///  Commits to memory and produces proofs using challenge derived from the memory commitments.
-    //     ///
-    //     /// # Arguments
-    //     ///
-    //     /// * `batch_id`: a unique identifier for the batch of work, used to distinguish batches in a multithreaded scenario
-    //     /// * `binary_key`: a key that identifies the binary to work with, this key must match one of the keys in the `binaries` map provided during the creation of the `ExecutionProver`
-    //     /// * `num_instances_upper_bound`: maximum number of main circuit instances that the prover will try to trace, if the simulation does not end within this limit, it will fail
-    //     /// * `non_determinism_source`: a value implementing the `NonDeterminism` trait that provides non-deterministic values for the simulation
-    //     ///
-    //     /// returns: a tuple containing:
-    //     ///     - final register values for the main circuit,
-    //     ///     - a vector of proofs for the chunks of the main circuit,
-    //     ///     - a vector of proofs for the chunks of the delegation circuits, where each element is a tuple containing the delegation circuit type and a vector of memory commitments for that type
-    //     ///
-    //     pub fn commit_memory_and_prove(
-    //         &self,
-    //         batch_id: u64,
-    //         binary_key: &K,
-    //         num_instances_upper_bound: usize,
-    //         non_determinism_source: impl NonDeterminism + Clone + Send + Sync + 'static,
-    //     ) -> ([FinalRegisterValue; 32], Vec<Proof>, Vec<(u32, Vec<Proof>)>) {
-    //         let timer = Instant::now();
-    //         let cache_capacity = self.device_count * 2;
-    //         let mut chunks_cache = Some(ChunksCache::new(cache_capacity));
-    //         let (final_register_values, main_memory_commitments, delegation_memory_commitments) = self
-    //             .commit_memory_inner(
-    //                 &mut chunks_cache,
-    //                 batch_id,
-    //                 binary_key,
-    //                 num_instances_upper_bound,
-    //                 non_determinism_source.clone(),
-    //             );
-    //         let maximum_cached_count = if CACHE_DELEGATIONS {
-    //             main_memory_commitments.len()
-    //                 + delegation_memory_commitments
-    //                     .iter()
-    //                     .map(|(_, v)| v.len())
-    //                     .sum::<usize>()
-    //         } else {
-    //             main_memory_commitments.len()
-    //         };
-    //         assert_eq!(
-    //             chunks_cache.as_ref().unwrap().len(),
-    //             min(cache_capacity, maximum_cached_count)
-    //         );
-    //         let caps = &self.binaries[&binary_key]
-    //             .precomputations
-    //             .setup_trees_and_caps
-    //             .get()
-    //             .unwrap()
-    //             .caps;
-    //         let memory_challenges_seed = fs_transform_for_memory_and_delegation_arguments(
-    //             caps,
-    //             &final_register_values,
-    //             &main_memory_commitments,
-    //             &delegation_memory_commitments,
-    //         );
-    //         let produce_delegation_challenge = self.binaries[&binary_key]
-    //             .circuit_type
-    //             .needs_delegation_challenge();
-    //         let external_challenges = ExternalChallenges::draw_from_transcript_seed(
-    //             memory_challenges_seed,
-    //             produce_delegation_challenge,
-    //         );
-    //         let result = self.prove_inner(
-    //             &mut chunks_cache,
-    //             batch_id,
-    //             binary_key,
-    //             num_instances_upper_bound,
-    //             non_determinism_source,
-    //             external_challenges,
-    //         );
-    //         assert!(chunks_cache.is_none());
-    //         let (prove_final_register_values, main_proofs, delegation_proofs) = &result;
-    //         assert_eq!(&final_register_values, prove_final_register_values);
-    //         let prove_main_memory_commitments = main_proofs
-    //             .iter()
-    //             .map(|p| p.memory_tree_caps.clone())
-    //             .collect_vec();
-    //         assert_eq!(main_memory_commitments, prove_main_memory_commitments);
-    //         let prove_delegation_memory_commitments = delegation_proofs
-    //             .iter()
-    //             .map(|(t, p)| {
-    //                 (
-    //                     *t,
-    //                     p.iter()
-    //                         .map(|proof| proof.memory_tree_caps.clone())
-    //                         .collect_vec(),
-    //                 )
-    //             })
-    //             .collect_vec();
-    //         assert_eq!(
-    //             delegation_memory_commitments,
-    //             prove_delegation_memory_commitments
-    //         );
-    //         info!(
-    //             "BATCH[{batch_id}] PROVER committed to memory and produced proofs for binary with key {:?} in {:.3}s",
-    //             binary_key,
-    //             timer.elapsed().as_secs_f64()
-    //         );
-    //         result
-    //     }
-    //
-    //     fn spawn_cpu_worker(
-    //         &self,
-    //         circuit_type: MainCircuitType,
-    //         batch_id: u64,
-    //         worker_id: usize,
-    //         num_main_chunks_upper_bound: usize,
-    //         binary: impl Deref<Target = impl Deref<Target = [u32]>> + Send + 'static,
-    //         non_determinism: impl Deref<Target = impl NonDeterminism> + Send + 'static,
-    //         mode: CpuWorkerMode<A>,
-    //         results: Sender<WorkerResult<A>>,
-    //     ) {
-    //         let wait_group = self.wait_group.as_ref().unwrap().clone();
-    //         match circuit_type {
-    //             MainCircuitType::FinalReducedRiscVMachine => {
-    //                 let func = get_cpu_worker_func::<IWithoutByteAccessIsaConfig, _>(
-    //                     wait_group,
-    //                     batch_id,
-    //                     worker_id,
-    //                     num_main_chunks_upper_bound,
-    //                     binary,
-    //                     non_determinism,
-    //                     mode,
-    //                     results,
-    //                 );
-    //                 self.worker.pool.spawn(func);
-    //             }
-    //             MainCircuitType::MachineWithoutSignedMulDiv => {
-    //                 let func = get_cpu_worker_func::<IMStandardIsaConfigWithUnsignedMulDiv, _>(
-    //                     wait_group,
-    //                     batch_id,
-    //                     worker_id,
-    //                     num_main_chunks_upper_bound,
-    //                     binary,
-    //                     non_determinism,
-    //                     mode,
-    //                     results,
-    //                 );
-    //                 self.worker.pool.spawn(func);
-    //             }
-    //             MainCircuitType::ReducedRiscVLog23Machine | MainCircuitType::ReducedRiscVMachine => {
-    //                 let func = get_cpu_worker_func::<IWithoutByteAccessIsaConfigWithDelegation, _>(
-    //                     wait_group,
-    //                     batch_id,
-    //                     worker_id,
-    //                     num_main_chunks_upper_bound,
-    //                     binary,
-    //                     non_determinism,
-    //                     mode,
-    //                     results,
-    //                 );
-    //                 self.worker.pool.spawn(func);
-    //             }
-    //             MainCircuitType::RiscVCycles => {
-    //                 let func = get_cpu_worker_func::<IMStandardIsaConfig, _>(
-    //                     wait_group,
-    //                     batch_id,
-    //                     worker_id,
-    //                     num_main_chunks_upper_bound,
-    //                     binary,
-    //                     non_determinism,
-    //                     mode,
-    //                     results,
-    //                 );
-    //                 self.worker.pool.spawn(func);
-    //             }
-    //         }
-    //     }
+    fn commit_memory_inner(
+        &self,
+        batch_id: u64,
+        binary_key: &K,
+        cycle_limit: usize,
+        non_determinism_source: impl NonDeterminism + Send + Sync + 'static,
+    ) -> CommitMemoryResult {
+        info!("BATCH[{batch_id}] PROVER producing memory commitments for binary with key {binary_key:?}");
+        let timer = Instant::now();
+        let result = self
+            .get_result(
+                false,
+                batch_id,
+                binary_key,
+                cycle_limit,
+                non_determinism_source,
+                None,
+            )
+            .into_memory_commitment_result();
+        let elapsed = timer.elapsed().as_secs_f64();
+        info!("BATCH[{batch_id}] PROVER produced memory commitments for binary with key {binary_key:?} in {elapsed:.3}s");
+        result
+    }
+
+    ///  Produces memory commitments.
+    ///
+    /// # Arguments
+    ///
+    /// * `batch_id`: a unique identifier for the batch of work, used to distinguish batches in a multithreaded scenario
+    /// * `binary_key`: a key that identifies the binary to work with, this key must match one of the keys in the `binaries` map provided during the creation of the `ExecutionProver`
+    /// * `num_instances_upper_bound`: maximum number of main circuit instances that the prover will try to trace, if the simulation does not end within this limit, it will fail
+    /// * `non_determinism_source`: a value implementing the `NonDeterminism` trait that provides non-deterministic values for the simulation
+    ///
+    /// returns: a tuple containing:
+    ///     - final register values for the main circuit,
+    ///     - a vector of memory commitments for the chunks of the main circuit,
+    ///     - a vector of memory commitments for the chunks of the delegation circuits, where each element is a tuple containing the delegation circuit type and a vector of memory commitments for that type
+    ///
+    pub fn commit_memory(
+        &self,
+        batch_id: u64,
+        binary_key: &K,
+        cycle_limit: usize,
+        non_determinism_source: impl NonDeterminism + Send + Sync + 'static,
+    ) -> CommitMemoryResult {
+        self.commit_memory_inner(batch_id, binary_key, cycle_limit, non_determinism_source)
+    }
+
+    fn prove_inner(
+        &self,
+        batch_id: u64,
+        binary_key: &K,
+        cycle_limit: usize,
+        non_determinism_source: impl NonDeterminism + Send + Sync + 'static,
+        external_challenges: ExternalChallenges,
+    ) -> ProveResult {
+        info!("BATCH[{batch_id}] PROVER producing proofs for binary with key {binary_key:?}");
+        let timer = Instant::now();
+        let result = self
+            .get_result(
+                true,
+                batch_id,
+                binary_key,
+                cycle_limit,
+                non_determinism_source,
+                Some(external_challenges),
+            )
+            .into_proof_result();
+        let elapsed = timer.elapsed().as_secs_f64();
+        info!("BATCH[{batch_id}] PROVER produced proofs for binary with key {binary_key:?} in {elapsed:.3}s");
+        result
+    }
+
+    ///  Produces proofs.
+    ///
+    /// # Arguments
+    ///
+    /// * `batch_id`: a unique identifier for the batch of work, used to distinguish batches in a multithreaded scenario
+    /// * `binary_key`: a key that identifies the binary to work with, this key must match one of the keys in the `binaries` map provided during the creation of the `ExecutionProver`
+    /// * `num_instances_upper_bound`: maximum number of main circuit instances that the prover will try to trace, if the simulation does not end within this limit, it will fail
+    /// * `non_determinism_source`: a value implementing the `NonDeterminism` trait that provides non-deterministic values for the simulation
+    /// * `external_challenges`: an instance of `ExternalChallenges` that contains the challenges to be used in the proof generation
+    ///
+    /// returns: a tuple containing:
+    ///     - final register values for the main circuit,
+    ///     - a vector of proofs for the chunks of the main circuit,
+    ///     - a vector of proofs for the chunks of the delegation circuits, where each element is a tuple containing the delegation circuit type and a vector of memory commitments for that type
+    ///
+    pub fn prove(
+        &self,
+        batch_id: u64,
+        binary_key: &K,
+        cycle_limit: usize,
+        non_determinism_source: impl NonDeterminism + Send + Sync + 'static,
+        external_challenges: ExternalChallenges,
+    ) -> ProveResult {
+        self.prove_inner(
+            batch_id,
+            binary_key,
+            cycle_limit,
+            non_determinism_source,
+            external_challenges,
+        )
+    }
+
+    ///  Commits to memory and produces proofs using challenge derived from the memory commitments.
+    ///
+    /// # Arguments
+    ///
+    /// * `batch_id`: a unique identifier for the batch of work, used to distinguish batches in a multithreaded scenario
+    /// * `binary_key`: a key that identifies the binary to work with, this key must match one of the keys in the `binaries` map provided during the creation of the `ExecutionProver`
+    /// * `num_instances_upper_bound`: maximum number of main circuit instances that the prover will try to trace, if the simulation does not end within this limit, it will fail
+    /// * `non_determinism_source`: a value implementing the `NonDeterminism` trait that provides non-deterministic values for the simulation
+    ///
+    /// returns: a tuple containing:
+    ///     - final register values for the main circuit,
+    ///     - a vector of proofs for the chunks of the main circuit,
+    ///     - a vector of proofs for the chunks of the delegation circuits, where each element is a tuple containing the delegation circuit type and a vector of memory commitments for that type
+    ///
+    pub fn commit_memory_and_prove(
+        &self,
+        batch_id: u64,
+        binary_key: &K,
+        cycle_limit: usize,
+        non_determinism_source: impl NonDeterminism + Clone + Send + Sync + 'static,
+    ) -> ProveResult {
+        let timer = Instant::now();
+        let memory_commitment_result = self.commit_memory_inner(
+            batch_id,
+            binary_key,
+            cycle_limit,
+            non_determinism_source.clone(),
+        );
+        let CommitMemoryResult {
+            final_register_values,
+            final_pc,
+            final_timestamp,
+            cycles_used,
+            circuit_families_memory_caps,
+            inits_and_teardowns_memory_caps,
+            delegation_circuits_memory_caps,
+        } = memory_commitment_result;
+        let all_challenges_seed =
+            fs_transform_for_memory_and_delegation_arguments_for_unrolled_circuits(
+                &final_register_values,
+                final_pc,
+                final_timestamp,
+                &circuit_families_memory_caps,
+                &inits_and_teardowns_memory_caps,
+                &delegation_circuits_memory_caps,
+            );
+        let external_challenges =
+            ExternalChallenges::draw_from_transcript_seed_with_state_permutation(
+                all_challenges_seed,
+            );
+        let prove_result = self.prove_inner(
+            batch_id,
+            binary_key,
+            cycle_limit,
+            non_determinism_source,
+            external_challenges,
+        );
+        assert_eq!(prove_result.final_register_values, final_register_values);
+        assert_eq!(prove_result.final_pc, final_pc);
+        assert_eq!(prove_result.final_timestamp, final_timestamp);
+        assert_eq!(prove_result.cycles_used, cycles_used);
+        let assert_caps_mach =
+            |a: &Vec<UnrolledModeProof>, b: &Vec<Vec<MerkleTreeCapVarLength>>| {
+                for (proof, caps) in a.iter().zip(b.iter()) {
+                    assert_eq!(&proof.memory_tree_caps, caps);
+                }
+            };
+        let assert_ids_and_caps_mach = |tuple: (
+            &(u32, Vec<UnrolledModeProof>),
+            &(u32, Vec<Vec<MerkleTreeCapVarLength>>),
+        )| {
+            let a = tuple.0;
+            let b = tuple.1;
+            assert_eq!(a.0, b.0);
+            assert_caps_mach(&a.1, &b.1);
+        };
+        prove_result
+            .circuit_families_proofs
+            .iter()
+            .zip(circuit_families_memory_caps.iter())
+            .for_each(assert_ids_and_caps_mach);
+        assert_caps_mach(
+            &prove_result.inits_and_teardowns_proofs,
+            &inits_and_teardowns_memory_caps,
+        );
+        prove_result
+            .delegation_circuits_proofs
+            .iter()
+            .zip(delegation_circuits_memory_caps.iter())
+            .for_each(assert_ids_and_caps_mach);
+        let elapsed = timer.elapsed().as_secs_f64();
+        info!("BATCH[{batch_id}] PROVER committed to memory and produced proofs for binary with key {binary_key:?} in {elapsed:.3}s");
+        prove_result
+    }
 }
 
 // impl<'a, K: Debug + Eq + Hash> Drop for ExecutionProver<K> {
@@ -1518,61 +908,11 @@ mod tests {
             0,
             ExecutionKind::Unrolled,
             MachineType::FullUnsigned,
-            &binary_image,
-            &text_section,
+            binary_image,
+            text_section,
         );
-        let non_determinism_source = QuasiUARTSource::new_with_reads(vec![1 << 26, 0]);
-        let result = prover.get_results(false, 0, &0, 1 << 36, non_determinism_source, None);
-        // match result {
-        //     ExecutionProverResult::MemoryCommitment(memory_commitment) => {
-        //         for (circuit_type, commitment) in memory_commitment
-        //             .iter()
-        //             .filter(|(c, _)| {
-        //                 matches!(c, CircuitType::Unrolled(UnrolledCircuitType::NonMemory(_)))
-        //             })
-        //             .sorted_by_key(|(c, _)| c.as_unrolled().unwrap().get_family_idx())
-        //         {
-        //             for cap in commitment {
-        //                 dbg!(circuit_type, cap);
-        //             }
-        //         }
-        //         for (circuit_type, commitment) in memory_commitment
-        //             .iter()
-        //             .filter(|(c, _)| {
-        //                 matches!(c, CircuitType::Unrolled(UnrolledCircuitType::Memory(_)))
-        //             })
-        //             .sorted_by_key(|(c, _)| c.as_unrolled().unwrap().get_family_idx())
-        //         {
-        //             for cap in commitment {
-        //                 dbg!(circuit_type, cap);
-        //             }
-        //         }
-        //         for (circuit_type, commitment) in memory_commitment
-        //             .iter()
-        //             .filter(|(c, _)| {
-        //                 matches!(
-        //                     c,
-        //                     CircuitType::Unrolled(UnrolledCircuitType::InitsAndTeardowns)
-        //                 )
-        //             })
-        //             .sorted_by_key(|(c, _)| c.as_unrolled().unwrap().get_family_idx())
-        //         {
-        //             for cap in commitment {
-        //                 dbg!(circuit_type, cap);
-        //             }
-        //         }
-        //         for (circuit_type, commitment) in memory_commitment
-        //             .iter()
-        //             .filter(|(c, _)| matches!(c, CircuitType::Delegation(_)))
-        //             .sorted_by_key(|(c, _)| c.as_delegation().unwrap())
-        //         {
-        //             for cap in commitment {
-        //                 dbg!(circuit_type, cap);
-        //             }
-        //         }
-        //     }
-        //     ExecutionProverResult::Proof(_) => {}
-        // }
+        let non_determinism_source = QuasiUARTSource::new_with_reads(vec![1 << 20, 0]);
+        let result = prover.commit_memory_and_prove(0, &0, 1 << 36, non_determinism_source);
         drop(prover);
     }
 }

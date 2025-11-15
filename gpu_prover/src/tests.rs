@@ -50,8 +50,8 @@ use crate::machine_type::MachineType;
 use crate::prover::memory::commit_memory;
 use crate::witness::trace_delegation::DelegationTraceHost;
 use crate::witness::trace_unrolled::{
-    ShuffleRamInitsAndTeardownsHost, UnrolledMemoryTraceHost, UnrolledNonMemoryTraceHost,
-    UnrolledUnifiedTraceHost,
+    get_aux_arguments_boundary_values, ShuffleRamInitsAndTeardownsHost, UnrolledMemoryTraceHost,
+    UnrolledNonMemoryTraceHost, UnrolledUnifiedTraceHost,
 };
 use cs::cs::circuit::Circuit;
 use cs::machine::ops::unrolled::{
@@ -4300,13 +4300,15 @@ pub fn prove_unrolled_execution_with_replayer<
             let trace = ShuffleRamInitsAndTeardownsHost {
                 chunks: vec![Arc::new(witness_chunk.lazy_init_data.clone())],
             };
+            let aux_boundary_data = get_aux_arguments_boundary_values(&circuit, &trace);
+            assert_eq!(&aux_data.aux_boundary_data, &aux_boundary_data);
             let mut transfer = InitsAndTeardownsTransfer::new(trace, &prover_context)?;
             transfer.schedule_transfer(&prover_context)?;
             let job = crate::prover::proof::prove(
                 Unrolled(UnrolledCircuitType::InitsAndTeardowns),
                 circuit,
                 external_challenges.clone(),
-                aux_data.aux_boundary_data.clone(),
+                aux_boundary_data,
                 &mut setup,
                 None,
                 Some(transfer),

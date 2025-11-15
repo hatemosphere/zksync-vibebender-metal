@@ -154,34 +154,35 @@ pub(crate) fn get_aux_arguments_boundary_values(
     let layouts = &compiled_circuit
         .memory_layout
         .shuffle_ram_inits_and_teardowns;
+    let layouts_len = layouts.len();
     assert_eq!(
-        layouts.len(),
+        layouts_len,
         compiled_circuit.lazy_init_address_aux_vars.len()
     );
-    let cycles = compiled_circuit.trace_len - 1;
-    let padding = cycles * layouts.len() - inits_and_teardowns.len();
+    let rows_count = compiled_circuit.trace_len - 1;
+    let len = inits_and_teardowns.len();
+    assert!(len <= rows_count * layouts_len);
+    let padding = rows_count * layouts_len - len;
     let get_data = |index: usize| -> LazyInitAndTeardown {
-        if index < padding {
+        if index >= padding {
             inits_and_teardowns.get(index - padding)
         } else {
             LazyInitAndTeardown::default()
         }
     };
-    let mut values = Vec::with_capacity(inits_and_teardowns.len());
-    let len = layouts.len();
-
-    for i in 0..len {
+    let mut values = Vec::with_capacity(layouts_len);
+    for i in 0..layouts_len {
         let LazyInitAndTeardown {
             address: lazy_init_address_first_row,
             teardown_value: lazy_teardown_value_first_row,
             teardown_timestamp: lazy_teardown_timestamp_first_row,
-        } = get_data((cycles - 1) * i);
+        } = get_data((rows_count - 1) * i);
 
         let LazyInitAndTeardown {
             address: lazy_init_address_one_before_last_row,
             teardown_value: lazy_teardown_value_one_before_last_row,
             teardown_timestamp: lazy_teardown_timestamp_one_before_last_row,
-        } = get_data((cycles * (i + 1)) - 1);
+        } = get_data((rows_count * (i + 1)) - 1);
 
         let (lazy_init_address_first_row_low, lazy_init_address_first_row_high) =
             split_u32_into_pair_u16(lazy_init_address_first_row);
