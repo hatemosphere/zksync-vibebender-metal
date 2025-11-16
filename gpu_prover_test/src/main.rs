@@ -123,10 +123,6 @@ fn prove_single_block() {
         recursion_chain_hash: None,
     };
     serde_json::to_writer_pretty(File::create("proof.json").unwrap(), &proof).unwrap();
-    // println!("Verifying...");
-    // let result = execution_utils::unrolled::verify_unrolled_base_layer_for_machine_configuration::<IMStandardIsaConfigWithUnsignedMulDiv>(&proof, &setup).expect("is valid proof");
-    // assert!(result.iter().all(|el| *el == 0) == false);
-    // dbg!(result);
 }
 
 #[test]
@@ -181,23 +177,21 @@ fn prove_base_layer() {
     compare_program_proofs(&cpu_proof, &gpu_proof);
 }
 
-// #[test]
-// fn verify_base_proof() {
-//     use std::fs::File;
-//
-//     let setup: UnrolledProgramSetup = serde_json::from_reader(&File::open("setup.json").unwrap()).unwrap();
-//     let layouts: CompiledCircuitsSet = serde_json::from_reader(&File::open("layouts.json").unwrap()).unwrap();
-//     let cpu_proof: UnrolledProgramProof = serde_json::from_reader(&File::open("cpu_proof.json").unwrap()).unwrap();
-//     let gpu_proof: UnrolledProgramProof = serde_json::from_reader(&File::open("gpu_proof.json").unwrap()).unwrap();
-//
-//     println!("Verifying CPU proof...");
-//     let result = execution_utils::unrolled::verify_unrolled_base_layer_for_machine_configuration::<IMStandardIsaConfigWithUnsignedMulDiv>(&cpu_proof, &setup, &layouts).expect("is valid proof");
-//     assert_eq!(result.iter().all(|el| *el == 0), false);
-//
-//     println!("Verifying GPU proof...");
-//     let result = execution_utils::unrolled::verify_unrolled_base_layer_for_machine_configuration::<IMStandardIsaConfigWithUnsignedMulDiv>(&gpu_proof, &setup, &layouts).expect("is valid proof");
-//     assert_eq!(result.iter().all(|el| *el == 0), false);
-// }
+#[test]
+fn verify_base_proof() {
+    let setup: UnrolledProgramSetup = serde_json::from_reader(&File::open("setup.json").unwrap()).unwrap();
+    let layouts: CompiledCircuitsSet = serde_json::from_reader(&File::open("layouts.json").unwrap()).unwrap();
+    let cpu_proof: UnrolledProgramProof = serde_json::from_reader(&File::open("cpu_proof.json").unwrap()).unwrap();
+    let gpu_proof: UnrolledProgramProof = serde_json::from_reader(&File::open("gpu_proof.json").unwrap()).unwrap();
+
+    println!("Verifying CPU proof...");
+    let result = execution_utils::unrolled::verify_unrolled_base_layer_for_machine_configuration::<IMStandardIsaConfigWithUnsignedMulDiv>(&cpu_proof, &setup, &layouts).expect("is valid proof");
+    assert_eq!(result.iter().all(|el| *el == 0), false);
+
+    println!("Verifying GPU proof...");
+    let result = execution_utils::unrolled::verify_unrolled_base_layer_for_machine_configuration::<IMStandardIsaConfigWithUnsignedMulDiv>(&gpu_proof, &setup, &layouts).expect("is valid proof");
+    assert_eq!(result.iter().all(|el| *el == 0), false);
+}
 
 
 #[test]
@@ -271,8 +265,6 @@ fn prove_recursion_over_base() {
         UnrolledProgramSetup::begin_recursion_chain(&base_layer_setup.end_params);
     gpu_proof.recursion_chain_hash = Some(hash_chain);
     gpu_proof.recursion_chain_preimage = Some(preimage);
-    dbg!(gpu_proof.recursion_chain_hash);
-    dbg!(gpu_proof.recursion_chain_preimage);
     serde_json::to_writer_pretty(File::create("gpu_proof_recursion_over_base.json").unwrap(), &gpu_proof).unwrap();
 
     let worker = Worker::new_with_num_threads(8);
@@ -286,32 +278,28 @@ fn prove_recursion_over_base() {
         UnrolledProgramSetup::begin_recursion_chain(&base_layer_setup.end_params);
     cpu_proof.recursion_chain_hash = Some(hash_chain);
     cpu_proof.recursion_chain_preimage = Some(preimage);
-    dbg!(cpu_proof.recursion_chain_hash);
-    dbg!(cpu_proof.recursion_chain_preimage);
     serde_json::to_writer_pretty(File::create("cpu_proof_recursion_over_base.json").unwrap(), &cpu_proof).unwrap();
 
     compare_program_proofs(&cpu_proof, &gpu_proof);
 }
 
-// #[test]
-// fn verify_recursion_proof() {
-//     use std::fs::File;
-//
-//     let setup: UnrolledProgramSetup = serde_json::from_reader(&File::open("setup_recursion_over_base.json").unwrap()).unwrap();
-//     let layouts: CompiledCircuitsSet = serde_json::from_reader(&File::open("layouts_recursion_over_base.json").unwrap()).unwrap();
-//     let cpu_proof: UnrolledProgramProof = serde_json::from_reader(&File::open("cpu_proof_recursion_over_base.json").unwrap()).unwrap();
-//     let gpu_proof: UnrolledProgramProof = serde_json::from_reader(&File::open("gpu_proof_recursion_over_base.json").unwrap()).unwrap();
-//
-//     assert_eq!(setup.circuit_families_setups.len(), 4);
-//
-//     // println!("Verifying CPU proof...");
-//     // let result = execution_utils::unrolled::verify_unrolled_recursion_layer_via_full_statement_verifier(&cpu_proof, &setup, &layouts).expect("is valid proof");
-//     // assert_eq!(result.iter().all(|el| *el == 0), false);
-//
-//     println!("Verifying GPU proof...");
-//     let result = execution_utils::unrolled::verify_unrolled_recursion_layer_via_full_statement_verifier(&gpu_proof, &setup, &layouts).expect("is valid proof");
-//     assert_eq!(result.iter().all(|el| *el == 0), false);
-// }
+#[test]
+fn verify_recursion_proof() {
+    let setup: UnrolledProgramSetup = serde_json::from_reader(&File::open("setup_recursion_over_base.json").unwrap()).unwrap();
+    let layouts: CompiledCircuitsSet = serde_json::from_reader(&File::open("layouts_recursion_over_base.json").unwrap()).unwrap();
+    let cpu_proof: UnrolledProgramProof = serde_json::from_reader(&File::open("cpu_proof_recursion_over_base.json").unwrap()).unwrap();
+    let gpu_proof: UnrolledProgramProof = serde_json::from_reader(&File::open("gpu_proof_recursion_over_base.json").unwrap()).unwrap();
+
+    assert_eq!(setup.circuit_families_setups.len(), 4);
+
+    println!("Verifying CPU proof...");
+    let result = execution_utils::unrolled::verify_unrolled_recursion_layer_via_full_statement_verifier(&cpu_proof, &setup, &layouts).expect("is valid proof");
+    assert_eq!(result.iter().all(|el| *el == 0), false);
+
+    println!("Verifying GPU proof...");
+    let result = execution_utils::unrolled::verify_unrolled_recursion_layer_via_full_statement_verifier(&gpu_proof, &setup, &layouts).expect("is valid proof");
+    assert_eq!(result.iter().all(|el| *el == 0), false);
+}
 
 fn init_logger() {
     env_logger::Builder::from_env(env_logger::Env::default().default_filter_or("trace"))
@@ -330,36 +318,30 @@ fn compare_program_proofs(a: &UnrolledProgramProof, b: &UnrolledProgramProof) {
         a.circuit_families_proofs.len(),
         b.circuit_families_proofs.len()
     );
-    // for (a, b) in a
-    //     .circuit_families_proofs
-    //     .iter()
-    //     .zip(b.circuit_families_proofs.iter())
-    // {
-    //     if *a.0 == 2 || *a.0 == 3 {
-    //         continue
-    //     }
-    //     assert_eq!(a.0, b.0);
-    //     assert_eq!(a.1.len(), b.1.len());
-    //     dbg!(a.0, a.1.len());
-    //     for (proof_a, proof_b) in a.1.iter().zip(b.1.iter()) {
-    //         compare_unrolled_proofs(proof_a, proof_b);
-    //     }
-    // }
-    // dbg!(a.inits_and_teardowns_proofs.len());
+    for (a, b) in a
+        .circuit_families_proofs
+        .iter()
+        .zip(b.circuit_families_proofs.iter())
+    {
+        assert_eq!(a.0, b.0);
+        assert_eq!(a.1.len(), b.1.len());
+        for (proof_a, proof_b) in a.1.iter().zip(b.1.iter()) {
+            compare_unrolled_proofs(proof_a, proof_b);
+        }
+    }
     assert_eq!(
         a.inits_and_teardowns_proofs.len(),
         b.inits_and_teardowns_proofs.len()
     );
-    // for (proof_a, proof_b) in a
-    //     .inits_and_teardowns_proofs
-    //     .iter()
-    //     .zip(b.inits_and_teardowns_proofs.iter())
-    // {
-    //     compare_unrolled_proofs(proof_a, proof_b);
-    // }
+    for (proof_a, proof_b) in a
+        .inits_and_teardowns_proofs
+        .iter()
+        .zip(b.inits_and_teardowns_proofs.iter())
+    {
+        compare_unrolled_proofs(proof_a, proof_b);
+    }
     assert_eq!(a.delegation_proofs.len(), b.delegation_proofs.len());
     for (a, b) in a.delegation_proofs.iter().zip(b.delegation_proofs.iter()) {
-        dbg!(a.0);
         assert_eq!(a.0, b.0);
         assert_eq!(a.1.len(), b.1.len());
         for (proof_a, proof_b) in a.1.iter().zip(b.1.iter()) {
@@ -369,7 +351,6 @@ fn compare_program_proofs(a: &UnrolledProgramProof, b: &UnrolledProgramProof) {
 }
 
 fn compare_unrolled_proofs(a: &UnrolledModeProof, b: &UnrolledModeProof) {
-    dbg!("comparing unrolled proofs");
     let UnrolledModeProof {
         external_challenges,
         public_inputs,
@@ -434,7 +415,6 @@ fn compare_unrolled_proofs(a: &UnrolledModeProof, b: &UnrolledModeProof) {
 }
 
 fn compare_delegation_proofs(a: &Proof, b: &Proof) {
-    dbg!("comparing delegation proofs");
     let Proof {
         external_values,
         public_inputs,
