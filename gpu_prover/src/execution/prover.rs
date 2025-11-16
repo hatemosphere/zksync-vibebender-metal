@@ -7,7 +7,6 @@ use crate::circuit_type::{
 use crate::cudart::device::get_device_count;
 use crate::cudart::memory::{CudaHostAllocFlags, HostAllocation};
 use crate::execution::cpu_worker::{run_split_replayer, run_split_simulator, NonDeterminism};
-use crate::execution::gpu_worker;
 use crate::execution::gpu_worker::{
     GpuWorkRequest, GpuWorkResult, MemoryCommitmentRequest, MemoryCommitmentResult, ProofRequest,
     ProofResult,
@@ -22,16 +21,17 @@ use crossbeam_utils::sync::WaitGroup;
 use cs::definitions::TimestampScalar;
 use itertools::Itertools;
 use log::{debug, info, trace};
-use prover::definitions::ExternalChallenges;
+use prover::definitions::{AuxArgumentsBoundaryValues, ExternalChallenges, ExternalValues};
 use prover::merkle_trees::MerkleTreeCapVarLength;
 use prover::prover_stages::unrolled_prover::UnrolledModeProof;
+use prover::prover_stages::Proof;
 use rayon::iter::IntoParallelIterator;
 use rayon::iter::ParallelIterator;
 use riscv_transpiler::ir::{
     decode, FullMachineDecoderConfig, FullUnsignedMachineDecoderConfig, ReducedMachineDecoderConfig,
 };
 use riscv_transpiler::vm::SimpleTape;
-use std::collections::{HashMap, HashSet, VecDeque};
+use std::collections::{BTreeMap, BTreeSet, HashMap, VecDeque};
 use std::fmt::Debug;
 use std::hash::Hash;
 use std::sync::Arc;
@@ -100,20 +100,18 @@ pub struct CommitMemoryResult {
     pub final_register_values: [FinalRegisterValue; 32],
     pub final_pc: u32,
     pub final_timestamp: TimestampScalar,
-    pub cycles_used: usize,
-    pub circuit_families_memory_caps: Vec<(u32, Vec<Vec<MerkleTreeCapVarLength>>)>,
+    pub circuit_families_memory_caps: BTreeMap<u8, Vec<Vec<MerkleTreeCapVarLength>>>,
     pub inits_and_teardowns_memory_caps: Vec<Vec<MerkleTreeCapVarLength>>,
-    pub delegation_circuits_memory_caps: Vec<(u32, Vec<Vec<MerkleTreeCapVarLength>>)>,
+    pub delegation_circuits_memory_caps: BTreeMap<u32, Vec<Vec<MerkleTreeCapVarLength>>>,
 }
 
 pub struct ProveResult {
-    pub final_register_values: [FinalRegisterValue; 32],
+    pub register_final_values: [FinalRegisterValue; 32],
     pub final_pc: u32,
     pub final_timestamp: TimestampScalar,
-    pub cycles_used: usize,
-    pub circuit_families_proofs: Vec<(u32, Vec<UnrolledModeProof>)>,
+    pub circuit_families_proofs: BTreeMap<u8, Vec<UnrolledModeProof>>,
     pub inits_and_teardowns_proofs: Vec<UnrolledModeProof>,
-    pub delegation_circuits_proofs: Vec<(u32, Vec<UnrolledModeProof>)>,
+    pub delegation_proofs: BTreeMap<u32, Vec<Proof>>,
 }
 
 enum ExecutionProverResult {
@@ -137,18 +135,17 @@ impl ExecutionProverResult {
     }
 }
 
-pub struct ExecutionProver<K: Debug + Eq + Hash> {
+pub struct ExecutionProver {
     configuration: ExecutionProverConfiguration,
-    device_count: usize,
     gpu_manager: GpuManager,
     worker: Worker,
-    binary_holders: HashMap<K, BinaryHolder>,
-    common_precomputations: HashMap<CircuitType, CircuitPrecomputations>,
+    binary_holders: BTreeMap<usize, BinaryHolder>,
+    common_precomputations: BTreeMap<CircuitType, CircuitPrecomputations>,
     free_allocators_sender: Sender<A>,
     free_allocators_receiver: Receiver<A>,
 }
 
-impl<K: Clone + Debug + Eq + Hash> ExecutionProver<K> {
+impl ExecutionProver {
     pub fn new() -> Self {
         Self::with_configuration(ExecutionProverConfiguration::default())
     }
@@ -172,7 +169,7 @@ impl<K: Clone + Debug + Eq + Hash> ExecutionProver<K> {
             "PROVER thread pool with {} threads created",
             worker.num_cores
         );
-        let binary_holders = HashMap::new();
+        let binary_holders = BTreeMap::new();
         info!("PROVER generating common precomputations");
         let common_precomputations = get_common_precomputations(&worker);
         let host_allocators_count = configuration.replay_worker_threads_count
@@ -198,7 +195,6 @@ impl<K: Clone + Debug + Eq + Hash> ExecutionProver<K> {
         info!("PROVER initialized");
         Self {
             configuration,
-            device_count,
             gpu_manager,
             worker,
             binary_holders,
@@ -210,7 +206,7 @@ impl<K: Clone + Debug + Eq + Hash> ExecutionProver<K> {
 
     pub fn add_binary(
         &mut self,
-        key: K,
+        key: usize,
         execution_kind: ExecutionKind,
         machine_type: MachineType,
         mut binary_image: Vec<u32>,
@@ -265,16 +261,16 @@ impl<K: Clone + Debug + Eq + Hash> ExecutionProver<K> {
         assert!(self.binary_holders.insert(key, holder).is_none());
     }
 
-    pub fn remove_binary(&mut self, key: &K) {
+    pub fn remove_binary(&mut self, key: usize) {
         info!("PROVER removing binary with key {key:?}");
-        assert!(self.binary_holders.remove(key).is_some());
+        assert!(self.binary_holders.remove(&key).is_some());
     }
 
     fn get_result(
         &self,
         proving: bool,
         batch_id: u64,
-        binary_key: &K,
+        binary_key: usize,
         cycles_limit: usize,
         non_determinism_source: impl NonDeterminism + Send + Sync + 'static,
         external_challenges: Option<ExternalChallenges>,
@@ -337,17 +333,29 @@ impl<K: Clone + Debug + Eq + Hash> ExecutionProver<K> {
         let mut simulation_result = None;
         let mut expected_requests_count = 0;
         let mut pending_requests_count = 0;
-        let mut tracing_data: HashMap<(CircuitType, usize), TracingData<A>> = HashMap::new();
-        let mut tracing_data_key_by_snapshot_index: HashMap<usize, Vec<(CircuitType, usize)>> =
-            HashMap::new();
-        let mut processed_snapshots = HashSet::<usize>::new();
+        let mut tracing_data = BTreeMap::new();
+        let mut tracing_data_key_by_snapshot_index = BTreeMap::new();
+        let mut processed_snapshots = BTreeSet::<usize>::new();
         let mut gpu_work_requests = VecDeque::new();
-        let mut circuit_families_memory_caps = HashMap::new();
-        let mut inits_and_teardowns_memory_caps = HashMap::new();
-        let mut delegation_circuits_memory_caps = HashMap::new();
-        let mut circuit_families_proofs = HashMap::new();
-        let mut inits_and_teardowns_proofs = HashMap::new();
-        let mut delegation_circuits_proofs = HashMap::new();
+        let mut circuit_families_memory_caps = BTreeMap::new();
+        let mut inits_and_teardowns_memory_caps = BTreeMap::new();
+        let mut delegation_circuits_memory_caps = BTreeMap::new();
+        let mut circuit_families_proofs = BTreeMap::new();
+        let mut inits_and_teardowns_proofs = BTreeMap::new();
+        let mut delegation_circuits_proofs = BTreeMap::new();
+        for family_idx in
+            UnrolledNonMemoryCircuitType::get_circuit_types_for_machine_type(machine_type)
+                .iter()
+                .map(|t| t.get_family_idx())
+                .chain(
+                    UnrolledMemoryCircuitType::get_circuit_types_for_machine_type(machine_type)
+                        .iter()
+                        .map(|t| t.get_family_idx()),
+                )
+        {
+            circuit_families_memory_caps.insert(family_idx, BTreeMap::new());
+            circuit_families_proofs.insert(family_idx, BTreeMap::new());
+        }
         let get_gpu_work_request = |tracing_data: TracingData<A>| -> GpuWorkRequest<A> {
             let TracingData {
                 circuit_type,
@@ -503,15 +511,15 @@ impl<K: Clone + Debug + Eq + Hash> ExecutionProver<K> {
                             CircuitType::Delegation(circuit_type) => {
                                 &mut delegation_circuits_memory_caps
                                     .entry(circuit_type as u32)
-                                    .or_insert_with(|| HashMap::new())
+                                    .or_insert_with(|| BTreeMap::new())
                             }
                             CircuitType::Unrolled(circuit_type) => match circuit_type {
                                 UnrolledCircuitType::InitsAndTeardowns => {
                                     &mut inits_and_teardowns_memory_caps
                                 }
                                 _ => &mut circuit_families_memory_caps
-                                    .entry(circuit_type.get_family_idx() as u32)
-                                    .or_insert_with(|| HashMap::new()),
+                                    .get_mut(&circuit_type.get_family_idx())
+                                    .unwrap(),
                             },
                         };
                         assert!(caps.insert(sequence_id, merkle_tree_caps).is_none());
@@ -537,22 +545,27 @@ impl<K: Clone + Debug + Eq + Hash> ExecutionProver<K> {
                                 self.free_allocators_sender.send(allocator).unwrap();
                             }
                         }
-                        let proofs = match circuit_type {
+                        match circuit_type {
                             CircuitType::Delegation(circuit_type) => {
-                                &mut delegation_circuits_proofs
+                                assert!(delegation_circuits_proofs
                                     .entry(circuit_type as u32)
-                                    .or_insert_with(|| HashMap::new())
+                                    .or_insert_with(|| BTreeMap::new())
+                                    .insert(sequence_id, unrolled_proof_into_proof(proof))
+                                    .is_none())
                             }
                             CircuitType::Unrolled(circuit_type) => match circuit_type {
                                 UnrolledCircuitType::InitsAndTeardowns => {
-                                    &mut inits_and_teardowns_proofs
+                                    assert!(inits_and_teardowns_proofs
+                                        .insert(sequence_id, proof)
+                                        .is_none())
                                 }
-                                _ => &mut circuit_families_proofs
-                                    .entry(circuit_type.get_family_idx() as u32)
-                                    .or_insert_with(|| HashMap::new()),
+                                _ => assert!(circuit_families_proofs
+                                    .get_mut(&circuit_type.get_family_idx())
+                                    .unwrap()
+                                    .insert(sequence_id, proof)
+                                    .is_none()),
                             },
                         };
-                        assert!(proofs.insert(sequence_id, proof).is_none());
                     }
                 },
             }
@@ -572,7 +585,6 @@ impl<K: Clone + Debug + Eq + Hash> ExecutionProver<K> {
             final_register_values,
             final_pc,
             final_timestamp,
-            cycles_used,
         } = simulation_result.unwrap();
         if proving {
             let count = circuit_families_proofs
@@ -587,43 +599,23 @@ impl<K: Clone + Debug + Eq + Hash> ExecutionProver<K> {
             assert_eq!(expected_requests_count, count);
             let circuit_families_proofs = circuit_families_proofs
                 .into_iter()
-                .map(|(i, v)| {
-                    (
-                        i,
-                        v.into_iter()
-                            .sorted_by_key(|(i, _)| *i)
-                            .map(|(_, v)| v)
-                            .collect_vec(),
-                    )
-                })
-                .sorted_by_key(|(i, _)| *i)
-                .collect_vec();
+                .map(|(i, v)| (i, v.into_values().collect_vec()))
+                .collect();
             let inits_and_teardowns_proofs = inits_and_teardowns_proofs
                 .into_iter()
-                .sorted_by_key(|(i, _)| *i)
                 .map(|(_, v)| v)
                 .collect_vec();
             let delegation_circuits_proofs = delegation_circuits_proofs
                 .into_iter()
-                .map(|(i, v)| {
-                    (
-                        i,
-                        v.into_iter()
-                            .sorted_by_key(|(i, _)| *i)
-                            .map(|(_, v)| v)
-                            .collect_vec(),
-                    )
-                })
-                .sorted_by_key(|(i, _)| *i)
-                .collect_vec();
+                .map(|(i, v)| (i, v.into_values().collect_vec()))
+                .collect();
             let result = ProveResult {
-                final_register_values,
+                register_final_values: final_register_values,
                 final_pc,
                 final_timestamp,
-                cycles_used,
                 circuit_families_proofs,
                 inits_and_teardowns_proofs,
-                delegation_circuits_proofs,
+                delegation_proofs: delegation_circuits_proofs,
             };
             ExecutionProverResult::Prove(result)
         } else {
@@ -639,40 +631,20 @@ impl<K: Clone + Debug + Eq + Hash> ExecutionProver<K> {
             assert_eq!(expected_requests_count, count);
             let circuit_families_memory_caps = circuit_families_memory_caps
                 .into_iter()
-                .map(|(i, v)| {
-                    (
-                        i,
-                        v.into_iter()
-                            .sorted_by_key(|(i, _)| *i)
-                            .map(|(_, v)| v)
-                            .collect_vec(),
-                    )
-                })
-                .sorted_by_key(|(i, _)| *i)
-                .collect_vec();
+                .map(|(i, v)| (i, v.into_values().collect_vec()))
+                .collect();
             let inits_and_teardowns_memory_caps = inits_and_teardowns_memory_caps
                 .into_iter()
-                .sorted_by_key(|(i, _)| *i)
                 .map(|(_, v)| v)
                 .collect_vec();
             let delegation_circuits_memory_caps = delegation_circuits_memory_caps
                 .into_iter()
-                .map(|(i, v)| {
-                    (
-                        i,
-                        v.into_iter()
-                            .sorted_by_key(|(i, _)| *i)
-                            .map(|(_, v)| v)
-                            .collect_vec(),
-                    )
-                })
-                .sorted_by_key(|(i, _)| *i)
-                .collect_vec();
+                .map(|(i, v)| (i, v.into_values().collect_vec()))
+                .collect();
             let result = CommitMemoryResult {
                 final_register_values,
                 final_pc,
                 final_timestamp,
-                cycles_used,
                 circuit_families_memory_caps,
                 inits_and_teardowns_memory_caps,
                 delegation_circuits_memory_caps,
@@ -684,7 +656,7 @@ impl<K: Clone + Debug + Eq + Hash> ExecutionProver<K> {
     fn commit_memory_inner(
         &self,
         batch_id: u64,
-        binary_key: &K,
+        binary_key: usize,
         cycle_limit: usize,
         non_determinism_source: impl NonDeterminism + Send + Sync + 'static,
     ) -> CommitMemoryResult {
@@ -722,7 +694,7 @@ impl<K: Clone + Debug + Eq + Hash> ExecutionProver<K> {
     pub fn commit_memory(
         &self,
         batch_id: u64,
-        binary_key: &K,
+        binary_key: usize,
         cycle_limit: usize,
         non_determinism_source: impl NonDeterminism + Send + Sync + 'static,
     ) -> CommitMemoryResult {
@@ -732,7 +704,7 @@ impl<K: Clone + Debug + Eq + Hash> ExecutionProver<K> {
     fn prove_inner(
         &self,
         batch_id: u64,
-        binary_key: &K,
+        binary_key: usize,
         cycle_limit: usize,
         non_determinism_source: impl NonDeterminism + Send + Sync + 'static,
         external_challenges: ExternalChallenges,
@@ -772,7 +744,7 @@ impl<K: Clone + Debug + Eq + Hash> ExecutionProver<K> {
     pub fn prove(
         &self,
         batch_id: u64,
-        binary_key: &K,
+        binary_key: usize,
         cycle_limit: usize,
         non_determinism_source: impl NonDeterminism + Send + Sync + 'static,
         external_challenges: ExternalChallenges,
@@ -803,7 +775,7 @@ impl<K: Clone + Debug + Eq + Hash> ExecutionProver<K> {
     pub fn commit_memory_and_prove(
         &self,
         batch_id: u64,
-        binary_key: &K,
+        binary_key: usize,
         cycle_limit: usize,
         non_determinism_source: impl NonDeterminism + Clone + Send + Sync + 'static,
     ) -> ProveResult {
@@ -818,7 +790,6 @@ impl<K: Clone + Debug + Eq + Hash> ExecutionProver<K> {
             final_register_values,
             final_pc,
             final_timestamp,
-            cycles_used,
             circuit_families_memory_caps,
             inits_and_teardowns_memory_caps,
             delegation_circuits_memory_caps,
@@ -828,9 +799,15 @@ impl<K: Clone + Debug + Eq + Hash> ExecutionProver<K> {
                 &final_register_values,
                 final_pc,
                 final_timestamp,
-                &circuit_families_memory_caps,
+                &circuit_families_memory_caps
+                    .iter()
+                    .map(|(i, v)| (*i as u32, v.clone()))
+                    .collect_vec(),
                 &inits_and_teardowns_memory_caps,
-                &delegation_circuits_memory_caps,
+                &delegation_circuits_memory_caps
+                    .iter()
+                    .map(|(i, v)| (*i, v.clone()))
+                    .collect_vec(),
             );
         let external_challenges =
             ExternalChallenges::draw_from_transcript_seed_with_state_permutation(
@@ -843,39 +820,47 @@ impl<K: Clone + Debug + Eq + Hash> ExecutionProver<K> {
             non_determinism_source,
             external_challenges,
         );
-        assert_eq!(prove_result.final_register_values, final_register_values);
+        assert_eq!(prove_result.register_final_values, final_register_values);
         assert_eq!(prove_result.final_pc, final_pc);
         assert_eq!(prove_result.final_timestamp, final_timestamp);
-        assert_eq!(prove_result.cycles_used, cycles_used);
-        let assert_caps_mach =
-            |a: &Vec<UnrolledModeProof>, b: &Vec<Vec<MerkleTreeCapVarLength>>| {
-                for (proof, caps) in a.iter().zip(b.iter()) {
-                    assert_eq!(&proof.memory_tree_caps, caps);
-                }
-            };
-        let assert_ids_and_caps_mach = |tuple: (
-            &(u32, Vec<UnrolledModeProof>),
-            &(u32, Vec<Vec<MerkleTreeCapVarLength>>),
-        )| {
-            let a = tuple.0;
-            let b = tuple.1;
-            assert_eq!(a.0, b.0);
-            assert_caps_mach(&a.1, &b.1);
-        };
+        fn assert_caps_mach(
+            a: &Vec<Vec<MerkleTreeCapVarLength>>,
+            b: &Vec<Vec<MerkleTreeCapVarLength>>,
+        ) {
+            for (a, b) in a.iter().zip(b.iter()) {
+                assert_eq!(a, b);
+            }
+        }
         prove_result
             .circuit_families_proofs
             .iter()
             .zip(circuit_families_memory_caps.iter())
-            .for_each(assert_ids_and_caps_mach);
+            .for_each(|(a, b)| {
+                assert_eq!(a.0, b.0);
+                assert_caps_mach(
+                    &a.1.iter().map(|p| p.memory_tree_caps.clone()).collect_vec(),
+                    &b.1,
+                );
+            });
         assert_caps_mach(
-            &prove_result.inits_and_teardowns_proofs,
+            &prove_result
+                .inits_and_teardowns_proofs
+                .iter()
+                .map(|p| p.memory_tree_caps.clone())
+                .collect_vec(),
             &inits_and_teardowns_memory_caps,
         );
         prove_result
-            .delegation_circuits_proofs
+            .delegation_proofs
             .iter()
             .zip(delegation_circuits_memory_caps.iter())
-            .for_each(assert_ids_and_caps_mach);
+            .for_each(|(a, b)| {
+                assert_eq!(a.0, b.0);
+                assert_caps_mach(
+                    &a.1.iter().map(|p| p.memory_tree_caps.clone()).collect_vec(),
+                    &b.1,
+                );
+            });
         let elapsed = timer.elapsed().as_secs_f64();
         info!("BATCH[{batch_id}] PROVER committed to memory and produced proofs for binary with key {binary_key:?} in {elapsed:.3}s");
         prove_result
@@ -890,6 +875,33 @@ impl<K: Clone + Debug + Eq + Hash> ExecutionProver<K> {
 //     }
 // }
 
+fn unrolled_proof_into_proof(proof: UnrolledModeProof) -> Proof {
+    assert!(proof.aux_boundary_values.is_empty());
+    Proof {
+        external_values: ExternalValues {
+            challenges: proof.external_challenges,
+            aux_boundary_values: AuxArgumentsBoundaryValues::default(),
+        },
+        public_inputs: proof.public_inputs,
+        witness_tree_caps: proof.witness_tree_caps,
+        memory_tree_caps: proof.memory_tree_caps,
+        setup_tree_caps: proof.setup_tree_caps,
+        stage_2_tree_caps: proof.stage_2_tree_caps,
+        memory_grand_product_accumulator: proof.permutation_grand_product_accumulator,
+        delegation_argument_accumulator: proof.delegation_argument_accumulator,
+        quotient_tree_caps: proof.quotient_tree_caps,
+        evaluations_at_random_points: proof.evaluations_at_random_points,
+        deep_poly_caps: proof.deep_poly_caps,
+        intermediate_fri_oracle_caps: proof.intermediate_fri_oracle_caps,
+        last_fri_step_plain_leaf_values: proof.last_fri_step_plain_leaf_values,
+        final_monomial_form: proof.final_monomial_form,
+        queries: proof.queries,
+        pow_nonce: proof.pow_nonce,
+        circuit_sequence: 0,
+        delegation_type: proof.delegation_type,
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use crate::execution::prover::{ExecutionKind, ExecutionProver, ExecutionProverConfiguration};
@@ -903,7 +915,7 @@ mod tests {
         init_logger();
         let mut configuration = ExecutionProverConfiguration::default();
         configuration.replay_worker_threads_count = 8;
-        let mut prover = ExecutionProver::<usize>::with_configuration(configuration);
+        let mut prover = ExecutionProver::with_configuration(configuration);
         let binary_image = read_binary(&Path::new("../examples/hashed_fibonacci/app.bin"));
         let text_section = read_binary(&Path::new("../examples/hashed_fibonacci/app.text"));
         prover.add_binary(
@@ -914,7 +926,18 @@ mod tests {
             text_section,
         );
         let non_determinism_source = QuasiUARTSource::new_with_reads(vec![3 << 25, 0]);
-        let result = prover.commit_memory_and_prove(0, &0, 1 << 36, non_determinism_source);
+        let base_layer_result =
+            prover.commit_memory_and_prove(0, 0, 1 << 36, non_determinism_source);
+        let binary_image = read_binary(&Path::new("../tools/verifier/unrolled_base_layer.bin"));
+        let text_section = read_binary(&Path::new("../tools/verifier/unrolled_base_layer.text"));
+        prover.add_binary(
+            1,
+            ExecutionKind::Unrolled,
+            MachineType::Reduced,
+            binary_image,
+            text_section,
+        );
+
         drop(prover);
     }
 }

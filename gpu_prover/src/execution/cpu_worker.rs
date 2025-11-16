@@ -35,7 +35,7 @@ use riscv_transpiler::witness::delegation::bigint::BigintDelegationWitness;
 use riscv_transpiler::witness::delegation::blake2_round_function::Blake2sRoundFunctionDelegationWitness;
 use riscv_transpiler::witness::delegation::keccak_special5::KeccakSpecial5DelegationWitness;
 use std::cmp::min;
-use std::collections::{HashSet, VecDeque};
+use std::collections::{BTreeSet, VecDeque};
 use std::mem::replace;
 use std::ops::Deref;
 use std::sync::Arc;
@@ -168,7 +168,6 @@ pub(crate) fn run_split_simulator(
         final_register_values,
         final_pc: state.pc,
         final_timestamp: state.timestamp,
-        cycles_used: cycles_count,
     };
     let result = WorkerResult::SimulationResult(simulation_result);
     results.send(result).unwrap();
@@ -263,7 +262,7 @@ struct TracingDataProducer<T: TracingDataProducerType> {
     results: Sender<WorkerResult<A>>,
     current_circuit_index: usize,
     chunks: VecDeque<Arc<Vec<T, A>>>,
-    participating_snapshot_indexes: HashSet<usize>,
+    participating_snapshot_indexes: BTreeSet<usize>,
 }
 
 impl<T: TracingDataProducerType> TracingDataProducer<T> {
@@ -278,7 +277,7 @@ impl<T: TracingDataProducerType> TracingDataProducer<T> {
             results,
             current_circuit_index: 0,
             chunks: VecDeque::new(),
-            participating_snapshot_indexes: HashSet::new(),
+            participating_snapshot_indexes: BTreeSet::new(),
         }
     }
 
@@ -332,7 +331,7 @@ impl<T: TracingDataProducerType> TracingDataProducer<T> {
         let holder = ChunkedTraceHolder { chunks };
         let tracing_data = T::produce_tracing_data(holder);
         let participating_snapshot_indexes =
-            replace(&mut self.participating_snapshot_indexes, HashSet::new());
+            replace(&mut self.participating_snapshot_indexes, BTreeSet::new());
         let data = TracingData {
             circuit_type: self.circuit_type,
             sequence_id: self.current_circuit_index,

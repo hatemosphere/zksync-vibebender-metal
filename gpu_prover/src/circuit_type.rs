@@ -1,12 +1,12 @@
-use prover::definitions::OPTIMAL_FOLDING_PROPERTIES;
 use crate::machine_type::MachineType;
+use prover::definitions::OPTIMAL_FOLDING_PROPERTIES;
 use setups::{
     add_sub_lui_auipc_mop, bigint_with_control, blake2_with_compression, inits_and_teardowns,
     jump_branch_slt, keccak_special5, load_store_subword_only, load_store_word_only, mul_div,
     mul_div_unsigned, shift_binary_csr, unified_reduced_machine,
 };
 
-#[derive(Copy, Clone, Debug, Eq, PartialEq, Hash)]
+#[derive(Copy, Clone, Debug, Eq, PartialEq, Hash, Ord, PartialOrd)]
 pub enum CircuitType {
     Delegation(DelegationCircuitType),
     Unrolled(UnrolledCircuitType),
@@ -169,7 +169,7 @@ impl From<u16> for DelegationCircuitType {
     }
 }
 
-#[derive(Copy, Clone, Debug, Eq, PartialEq, Hash)]
+#[derive(Copy, Clone, Debug, Eq, PartialEq, Hash, Ord, PartialOrd)]
 pub enum UnrolledCircuitType {
     InitsAndTeardowns,
     Memory(UnrolledMemoryCircuitType),

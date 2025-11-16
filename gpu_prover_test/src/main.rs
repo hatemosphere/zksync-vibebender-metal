@@ -1,0 +1,499 @@
+#![allow(incomplete_features)]
+#![feature(generic_const_exprs)]
+
+use execution_utils::setups::prover::prover_stages::unrolled_prover::UnrolledModeProof;
+use execution_utils::setups::prover::prover_stages::Proof;
+use execution_utils::setups::prover::risc_v_simulator::abstractions::non_determinism::QuasiUARTSource;
+use execution_utils::setups::prover::risc_v_simulator::cycle::IMStandardIsaConfigWithUnsignedMulDiv;
+use execution_utils::setups::prover::worker::Worker;
+use execution_utils::setups::{read_and_pad_binary, CompiledCircuitsSet};
+use execution_utils::unrolled::{UnrolledProgramProof, UnrolledProgramSetup};
+use gpu_prover::execution::prover::{ExecutionKind, ExecutionProver, ExecutionProverConfiguration};
+use gpu_prover::machine_type::MachineType;
+use risc_v_simulator::cycle::IWithoutByteAccessIsaConfigWithDelegation;
+use std::fs::File;
+use std::io::Read;
+use std::path::Path;
+
+fn main() {
+    // init_logger();
+    // let mut configuration = ExecutionProverConfiguration::default();
+    // configuration.replay_worker_threads_count = 8;
+    // let mut prover = ExecutionProver::with_configuration(configuration);
+    // {
+    //     let (_, binary_u32) =
+    //         read_and_pad_binary(Path::new("../examples/hashed_fibonacci/app.bin"));
+    //     let (_, text_u32) = read_and_pad_binary(Path::new("../examples/hashed_fibonacci/app.text"));
+    //     prover.add_binary(
+    //         0,
+    //         ExecutionKind::Unrolled,
+    //         MachineType::FullUnsigned,
+    //         binary_u32,
+    //         text_u32,
+    //     );
+    // }
+    // {
+    //     let (_, binary_u32) =
+    //         read_and_pad_binary(Path::new("../tools/verifier/unrolled_base_layer.bin"));
+    //     let (_, text_u32) =
+    //         read_and_pad_binary(Path::new("../tools/verifier/unrolled_base_layer.text"));
+    //     prover.add_binary(
+    //         1,
+    //         ExecutionKind::Unrolled,
+    //         MachineType::FullUnsigned,
+    //         binary_u32,
+    //         text_u32,
+    //     );
+    // }
+    // let non_determinism_source = QuasiUARTSource::new_with_reads(vec![1 << 20, 0]);
+    // let base_layer_result = prover.commit_memory_and_prove(0, 0, 1 << 36, non_determinism_source);
+    // let base_layer_proof = UnrolledProgramProof {
+    //     final_pc: base_layer_result.final_pc,
+    //     final_timestamp: base_layer_result.final_timestamp,
+    //     circuit_families_proofs: base_layer_result.circuit_families_proofs,
+    //     inits_and_teardowns_proofs: base_layer_result.inits_and_teardowns_proofs,
+    //     delegation_proofs: base_layer_result.delegation_proofs,
+    //     register_final_values: base_layer_result.register_final_values,
+    //     recursion_chain_preimage: None,
+    //     recursion_chain_hash: None,
+    // };
+    // serde_json::to_writer_pretty(
+    //     File::create("base_layer_proof.json").unwrap(),
+    //     &base_layer_proof,
+    // )
+    // .unwrap();
+    //
+    // // println!("Verifying...");
+    // // let result = verify_unrolled_base_layer_for_machine_configuration::<IMStandardIsaConfigWithUnsignedMulDiv>(&proof, &setup, &compiled_layouts).expect("is valid proof");
+    // // assert_eq!(result.iter().all(|el| *el == 0), false);
+}
+
+#[test]
+fn prove_single_block() {
+    init_logger();
+
+    let block_number = 23620012;
+
+    let mut file = File::open(&format!("{}_witness", block_number)).expect("should open file");
+    let mut witness = vec![];
+    file.read_to_end(&mut witness)
+        .expect("must read witness from file");
+    let witness = hex::decode(core::str::from_utf8(&witness).unwrap()).unwrap();
+    assert_eq!(witness.len() % 4, 0);
+    let witness: Vec<_> = witness
+        .as_chunks::<4>()
+        .0
+        .iter()
+        .map(|el| u32::from_be_bytes(*el))
+        .collect();
+    let source = QuasiUARTSource::new_with_reads(witness);
+    let (binary, binary_u32) = read_and_pad_binary(Path::new("../../zksync-os/zksync_os/app.bin"));
+    let (text, text_u32) = read_and_pad_binary(Path::new("../../zksync-os/zksync_os/app.text"));
+    println!("Computing setup");
+    let setup = execution_utils::unrolled::compute_setup_for_machine_configuration::<
+        IMStandardIsaConfigWithUnsignedMulDiv,
+    >(&binary, &text);
+    serde_json::to_writer_pretty(File::create("setup.json").unwrap(), &setup).unwrap();
+    let compiled_layouts =
+        execution_utils::setups::get_unrolled_circuits_artifacts_for_machine_type::<
+            IMStandardIsaConfigWithUnsignedMulDiv,
+        >(&binary_u32);
+    serde_json::to_writer_pretty(File::create("layouts.json").unwrap(), &compiled_layouts).unwrap();
+    println!("Computing proof");
+
+    let mut configuration = ExecutionProverConfiguration::default();
+    configuration.replay_worker_threads_count = 8;
+    let mut prover = ExecutionProver::with_configuration(configuration);
+    prover.add_binary(
+        0,
+        ExecutionKind::Unrolled,
+        MachineType::FullUnsigned,
+        binary_u32,
+        text_u32,
+    );
+    let result = prover.commit_memory_and_prove(0, 0, 1 << 36, source);
+    let proof = UnrolledProgramProof {
+        final_pc: result.final_pc,
+        final_timestamp: result.final_timestamp,
+        circuit_families_proofs: result.circuit_families_proofs,
+        inits_and_teardowns_proofs: result.inits_and_teardowns_proofs,
+        delegation_proofs: result.delegation_proofs,
+        register_final_values: result.register_final_values,
+        recursion_chain_preimage: None,
+        recursion_chain_hash: None,
+    };
+    serde_json::to_writer_pretty(File::create("proof.json").unwrap(), &proof).unwrap();
+    // println!("Verifying...");
+    // let result = execution_utils::unrolled::verify_unrolled_base_layer_for_machine_configuration::<IMStandardIsaConfigWithUnsignedMulDiv>(&proof, &setup).expect("is valid proof");
+    // assert!(result.iter().all(|el| *el == 0) == false);
+    // dbg!(result);
+}
+
+#[test]
+fn prove_base_layer() {
+    init_logger();
+    let (binary, binary_u32) =
+        read_and_pad_binary(Path::new("../examples/hashed_fibonacci/app.bin"));
+    let (text, text_u32) = read_and_pad_binary(Path::new("../examples/hashed_fibonacci/app.text"));
+    println!("Computing setup");
+    let setup = execution_utils::unrolled::compute_setup_for_machine_configuration::<
+        IMStandardIsaConfigWithUnsignedMulDiv,
+    >(&binary, &text);
+    serde_json::to_writer_pretty(File::create("setup.json").unwrap(), &setup).unwrap();
+    let compiled_layouts =
+        execution_utils::setups::get_unrolled_circuits_artifacts_for_machine_type::<
+            IMStandardIsaConfigWithUnsignedMulDiv,
+        >(&binary_u32);
+    serde_json::to_writer_pretty(File::create("layouts.json").unwrap(), &compiled_layouts).unwrap();
+    println!("Computing proof");
+
+    let mut configuration = ExecutionProverConfiguration::default();
+    configuration.replay_worker_threads_count = 8;
+    let mut prover = ExecutionProver::with_configuration(configuration);
+    prover.add_binary(
+        0,
+        ExecutionKind::Unrolled,
+        MachineType::FullUnsigned,
+        binary_u32.clone(),
+        text_u32.clone(),
+    );
+    let source = QuasiUARTSource::new_with_reads(vec![0, 0]);
+    let result = prover.commit_memory_and_prove(0, 0, 1 << 36, source.clone());
+    let gpu_proof = UnrolledProgramProof {
+        final_pc: result.final_pc,
+        final_timestamp: result.final_timestamp,
+        circuit_families_proofs: result.circuit_families_proofs,
+        inits_and_teardowns_proofs: result.inits_and_teardowns_proofs,
+        delegation_proofs: result.delegation_proofs,
+        register_final_values: result.register_final_values,
+        recursion_chain_preimage: None,
+        recursion_chain_hash: None,
+    };
+    serde_json::to_writer_pretty(File::create("gpu_proof.json").unwrap(), &gpu_proof).unwrap();
+
+    let worker = Worker::new_with_num_threads(8);
+    let cpu_proof =
+        execution_utils::unrolled::prove_unrolled_for_machine_configuration_into_program_proof::<
+            IMStandardIsaConfigWithUnsignedMulDiv,
+        >(&binary_u32, &text_u32, 1 << 31, source, 1 << 30, &worker);
+    serde_json::to_writer_pretty(File::create("cpu_proof.json").unwrap(), &cpu_proof).unwrap();
+
+    compare_program_proofs(&cpu_proof, &gpu_proof);
+}
+
+// #[test]
+// fn verify_base_proof() {
+//     use std::fs::File;
+//
+//     let setup: UnrolledProgramSetup = serde_json::from_reader(&File::open("setup.json").unwrap()).unwrap();
+//     let layouts: CompiledCircuitsSet = serde_json::from_reader(&File::open("layouts.json").unwrap()).unwrap();
+//     let cpu_proof: UnrolledProgramProof = serde_json::from_reader(&File::open("cpu_proof.json").unwrap()).unwrap();
+//     let gpu_proof: UnrolledProgramProof = serde_json::from_reader(&File::open("gpu_proof.json").unwrap()).unwrap();
+//
+//     println!("Verifying CPU proof...");
+//     let result = execution_utils::unrolled::verify_unrolled_base_layer_for_machine_configuration::<IMStandardIsaConfigWithUnsignedMulDiv>(&cpu_proof, &setup, &layouts).expect("is valid proof");
+//     assert_eq!(result.iter().all(|el| *el == 0), false);
+//
+//     println!("Verifying GPU proof...");
+//     let result = execution_utils::unrolled::verify_unrolled_base_layer_for_machine_configuration::<IMStandardIsaConfigWithUnsignedMulDiv>(&gpu_proof, &setup, &layouts).expect("is valid proof");
+//     assert_eq!(result.iter().all(|el| *el == 0), false);
+// }
+
+
+#[test]
+fn prove_recursion_over_base() {
+    init_logger();
+    let base_layer_setup: UnrolledProgramSetup =
+        serde_json::from_reader(&File::open("setup.json").unwrap()).unwrap();
+    let proof: UnrolledProgramProof =
+        serde_json::from_reader(&File::open("proof.json").unwrap()).unwrap();
+    let layout: CompiledCircuitsSet =
+        serde_json::from_reader(&File::open("layouts.json").unwrap()).unwrap();
+
+    for (family, proofs) in proof.circuit_families_proofs.iter() {
+        println!("{} proofs for family {}", proofs.len(), family);
+    }
+    for (delegation_type, proofs) in proof.delegation_proofs.iter() {
+        println!("{} proofs for delegation {}", proofs.len(), delegation_type);
+    }
+
+    let mut witness = base_layer_setup.flatten_for_recursion();
+    witness.extend(proof.flatten_into_responses(&[1984, 1991, 1994, 1995], &layout));
+    let source = QuasiUARTSource::new_with_reads(witness);
+
+    let (binary, binary_u32) =
+        read_and_pad_binary(Path::new("../tools/verifier/unrolled_base_layer.bin"));
+    let (text, text_u32) =
+        read_and_pad_binary(Path::new("../tools/verifier/unrolled_base_layer.text"));
+    println!("Computing setup");
+    let setup = execution_utils::unrolled::compute_setup_for_machine_configuration::<
+        IWithoutByteAccessIsaConfigWithDelegation,
+    >(&binary, &text);
+    serde_json::to_writer_pretty(
+        File::create("setup_recursion_over_base.json").unwrap(),
+        &setup,
+    )
+    .unwrap();
+    let compiled_layouts =
+        execution_utils::setups::get_unrolled_circuits_artifacts_for_machine_type::<
+            IWithoutByteAccessIsaConfigWithDelegation,
+        >(&binary_u32);
+    serde_json::to_writer_pretty(
+        File::create("layouts_recursion_over_base.json").unwrap(),
+        &compiled_layouts,
+    )
+    .unwrap();
+    println!("Computing proof");
+
+    let mut configuration = ExecutionProverConfiguration::default();
+    configuration.replay_worker_threads_count = 8;
+    let mut prover = ExecutionProver::with_configuration(configuration);
+    prover.add_binary(
+        0,
+        ExecutionKind::Unrolled,
+        MachineType::Reduced,
+        binary_u32.clone(),
+        text_u32.clone(),
+    );
+    let result = prover.commit_memory_and_prove(0, 0, 1 << 36, source.clone());
+    let mut gpu_proof = UnrolledProgramProof {
+        final_pc: result.final_pc,
+        final_timestamp: result.final_timestamp,
+        circuit_families_proofs: result.circuit_families_proofs,
+        inits_and_teardowns_proofs: result.inits_and_teardowns_proofs,
+        delegation_proofs: result.delegation_proofs,
+        register_final_values: result.register_final_values,
+        recursion_chain_preimage: None,
+        recursion_chain_hash: None,
+    };
+    // make a hash chain
+    let (hash_chain, preimage) =
+        UnrolledProgramSetup::begin_recursion_chain(&base_layer_setup.end_params);
+    gpu_proof.recursion_chain_hash = Some(hash_chain);
+    gpu_proof.recursion_chain_preimage = Some(preimage);
+    dbg!(gpu_proof.recursion_chain_hash);
+    dbg!(gpu_proof.recursion_chain_preimage);
+    serde_json::to_writer_pretty(File::create("gpu_proof_recursion_over_base.json").unwrap(), &gpu_proof).unwrap();
+
+    let worker = Worker::new_with_num_threads(8);
+    println!("Computing proof");
+    let mut cpu_proof =
+        execution_utils::unrolled::prove_unrolled_for_machine_configuration_into_program_proof::<
+            IWithoutByteAccessIsaConfigWithDelegation,
+        >(&binary_u32, &text_u32, 1 << 31, source, 1 << 30, &worker);
+    // make a hash chain
+    let (hash_chain, preimage) =
+        UnrolledProgramSetup::begin_recursion_chain(&base_layer_setup.end_params);
+    cpu_proof.recursion_chain_hash = Some(hash_chain);
+    cpu_proof.recursion_chain_preimage = Some(preimage);
+    dbg!(cpu_proof.recursion_chain_hash);
+    dbg!(cpu_proof.recursion_chain_preimage);
+    serde_json::to_writer_pretty(File::create("cpu_proof_recursion_over_base.json").unwrap(), &cpu_proof).unwrap();
+
+    compare_program_proofs(&cpu_proof, &gpu_proof);
+}
+
+// #[test]
+// fn verify_recursion_proof() {
+//     use std::fs::File;
+//
+//     let setup: UnrolledProgramSetup = serde_json::from_reader(&File::open("setup_recursion_over_base.json").unwrap()).unwrap();
+//     let layouts: CompiledCircuitsSet = serde_json::from_reader(&File::open("layouts_recursion_over_base.json").unwrap()).unwrap();
+//     let cpu_proof: UnrolledProgramProof = serde_json::from_reader(&File::open("cpu_proof_recursion_over_base.json").unwrap()).unwrap();
+//     let gpu_proof: UnrolledProgramProof = serde_json::from_reader(&File::open("gpu_proof_recursion_over_base.json").unwrap()).unwrap();
+//
+//     assert_eq!(setup.circuit_families_setups.len(), 4);
+//
+//     // println!("Verifying CPU proof...");
+//     // let result = execution_utils::unrolled::verify_unrolled_recursion_layer_via_full_statement_verifier(&cpu_proof, &setup, &layouts).expect("is valid proof");
+//     // assert_eq!(result.iter().all(|el| *el == 0), false);
+//
+//     println!("Verifying GPU proof...");
+//     let result = execution_utils::unrolled::verify_unrolled_recursion_layer_via_full_statement_verifier(&gpu_proof, &setup, &layouts).expect("is valid proof");
+//     assert_eq!(result.iter().all(|el| *el == 0), false);
+// }
+
+fn init_logger() {
+    env_logger::Builder::from_env(env_logger::Env::default().default_filter_or("trace"))
+        .target(env_logger::Target::Stdout)
+        .format_timestamp_millis()
+        .format_module_path(false)
+        .format_target(false)
+        .init();
+}
+
+fn compare_program_proofs(a: &UnrolledProgramProof, b: &UnrolledProgramProof) {
+    assert_eq!(a.final_pc, b.final_pc);
+    assert_eq!(a.final_timestamp, b.final_timestamp);
+    assert_eq!(a.register_final_values, b.register_final_values);
+    assert_eq!(
+        a.circuit_families_proofs.len(),
+        b.circuit_families_proofs.len()
+    );
+    // for (a, b) in a
+    //     .circuit_families_proofs
+    //     .iter()
+    //     .zip(b.circuit_families_proofs.iter())
+    // {
+    //     if *a.0 == 2 || *a.0 == 3 {
+    //         continue
+    //     }
+    //     assert_eq!(a.0, b.0);
+    //     assert_eq!(a.1.len(), b.1.len());
+    //     dbg!(a.0, a.1.len());
+    //     for (proof_a, proof_b) in a.1.iter().zip(b.1.iter()) {
+    //         compare_unrolled_proofs(proof_a, proof_b);
+    //     }
+    // }
+    // dbg!(a.inits_and_teardowns_proofs.len());
+    assert_eq!(
+        a.inits_and_teardowns_proofs.len(),
+        b.inits_and_teardowns_proofs.len()
+    );
+    // for (proof_a, proof_b) in a
+    //     .inits_and_teardowns_proofs
+    //     .iter()
+    //     .zip(b.inits_and_teardowns_proofs.iter())
+    // {
+    //     compare_unrolled_proofs(proof_a, proof_b);
+    // }
+    assert_eq!(a.delegation_proofs.len(), b.delegation_proofs.len());
+    for (a, b) in a.delegation_proofs.iter().zip(b.delegation_proofs.iter()) {
+        dbg!(a.0);
+        assert_eq!(a.0, b.0);
+        assert_eq!(a.1.len(), b.1.len());
+        for (proof_a, proof_b) in a.1.iter().zip(b.1.iter()) {
+            compare_delegation_proofs(proof_a, proof_b);
+        }
+    }
+}
+
+fn compare_unrolled_proofs(a: &UnrolledModeProof, b: &UnrolledModeProof) {
+    dbg!("comparing unrolled proofs");
+    let UnrolledModeProof {
+        external_challenges,
+        public_inputs,
+        witness_tree_caps,
+        memory_tree_caps,
+        setup_tree_caps,
+        stage_2_tree_caps,
+        permutation_grand_product_accumulator,
+        delegation_argument_accumulator,
+        quotient_tree_caps,
+        evaluations_at_random_points,
+        deep_poly_caps,
+        intermediate_fri_oracle_caps,
+        last_fri_step_plain_leaf_values,
+        final_monomial_form,
+        queries,
+        pow_nonce: _,
+        delegation_type,
+        aux_boundary_values,
+    } = a;
+    assert_eq!(
+        external_challenges, &b.external_challenges,
+        "external_challenges"
+    );
+    assert_eq!(public_inputs, &b.public_inputs, "public_inputs");
+    assert_eq!(setup_tree_caps, &b.setup_tree_caps, "setup_tree_caps");
+    assert_eq!(memory_tree_caps, &b.memory_tree_caps, "memory_tree_caps");
+    assert_eq!(witness_tree_caps, &b.witness_tree_caps, "witness_tree_caps");
+    assert_eq!(stage_2_tree_caps, &b.stage_2_tree_caps, "stage_2_tree_caps");
+    assert_eq!(
+        permutation_grand_product_accumulator, &b.permutation_grand_product_accumulator,
+        "permutation_grand_product_accumulator"
+    );
+    assert_eq!(
+        delegation_argument_accumulator, &b.delegation_argument_accumulator,
+        "delegation_argument_accumulator"
+    );
+    assert_eq!(quotient_tree_caps, &b.quotient_tree_caps);
+    assert_eq!(
+        evaluations_at_random_points, &b.evaluations_at_random_points,
+        "evaluations_at_random_points"
+    );
+    assert_eq!(deep_poly_caps, &b.deep_poly_caps, "deep_poly_caps");
+    assert_eq!(
+        intermediate_fri_oracle_caps, &b.intermediate_fri_oracle_caps,
+        "intermediate_fri_oracle_caps"
+    );
+    assert_eq!(
+        last_fri_step_plain_leaf_values, &b.last_fri_step_plain_leaf_values,
+        "last_fri_step_plain_leaf_values"
+    );
+    assert_eq!(
+        final_monomial_form, &b.final_monomial_form,
+        "final_monomial_form"
+    );
+    assert_eq!(queries.len(), b.queries.len(), "queries length");
+    assert_eq!(delegation_type, &b.delegation_type, "delegation_type");
+    assert_eq!(
+        aux_boundary_values, &b.aux_boundary_values,
+        "aux_boundary_values"
+    );
+}
+
+fn compare_delegation_proofs(a: &Proof, b: &Proof) {
+    dbg!("comparing delegation proofs");
+    let Proof {
+        external_values,
+        public_inputs,
+        witness_tree_caps,
+        memory_tree_caps,
+        setup_tree_caps,
+        stage_2_tree_caps,
+        memory_grand_product_accumulator,
+        delegation_argument_accumulator,
+        quotient_tree_caps,
+        evaluations_at_random_points,
+        deep_poly_caps,
+        intermediate_fri_oracle_caps,
+        last_fri_step_plain_leaf_values,
+        final_monomial_form,
+        queries,
+        pow_nonce,
+        circuit_sequence,
+        delegation_type,
+    } = a;
+    assert_eq!(
+        &external_values.challenges, &b.external_values.challenges,
+        "challenges"
+    );
+    assert_eq!(
+        &external_values.aux_boundary_values, &b.external_values.aux_boundary_values,
+        "aux_boundary_values"
+    );
+    assert_eq!(public_inputs, &b.public_inputs, "public_inputs");
+    assert_eq!(setup_tree_caps, &b.setup_tree_caps, "setup_tree_caps");
+    assert_eq!(memory_tree_caps, &b.memory_tree_caps, "memory_tree_caps");
+    assert_eq!(witness_tree_caps, &b.witness_tree_caps, "witness_tree_caps");
+    assert_eq!(stage_2_tree_caps, &b.stage_2_tree_caps, "stage_2_tree_caps");
+    assert_eq!(
+        memory_grand_product_accumulator, &b.memory_grand_product_accumulator,
+        "permutation_grand_product_accumulator"
+    );
+    assert_eq!(
+        delegation_argument_accumulator, &b.delegation_argument_accumulator,
+        "delegation_argument_accumulator"
+    );
+    assert_eq!(quotient_tree_caps, &b.quotient_tree_caps);
+    assert_eq!(
+        evaluations_at_random_points, &b.evaluations_at_random_points,
+        "evaluations_at_random_points"
+    );
+    assert_eq!(deep_poly_caps, &b.deep_poly_caps, "deep_poly_caps");
+    assert_eq!(
+        intermediate_fri_oracle_caps, &b.intermediate_fri_oracle_caps,
+        "intermediate_fri_oracle_caps"
+    );
+    assert_eq!(
+        last_fri_step_plain_leaf_values, &b.last_fri_step_plain_leaf_values,
+        "last_fri_step_plain_leaf_values"
+    );
+    assert_eq!(
+        final_monomial_form, &b.final_monomial_form,
+        "final_monomial_form"
+    );
+    assert_eq!(queries.len(), b.queries.len(), "queries length");
+    assert_eq!(delegation_type, &b.delegation_type, "delegation_type");
+}

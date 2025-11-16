@@ -4,6 +4,7 @@ use crate::circuit_type::{
     CircuitType, DelegationCircuitType, UnrolledCircuitType, UnrolledMemoryCircuitType,
     UnrolledNonMemoryCircuitType,
 };
+use crate::prover::setup::SetupTreesAndCaps;
 use crate::witness::trace_unrolled::ExecutorFamilyDecoderData;
 use cs::machine::ops::unrolled::materialize_flattened_decoder_table;
 use cs::one_row_compiler::CompiledCircuitArtifact;
@@ -13,18 +14,17 @@ use field::Mersenne31Field;
 use prover::merkle_trees::DefaultTreeConstructor;
 use prover::prover_stages::SetupPrecomputations;
 use prover::trace_holder::RowMajorTrace;
-use prover::{DEFAULT_TRACE_PADDING_MULTIPLE, common_constants};
+use prover::{common_constants, DEFAULT_TRACE_PADDING_MULTIPLE};
 use setups::{
     add_sub_lui_auipc_mop, bigint_with_control, blake2_with_compression, inits_and_teardowns,
     jump_branch_slt, keccak_special5, load_store_subword_only, load_store_word_only, mul_div,
     mul_div_unsigned, shift_binary_csr, unified_reduced_machine,
 };
 use std::alloc::Global;
-use std::collections::HashMap;
+use std::collections::BTreeMap;
 use std::iter::once;
 use std::sync::{Arc, OnceLock};
 use worker::Worker;
-use crate::prover::setup::SetupTreesAndCaps;
 
 type BF = Mersenne31Field;
 
@@ -212,13 +212,20 @@ fn get_setup_trace_from_row_major_trace<const N: usize>(
     Arc::new(setup_evaluations)
 }
 
-pub fn get_common_precomputations(worker: &Worker) -> HashMap<CircuitType, CircuitPrecomputations> {
+pub fn get_common_precomputations(
+    worker: &Worker,
+) -> BTreeMap<CircuitType, CircuitPrecomputations> {
     let dummy_binary_image: Vec<u32> = vec![0; common_constants::ROM_WORD_SIZE];
     DelegationCircuitType::get_all_delegation_types()
         .into_iter()
         .copied()
         .map(|ct| CircuitType::Delegation(ct))
         .chain(once(CircuitType::Unrolled(InitsAndTeardowns)))
-        .map(|ct| (ct, CircuitPrecomputations::new(ct, &dummy_binary_image, &[], worker)))
+        .map(|ct| {
+            (
+                ct,
+                CircuitPrecomputations::new(ct, &dummy_binary_image, &[], worker),
+            )
+        })
         .collect()
 }
