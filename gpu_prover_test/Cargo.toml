@@ -10,8 +10,8 @@ keywords.workspace = true
 categories.workspace = true
 
 [dependencies]
-execution_utils = { workspace = true, default-features = false, features = ["prover", "verifier_80"] }
-#execution_utils = { workspace = true, default-features = false, features = ["prover"] }
+#execution_utils = { workspace = true, default-features = false, features = ["prover", "verifier_80"] }
+execution_utils = { workspace = true, default-features = false, features = ["prover"] }
 gpu_prover = { workspace = true }
 risc_v_simulator = { workspace = true }
 

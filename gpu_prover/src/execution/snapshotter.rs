@@ -24,7 +24,7 @@ impl OnceSnapshotter {
         Self {
             period,
             non_determinism_reads: Vec::with_capacity(period),
-            memory_reads: Vec::with_capacity(period  * MEMORY_READS_PER_CYCLE),
+            memory_reads: Vec::with_capacity(period * MEMORY_READS_PER_CYCLE),
         }
     }
 }
