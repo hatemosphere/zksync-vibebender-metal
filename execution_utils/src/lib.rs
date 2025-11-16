@@ -173,79 +173,98 @@ pub fn compute_chain_encoding(data: Vec<[u32; 8]>) -> [u32; 8] {
 pub mod verifier_binaries {
     use super::*;
 
-    pub const BASE_LAYER_VERIFIER: &[u8] = include_bytes!("../../tools/verifier/base_layer.bin");
+    // TODO: fix binaries and verification keys
+    pub const BASE_LAYER_VERIFIER: &[u8] =
+        include_bytes!("../../tools/verifier/unrolled_base_layer.bin");
     pub const RECURSION_LAYER_VERIFIER: &[u8] =
-        include_bytes!("../../tools/verifier/recursion_layer.bin");
+        include_bytes!("../../tools/verifier/unrolled_recursion_layer.bin");
+        // include_bytes!("../../tools/verifier/recursion_layer.bin");
     pub const RECURSION_LOG_23_LAYER_VERIFIER: &[u8] =
-        include_bytes!("../../tools/verifier/recursion_log_23_layer.bin");
+        include_bytes!("../../tools/verifier/unrolled_recursion_layer.bin");
+        // include_bytes!("../../tools/verifier/recursion_log_23_layer.bin");
     pub const RECURSION_LAYER_NO_DELEGATION_VERIFIER: &[u8] =
-        include_bytes!("../../tools/verifier/recursion_layer_no_delegation.bin");
+        include_bytes!("../../tools/verifier/unrolled_recursion_layer.bin");
+        // include_bytes!("../../tools/verifier/recursion_layer_no_delegation.bin");
     pub const FINAL_RECURSION_LAYER_VERIFIER: &[u8] =
-        include_bytes!("../../tools/verifier/final_recursion_layer.bin");
+        include_bytes!("../../tools/verifier/unrolled_recursion_layer.bin");
+        // include_bytes!("../../tools/verifier/final_recursion_layer.bin");
 
     pub const BASE_LAYER_VERIFIER_WITH_OUTPUT: &[u8] =
-        include_bytes!("../../tools/verifier/base_layer_with_output.bin");
+        include_bytes!("../../tools/verifier/unrolled_recursion_layer.bin");
+        // include_bytes!("../../tools/verifier/base_layer_with_output.bin");
     pub const RECURSION_LAYER_VERIFIER_WITH_OUTPUT: &[u8] =
-        include_bytes!("../../tools/verifier/recursion_layer_with_output.bin");
+        include_bytes!("../../tools/verifier/unrolled_recursion_layer.bin");
+        // include_bytes!("../../tools/verifier/recursion_layer_with_output.bin");
     pub const RECURSION_LOG_23_LAYER_VERIFIER_WITH_OUTPUT: &[u8] =
-        include_bytes!("../../tools/verifier/recursion_log_23_layer_with_output.bin");
+        include_bytes!("../../tools/verifier/unrolled_recursion_layer.bin");
+        // include_bytes!("../../tools/verifier/recursion_log_23_layer_with_output.bin");
     pub const RECURSION_LAYER_NO_DELEGATION_VERIFIER_WITH_OUTPUT: &[u8] =
-        include_bytes!("../../tools/verifier/recursion_layer_no_delegation_with_output.bin");
+        include_bytes!("../../tools/verifier/unrolled_recursion_layer.bin");
+    // include_bytes!("../../tools/verifier/recursion_layer_no_delegation_with_output.bin");
     pub const FINAL_RECURSION_LAYER_VERIFIER_WITH_OUTPUT: &[u8] =
-        include_bytes!("../../tools/verifier/final_recursion_layer_with_output.bin");
+        include_bytes!("../../tools/verifier/unrolled_recursion_layer.bin");
+        // include_bytes!("../../tools/verifier/final_recursion_layer_with_output.bin");
 
     pub const UNIVERSAL_CIRCUIT_VERIFIER: &[u8] =
-        include_bytes!("../../tools/verifier/universal.bin");
+        include_bytes!("../../tools/verifier/unrolled_recursion_layer.bin");
+        // include_bytes!("../../tools/verifier/universal.bin");
 
     // Methods to fetch the verification keys for the binaries above.
     // They are usually refreshed with build_vk.sh
     pub fn base_layer_verifier_vk() -> VerificationKey {
-        serde_json::from_slice::<VerificationKey>(include_bytes!(
-            "../../tools/verifier/base_layer.reduced.vk.json"
-        ))
-        .unwrap()
+        // serde_json::from_slice::<VerificationKey>(include_bytes!(
+        //     "../../tools/verifier/base_layer.reduced.vk.json"
+        // ))
+        // .unwrap()
+        todo!()
     }
 
     pub fn recursion_layer_verifier_vk() -> VerificationKey {
-        serde_json::from_slice::<VerificationKey>(include_bytes!(
-            "../../tools/verifier/recursion_layer.reduced.vk.json"
-        ))
-        .unwrap()
+        // serde_json::from_slice::<VerificationKey>(include_bytes!(
+        //     "../../tools/verifier/recursion_layer.reduced.vk.json"
+        // ))
+        // .unwrap()
+        todo!()
     }
 
     pub fn recursion_log_23_layer_verifier_vk() -> VerificationKey {
-        serde_json::from_slice::<VerificationKey>(include_bytes!(
-            "../../tools/verifier/recursion_log_23_layer.reduced.vk.json"
-        ))
-        .unwrap()
+        // serde_json::from_slice::<VerificationKey>(include_bytes!(
+        //     "../../tools/verifier/recursion_log_23_layer.reduced.vk.json"
+        // ))
+        // .unwrap()
+        todo!()
     }
 
     pub fn recursion_layer_no_delegation_verifier_vk() -> VerificationKey {
-        serde_json::from_slice::<VerificationKey>(include_bytes!(
-            "../../tools/verifier/recursion_layer_no_delegation.final.vk.json"
-        ))
-        .unwrap()
+        // serde_json::from_slice::<VerificationKey>(include_bytes!(
+        //     "../../tools/verifier/recursion_layer_no_delegation.final.vk.json"
+        // ))
+        // .unwrap()
+        todo!()
     }
 
     pub fn final_recursion_layer_verifier_vk() -> VerificationKey {
-        serde_json::from_slice::<VerificationKey>(include_bytes!(
-            "../../tools/verifier/final_recursion_layer.final.vk.json"
-        ))
-        .unwrap()
+        // serde_json::from_slice::<VerificationKey>(include_bytes!(
+        //     "../../tools/verifier/final_recursion_layer.final.vk.json"
+        // ))
+        // .unwrap()
+        todo!()
     }
 
     pub fn universal_circuit_verifier_vk() -> VerificationKey {
-        serde_json::from_slice::<VerificationKey>(include_bytes!(
-            "../../tools/verifier/universal.reduced.vk.json"
-        ))
-        .unwrap()
+        // serde_json::from_slice::<VerificationKey>(include_bytes!(
+        //     "../../tools/verifier/universal.reduced.vk.json"
+        // ))
+        // .unwrap()
+        todo!()
     }
 
     pub fn universal_circuit_log_23_verifier_vk() -> VerificationKey {
-        serde_json::from_slice::<VerificationKey>(include_bytes!(
-            "../../tools/verifier/universal.reduced_log23.vk.json"
-        ))
-        .unwrap()
+        // serde_json::from_slice::<VerificationKey>(include_bytes!(
+        //     "../../tools/verifier/universal.reduced_log23.vk.json"
+        // ))
+        // .unwrap()
+        todo!()
     }
 
     pub const BASE_LAYER_DELEGATION_CIRCUITS_VERIFICATION_PARAMETERS: &[(

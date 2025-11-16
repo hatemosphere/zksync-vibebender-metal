@@ -36,7 +36,8 @@ members = [
     "execution_utils",
 
     "gpu_prover",
-
+    "gpu_prover_test",
+    
     "poseidon2",
     "reduced_keccak",
 
