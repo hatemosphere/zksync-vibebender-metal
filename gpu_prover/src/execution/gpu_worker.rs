@@ -1,4 +1,3 @@
-use super::messages::WorkerResult;
 use super::precomputations::CircuitPrecomputations;
 use crate::allocator::host::ConcurrentStaticHostAllocator;
 use crate::circuit_type::{CircuitType, UnrolledCircuitType};
@@ -21,7 +20,7 @@ use crossbeam_channel::{Receiver, Sender};
 use era_cudart::device::get_device_properties;
 use fft::GoodAllocator;
 use log::{debug, error, info, trace};
-use prover::definitions::{AuxArgumentsBoundaryValues, ExternalChallenges, OPTIMAL_FOLDING_PROPERTIES};
+use prover::definitions::{AuxArgumentsBoundaryValues, ExternalChallenges};
 use prover::merkle_trees::MerkleTreeCapVarLength;
 use prover::prover_stages::unrolled_prover::UnrolledModeProof;
 use std::ffi::CStr;
@@ -263,7 +262,7 @@ fn gpu_worker(
                         circuit,
                         log_lde_factor,
                         log_tree_cap_size,
-                        false,
+                        true,
                         setup_trees_and_caps,
                         &context,
                     )?;

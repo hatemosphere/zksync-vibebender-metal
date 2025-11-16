@@ -21,4 +21,3 @@ impl<T> From<&DelegationTraceDevice<T>> for DelegationTraceRaw<T> {
 }
 
 pub(crate) type DelegationTraceHost<T, A> = ChunkedTraceHolder<T, A>;
-

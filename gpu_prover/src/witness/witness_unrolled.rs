@@ -1,14 +1,15 @@
-use std::ptr::{null, null_mut};
 use super::BF;
 use crate::circuit_type::{
     UnrolledCircuitType, UnrolledMemoryCircuitType, UnrolledNonMemoryCircuitType,
 };
 use crate::device_structures::{DeviceMatrixImpl, DeviceMatrixMutImpl};
 use crate::utils::{get_grid_block_dims_for_threads_count, WARP_SIZE};
+use crate::witness::trace_delegation::DelegationTraceRaw;
 use crate::witness::trace_unrolled::{
     UnrolledMemoryTraceDevice, UnrolledMemoryTraceRaw, UnrolledNonMemoryTraceDevice,
     UnrolledNonMemoryTraceRaw, UnrolledUnifiedTraceDevice, UnrolledUnifiedTraceRaw,
 };
+use crate::witness::witness_delegation::GenerateWitnessDelegation;
 use era_cudart::cuda_kernel;
 use era_cudart::execution::{CudaLaunchConfig, KernelFunction};
 use era_cudart::memory::memory_get_info;
@@ -17,8 +18,7 @@ use era_cudart::stream::CudaStream;
 use riscv_transpiler::witness::delegation::bigint::BigintDelegationWitness;
 use riscv_transpiler::witness::delegation::blake2_round_function::Blake2sRoundFunctionDelegationWitness;
 use riscv_transpiler::witness::delegation::keccak_special5::KeccakSpecial5DelegationWitness;
-use crate::witness::trace_delegation::DelegationTraceRaw;
-use crate::witness::witness_delegation::GenerateWitnessDelegation;
+use std::ptr::{null, null_mut};
 
 cuda_kernel!(GenerateWitnessUnrolledMemoryKernel,
     generate_witness_unrolled_memory_kernel,
@@ -90,7 +90,9 @@ cuda_kernel!(GenerateWitnessUnrolledNonMemoryKernel,
     count: u32,
 );
 
-generate_witness_unrolled_non_memory_kernel!(ab_generate_witness_values_add_sub_lui_auipc_mop_kernel);
+generate_witness_unrolled_non_memory_kernel!(
+    ab_generate_witness_values_add_sub_lui_auipc_mop_kernel
+);
 generate_witness_unrolled_non_memory_kernel!(ab_generate_witness_values_jump_branch_slt_kernel);
 generate_witness_unrolled_non_memory_kernel!(ab_generate_witness_values_mul_div_kernel);
 generate_witness_unrolled_non_memory_kernel!(ab_generate_witness_values_mul_div_unsigned_kernel);
@@ -134,10 +136,16 @@ pub(crate) fn generate_witness_values_unrolled_non_memory(
         UnrolledNonMemoryCircuitType::AddSubLuiAuipcMop => {
             ab_generate_witness_values_add_sub_lui_auipc_mop_kernel
         }
-        UnrolledNonMemoryCircuitType::JumpBranchSlt => ab_generate_witness_values_jump_branch_slt_kernel,
+        UnrolledNonMemoryCircuitType::JumpBranchSlt => {
+            ab_generate_witness_values_jump_branch_slt_kernel
+        }
         UnrolledNonMemoryCircuitType::MulDiv => ab_generate_witness_values_mul_div_kernel,
-        UnrolledNonMemoryCircuitType::MulDivUnsigned => ab_generate_witness_values_mul_div_unsigned_kernel,
-        UnrolledNonMemoryCircuitType::ShiftBinaryCsr => ab_generate_witness_values_shift_binary_csr_kernel,
+        UnrolledNonMemoryCircuitType::MulDivUnsigned => {
+            ab_generate_witness_values_mul_div_unsigned_kernel
+        }
+        UnrolledNonMemoryCircuitType::ShiftBinaryCsr => {
+            ab_generate_witness_values_shift_binary_csr_kernel
+        }
     };
     GenerateWitnessUnrolledNonMemoryKernelFunction(kernel).launch(&config, &args)
 }
@@ -190,7 +198,9 @@ pub(crate) fn generate_witness_values_unrolled_unified(
     GenerateWitnessUnrolledUnifiedKernelFunction::default().launch(&config, &args)
 }
 
-fn touch_generate_witness_unrolled_non_memory_kernel(kernel: GenerateWitnessUnrolledNonMemoryKernelSignature) -> CudaResult<()> {
+fn touch_generate_witness_unrolled_non_memory_kernel(
+    kernel: GenerateWitnessUnrolledNonMemoryKernelSignature,
+) -> CudaResult<()> {
     use era_cudart::result::CudaResultWrap;
     use era_cudart_sys::*;
     let instant = std::time::Instant::now();
@@ -205,7 +215,12 @@ fn touch_generate_witness_unrolled_non_memory_kernel(kernel: GenerateWitnessUnro
         let (free, _) = memory_get_info()?;
         dbg!(free);
         dbg!(instant.elapsed());
-        cudaFuncSetAttribute(func_ptr, CudaFuncAttribute::PreferredSharedMemoryCarveout, 0).wrap()?;
+        cudaFuncSetAttribute(
+            func_ptr,
+            CudaFuncAttribute::PreferredSharedMemoryCarveout,
+            0,
+        )
+        .wrap()?;
         dbg!(instant.elapsed());
         let (free, _) = memory_get_info()?;
         dbg!(free);
@@ -235,10 +250,18 @@ fn touch_generate_witness_unrolled_non_memory_kernel(kernel: GenerateWitnessUnro
 }
 
 pub(crate) fn touch_kernels() -> CudaResult<()> {
-    touch_generate_witness_unrolled_non_memory_kernel(ab_generate_witness_values_add_sub_lui_auipc_mop_kernel)?;
-    touch_generate_witness_unrolled_non_memory_kernel(ab_generate_witness_values_jump_branch_slt_kernel)?;
+    touch_generate_witness_unrolled_non_memory_kernel(
+        ab_generate_witness_values_add_sub_lui_auipc_mop_kernel,
+    )?;
+    touch_generate_witness_unrolled_non_memory_kernel(
+        ab_generate_witness_values_jump_branch_slt_kernel,
+    )?;
     touch_generate_witness_unrolled_non_memory_kernel(ab_generate_witness_values_mul_div_kernel)?;
-    touch_generate_witness_unrolled_non_memory_kernel(ab_generate_witness_values_mul_div_unsigned_kernel)?;
-    touch_generate_witness_unrolled_non_memory_kernel(ab_generate_witness_values_shift_binary_csr_kernel)?;
+    touch_generate_witness_unrolled_non_memory_kernel(
+        ab_generate_witness_values_mul_div_unsigned_kernel,
+    )?;
+    touch_generate_witness_unrolled_non_memory_kernel(
+        ab_generate_witness_values_shift_binary_csr_kernel,
+    )?;
     Ok(())
 }

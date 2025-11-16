@@ -54,11 +54,10 @@ pub fn get_circuit_for_rom_bound<const ROM_ADDRESS_SPACE_SECOND_WORD_BITS: usize
         &|cs| {
             reduced_machine_table_addition_fn(cs);
 
-            let extra_tables =
-                create_reduced_machine_special_tables::<_, ROM_ADDRESS_SPACE_SECOND_WORD_BITS>(
-                    bytecode,
-                    ALLOWED_DELEGATION_CSRS,
-                );
+            let extra_tables = create_reduced_machine_special_tables::<
+                _,
+                ROM_ADDRESS_SPACE_SECOND_WORD_BITS,
+            >(bytecode, ALLOWED_DELEGATION_CSRS);
             for (table_type, table) in extra_tables {
                 cs.add_table_with_content(table_type, table);
             }
@@ -94,11 +93,10 @@ pub fn dump_ssa_form_for_rom_bound<const ROM_ADDRESS_SPACE_SECOND_WORD_BITS: usi
         &|cs| {
             reduced_machine_table_addition_fn(cs);
 
-            let extra_tables =
-                create_reduced_machine_special_tables::<_, ROM_ADDRESS_SPACE_SECOND_WORD_BITS>(
-                    bytecode,
-                    ALLOWED_DELEGATION_CSRS,
-                );
+            let extra_tables = create_reduced_machine_special_tables::<
+                _,
+                ROM_ADDRESS_SPACE_SECOND_WORD_BITS,
+            >(bytecode, ALLOWED_DELEGATION_CSRS);
             for (table_type, table) in extra_tables {
                 cs.add_table_with_content(table_type, table);
             }

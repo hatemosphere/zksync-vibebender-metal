@@ -1,5 +1,5 @@
 // use std::{alloc::Global, collections::HashMap, sync::Arc};
-// 
+//
 // use cs::utils::split_timestamp;
 // pub use gpu_prover::allocator::host::ConcurrentStaticHostAllocator;
 // use gpu_prover::circuit_type::{CircuitType, DelegationCircuitType};
@@ -26,7 +26,7 @@
 //     merkle_trees::{DefaultTreeConstructor, MerkleTreeConstructor},
 //     risc_v_simulator::cycle::{IMStandardIsaConfig, IWithoutByteAccessIsaConfigWithDelegation},
 // };
-// 
+//
 // use prover::{
 //     definitions::OPTIMAL_FOLDING_PROPERTIES,
 //     prover_stages::Proof,
@@ -37,30 +37,30 @@
 //     worker::Worker,
 //     VectorMemoryImplWithRom,
 // };
-// 
+//
 // use setups::{DelegationCircuitPrecomputations, MainCircuitPrecomputations};
 // use trace_and_split::{
 //     fs_transform_for_memory_and_delegation_arguments, run_and_split_for_gpu, FinalRegisterValue,
 // };
-// 
+//
 // use crate::{NUM_QUERIES, POW_BITS};
-// 
+//
 // pub fn initialize_host_allocator_if_needed() {
 //     if !ProverContext::is_global_host_allocator_initialized() {
 //         // allocate 8 x 1 GB ((1 << 8) << 22) of pinned host memory with 4 MB (1 << 22) chunking
 //         ProverContext::initialize_global_host_allocator(8, 1 << 8, 22).unwrap();
 //     }
 // }
-// 
+//
 // pub fn create_default_prover_context<'a>() -> ProverContext {
 //     initialize_host_allocator_if_needed();
 //     let mut prover_context_config = ProverContextConfig::default();
 //     prover_context_config.allocation_block_log_size = 22;
-// 
+//
 //     let prover_context = ProverContext::new(&prover_context_config).unwrap();
 //     prover_context
 // }
-// 
+//
 // pub fn gpu_prove_image_execution_for_machine_with_gpu_tracers<
 //     ND: NonDeterminismCSRSource<VectorMemoryImplWithRom>,
 //     C: MachineConfig,
@@ -87,7 +87,7 @@
 //         .lde_factor;
 //     assert_eq!(cycles_per_circuit + 1, trace_len);
 //     let max_cycles_to_run = num_instances_upper_bound * cycles_per_circuit;
-// 
+//
 //     // Guess circuit type based on the machine type.
 //     let circuit_type = match std::any::TypeId::of::<C>() {
 //         id if id == std::any::TypeId::of::<IMStandardIsaConfig>() => {
@@ -104,7 +104,7 @@
 //             panic!("Unsupported machine type");
 //         }
 //     };
-// 
+//
 //     let (
 //         main_circuits_witness,
 //         inits_and_teardowns,
@@ -117,9 +117,9 @@
 //         non_determinism,
 //         worker,
 //     );
-// 
+//
 //     let (num_paddings, inits_and_teardowns) = inits_and_teardowns;
-// 
+//
 //     let mut memory_trees = vec![];
 //     // commit memory trees
 //     for (circuit_sequence, witness_chunk) in main_circuits_witness.iter().enumerate() {
@@ -138,7 +138,7 @@
 //                 inits_and_teardowns,
 //                 trace,
 //             };
-// 
+//
 //             let mut transfer = TracingDataTransfer::new(circuit_type, data, prover_context)?;
 //             transfer.schedule_transfer(prover_context)?;
 //             let job = commit_memory(
@@ -152,16 +152,16 @@
 //             )?;
 //             job.finish()?
 //         };
-// 
+//
 //         memory_trees.push(gpu_caps);
 //     }
-// 
+//
 //     // same for delegation circuits
 //     let mut delegation_memory_trees = vec![];
-// 
+//
 //     let mut delegation_types: Vec<_> = delegation_circuits_witness.keys().copied().collect();
 //     delegation_types.sort();
-// 
+//
 //     for delegation_type in delegation_types.iter().cloned() {
 //         let els = &delegation_circuits_witness[&delegation_type];
 //         let delegation_type_id = delegation_type as u32;
@@ -198,12 +198,12 @@
 //             };
 //             per_tree_set.push(gpu_caps);
 //         }
-// 
+//
 //         delegation_memory_trees.push((delegation_type_id, per_tree_set));
 //     }
-// 
+//
 //     let setup_caps = DefaultTreeConstructor::dump_caps(&risc_v_circuit_precomputations.setup.trees);
-// 
+//
 //     // commit memory challenges
 //     let memory_challenges_seed = fs_transform_for_memory_and_delegation_arguments(
 //         &setup_caps,
@@ -211,10 +211,10 @@
 //         &memory_trees,
 //         &delegation_memory_trees,
 //     );
-// 
+//
 //     let external_challenges =
 //         ExternalChallenges::draw_from_transcript_seed(memory_challenges_seed, true);
-// 
+//
 //     let input = final_register_values
 //         .iter()
 //         .map(|el| (el.value, split_timestamp(el.last_access_timestamp)))
@@ -229,18 +229,18 @@
 //         external_challenges.memory_argument.memory_argument_gamma,
 //     );
 //     let mut delegation_argument_sum = Mersenne31Quartic::ZERO;
-// 
+//
 //     let mut aux_memory_trees = vec![];
-// 
+//
 //     println!(
 //         "Producing proofs for main RISC-V circuit, {} proofs in total",
 //         main_circuits_witness.len()
 //     );
-// 
+//
 //     let total_proving_start = std::time::Instant::now();
-// 
+//
 //     let main_circuits_witness_len = main_circuits_witness.len();
-// 
+//
 //     let mut gpu_setup_main = {
 //         let setup_row_major = &risc_v_circuit_precomputations.setup.ldes[0].trace;
 //         let mut setup_evaluations = Vec::with_capacity_in(
@@ -279,7 +279,7 @@
 //         setup.schedule_transfer(setup_evaluations, prover_context)?;
 //         setup
 //     };
-// 
+//
 //     // now prove one by one
 //     let main_compiled_circuit = Arc::new(risc_v_circuit_precomputations.compiled_circuit.clone());
 //     let mut main_proofs = vec![];
@@ -327,17 +327,17 @@
 //             )?;
 //             job.finish()?.0.into_regular().unwrap()
 //         };
-// 
+//
 //         memory_grand_product.mul_assign(&gpu_proof.memory_grand_product_accumulator);
 //         delegation_argument_sum.add_assign(&gpu_proof.delegation_argument_accumulator.unwrap());
-// 
+//
 //         aux_memory_trees.push(gpu_proof.memory_tree_caps.clone());
-// 
+//
 //         main_proofs.push(gpu_proof);
 //     }
-// 
+//
 //     drop(gpu_setup_main);
-// 
+//
 //     if main_circuits_witness_len > 0 {
 //         println!(
 //             "=== Total proving time: {:?} for {} circuits - avg: {:?}",
@@ -346,7 +346,7 @@
 //             total_proving_start.elapsed() / main_circuits_witness_len.try_into().unwrap()
 //         )
 //     }
-// 
+//
 //     // all the same for delegation circuit
 //     let mut aux_delegation_memory_trees = vec![];
 //     let mut delegation_proofs = vec![];
@@ -361,7 +361,7 @@
 //             delegation_type_id,
 //             els.len()
 //         );
-// 
+//
 //         let idx = delegation_circuits_precomputations
 //             .iter()
 //             .position(|el| el.0 == delegation_type_id)
@@ -408,13 +408,13 @@
 //             setup.schedule_transfer(setup_evaluations, prover_context)?;
 //             setup
 //         };
-// 
+//
 //         let mut per_tree_set = vec![];
-// 
+//
 //         let mut per_delegation_type_proofs = vec![];
 //         for (_circuit_idx, el) in els.iter().enumerate() {
 //             delegation_proofs_count += 1;
-// 
+//
 //             // and prove
 //             let gpu_proof = {
 //                 let trace = el.clone();
@@ -444,21 +444,21 @@
 //                 )?;
 //                 job.finish()?.0.into_regular().unwrap()
 //             };
-// 
+//
 //             memory_grand_product.mul_assign(&gpu_proof.memory_grand_product_accumulator);
 //             delegation_argument_sum.sub_assign(&gpu_proof.delegation_argument_accumulator.unwrap());
-// 
+//
 //             per_tree_set.push(gpu_proof.memory_tree_caps.clone());
-// 
+//
 //             per_delegation_type_proofs.push(gpu_proof);
 //         }
-// 
+//
 //         aux_delegation_memory_trees.push((delegation_type_id, per_tree_set));
 //         delegation_proofs.push((delegation_type_id, per_delegation_type_proofs));
-// 
+//
 //         drop(gpu_setup_delegation);
 //     }
-// 
+//
 //     if delegation_proofs_count > 0 {
 //         println!(
 //             "=== Total delegation proving time: {:?} for {} circuits - avg: {:?}",
@@ -467,12 +467,12 @@
 //             delegation_proving_start.elapsed() / delegation_proofs_count
 //         )
 //     }
-// 
+//
 //     assert_eq!(memory_grand_product, Mersenne31Quartic::ONE);
 //     assert_eq!(delegation_argument_sum, Mersenne31Quartic::ZERO);
-// 
+//
 //     let setup_caps = DefaultTreeConstructor::dump_caps(&risc_v_circuit_precomputations.setup.trees);
-// 
+//
 //     // compare challenge
 //     let aux_memory_challenges_seed = fs_transform_for_memory_and_delegation_arguments(
 //         &setup_caps,
@@ -480,12 +480,12 @@
 //         &aux_memory_trees,
 //         &aux_delegation_memory_trees,
 //     );
-// 
+//
 //     assert_eq!(aux_memory_challenges_seed, memory_challenges_seed);
-// 
+//
 //     Ok((main_proofs, delegation_proofs, final_register_values))
 // }
-// 
+//
 // pub fn trace_execution_for_gpu<
 //     ND: NonDeterminismCSRSource<VectorMemoryImplWithRom>,
 //     C: MachineConfig,
@@ -507,9 +507,9 @@
 // ) {
 //     let cycles_per_circuit = domain_size - 1;
 //     let max_cycles_to_run = num_instances_upper_bound * cycles_per_circuit;
-// 
+//
 //     let delegation_factories = setups::delegation_factories_for_machine::<C, A>();
-// 
+//
 //     let (
 //         final_pc,
 //         main_circuits_witness,
@@ -524,7 +524,7 @@
 //         delegation_factories,
 //         worker,
 //     );
-// 
+//
 //     println!(
 //         "Program finished execution with final pc = 0x{:08x} and final register state\n{}",
 //         final_pc,
@@ -535,21 +535,21 @@
 //             .collect::<Vec<_>>()
 //             .join(", ")
 //     );
-// 
+//
 //     // we just need to chunk inits/teardowns
-// 
+//
 //     let init_and_teardown_chunks = chunk_lazy_init_and_teardown(
 //         main_circuits_witness.len(),
 //         cycles_per_circuit,
 //         &init_and_teardown_chunks,
 //         worker,
 //     );
-// 
+//
 //     let main_circuits_witness = main_circuits_witness
 //         .into_iter()
 //         .map(|c| c.into())
 //         .collect_vec();
-// 
+//
 //     let init_and_teardown_chunks = (
 //         init_and_teardown_chunks.0,
 //         init_and_teardown_chunks
@@ -558,12 +558,12 @@
 //             .map(|c| c.into())
 //             .collect_vec(),
 //     );
-// 
+//
 //     let delegation_circuits_witness = delegation_circuits_witness
 //         .into_iter()
 //         .map(|(k, v)| (k.into(), v.into_iter().map(|c| c.into()).collect_vec()))
 //         .collect();
-// 
+//
 //     (
 //         main_circuits_witness,
 //         init_and_teardown_chunks,
