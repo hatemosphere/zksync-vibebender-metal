@@ -17,12 +17,14 @@ pub(crate) struct OnceSnapshotter {
     pub memory_reads: Vec<(u32, (u32, u32))>,
 }
 
+const MEMORY_READS_PER_CYCLE: usize = 4;
+
 impl OnceSnapshotter {
     pub fn new_for_period(period: usize) -> Self {
         Self {
             period,
             non_determinism_reads: Vec::with_capacity(period),
-            memory_reads: Vec::with_capacity(period << 1),
+            memory_reads: Vec::with_capacity(period  * MEMORY_READS_PER_CYCLE),
         }
     }
 }
@@ -31,7 +33,7 @@ impl<C: Counters> riscv_transpiler::vm::Snapshotter<C> for OnceSnapshotter {
     #[inline(always)]
     fn take_snapshot(&mut self, _state: &State<C>) {
         assert!(self.non_determinism_reads.len() <= self.period);
-        assert!(self.memory_reads.len() <= self.period << 1);
+        assert!(self.memory_reads.len() <= self.period * MEMORY_READS_PER_CYCLE);
     }
 
     #[inline(always)]

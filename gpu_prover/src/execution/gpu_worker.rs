@@ -410,7 +410,7 @@ fn gpu_worker(
                         num_queries,
                         pow_bits,
                         None,
-                        false,
+                        true,
                         trees_cache_mode,
                         &context,
                     )?;
