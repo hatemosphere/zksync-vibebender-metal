@@ -167,7 +167,7 @@ impl<K: Clone + Debug + Eq + Hash> ExecutionProver<K> {
         let gpu_wait_group = WaitGroup::new();
         let gpu_manager =
             GpuManager::new(gpu_wait_group.clone(), configuration.prover_context_config);
-        let worker = Worker::new();
+        let worker = Worker::new_with_num_threads(16);
         info!(
             "PROVER thread pool with {} threads created",
             worker.num_cores
@@ -892,7 +892,7 @@ impl<K: Clone + Debug + Eq + Hash> ExecutionProver<K> {
 
 #[cfg(test)]
 mod tests {
-    use crate::execution::prover::{ExecutionKind, ExecutionProver};
+    use crate::execution::prover::{ExecutionKind, ExecutionProver, ExecutionProverConfiguration};
     use crate::machine_type::MachineType;
     use crate::tests::{init_logger, read_binary};
     use prover::risc_v_simulator::abstractions::non_determinism::QuasiUARTSource;
@@ -901,7 +901,9 @@ mod tests {
     #[test]
     fn test_execution_prover() {
         init_logger();
-        let mut prover = ExecutionProver::<usize>::new();
+        let mut configuration = ExecutionProverConfiguration::default();
+        configuration.replay_worker_threads_count = 8;
+        let mut prover = ExecutionProver::<usize>::with_configuration(configuration);
         let binary_image = read_binary(&Path::new("../examples/hashed_fibonacci/app.bin"));
         let text_section = read_binary(&Path::new("../examples/hashed_fibonacci/app.text"));
         prover.add_binary(
@@ -911,7 +913,7 @@ mod tests {
             binary_image,
             text_section,
         );
-        let non_determinism_source = QuasiUARTSource::new_with_reads(vec![1 << 20, 0]);
+        let non_determinism_source = QuasiUARTSource::new_with_reads(vec![3 << 25, 0]);
         let result = prover.commit_memory_and_prove(0, &0, 1 << 36, non_determinism_source);
         drop(prover);
     }

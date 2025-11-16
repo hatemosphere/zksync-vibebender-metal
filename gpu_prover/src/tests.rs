@@ -1,4 +1,3 @@
-use crate::allocator::host::ConcurrentStaticHostAllocator;
 use crate::circuit_type::{CircuitType, DelegationCircuitType, UnrolledMemoryCircuitType};
 use crate::circuit_type::{UnrolledCircuitType, UnrolledNonMemoryCircuitType};
 use crate::prover::context::{ProverContext, ProverContextConfig};
@@ -3328,7 +3327,6 @@ pub fn prove_unrolled_execution_with_replayer<
 
     init_logger();
     let instant = std::time::Instant::now();
-    ProverContext::initialize_global_host_allocator(4, 1 << 8, 22)?;
     let mut prover_context_config = ProverContextConfig::default();
     prover_context_config.allocator_block_log_size = 22;
     let prover_context = ProverContext::new(&prover_context_config)?;
@@ -3988,10 +3986,7 @@ pub fn prove_unrolled_execution_with_replayer<
                 let log_tree_cap_size = OPTIMAL_FOLDING_PROPERTIES[log_domain_size as usize]
                     .total_caps_size_log2 as u32;
                 let setup_row_major = &precomputation.setup.ldes[0].trace;
-                let mut setup_evaluations = Vec::with_capacity_in(
-                    setup_row_major.as_slice().len(),
-                    ConcurrentStaticHostAllocator::default(),
-                );
+                let mut setup_evaluations = Vec::with_capacity(setup_row_major.as_slice().len());
                 unsafe { setup_evaluations.set_len(setup_row_major.as_slice().len()) };
                 transpose::transpose(
                     setup_row_major.as_slice(),
@@ -4143,10 +4138,7 @@ pub fn prove_unrolled_execution_with_replayer<
                 let log_tree_cap_size = OPTIMAL_FOLDING_PROPERTIES[log_domain_size as usize]
                     .total_caps_size_log2 as u32;
                 let setup_row_major = &precomputation.setup.ldes[0].trace;
-                let mut setup_evaluations = Vec::with_capacity_in(
-                    setup_row_major.as_slice().len(),
-                    ConcurrentStaticHostAllocator::default(),
-                );
+                let mut setup_evaluations = Vec::with_capacity(setup_row_major.as_slice().len());
                 unsafe { setup_evaluations.set_len(setup_row_major.as_slice().len()) };
                 transpose::transpose(
                     setup_row_major.as_slice(),
@@ -4268,10 +4260,7 @@ pub fn prove_unrolled_execution_with_replayer<
             let log_tree_cap_size =
                 OPTIMAL_FOLDING_PROPERTIES[log_domain_size as usize].total_caps_size_log2 as u32;
             let setup_row_major = &inits_and_teardowns_precomputation.setup.ldes[0].trace;
-            let mut setup_evaluations = Vec::with_capacity_in(
-                setup_row_major.as_slice().len(),
-                ConcurrentStaticHostAllocator::default(),
-            );
+            let mut setup_evaluations = Vec::with_capacity(setup_row_major.as_slice().len());
             unsafe { setup_evaluations.set_len(setup_row_major.as_slice().len()) };
             transpose::transpose(
                 setup_row_major.as_slice(),
@@ -4549,10 +4538,7 @@ where
             let log_tree_cap_size =
                 OPTIMAL_FOLDING_PROPERTIES[log_domain_size as usize].total_caps_size_log2 as u32;
             let setup_row_major = &prec.setup.ldes[0].trace;
-            let mut setup_evaluations = Vec::with_capacity_in(
-                setup_row_major.as_slice().len(),
-                ConcurrentStaticHostAllocator::default(),
-            );
+            let mut setup_evaluations = Vec::with_capacity(setup_row_major.as_slice().len());
             unsafe { setup_evaluations.set_len(setup_row_major.as_slice().len()) };
             transpose::transpose(
                 setup_row_major.as_slice(),
