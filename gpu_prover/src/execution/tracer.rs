@@ -1,4 +1,4 @@
-use crate::execution::snapshotter::{DelegationsAndFamiliesDataTraceRanges, PtrRange};
+use crate::execution::snapshotter::{PtrRange, SplitDataTraceRanges, UnifiedDataTraceRanges};
 use cs::definitions::{
     ADD_SUB_LUI_AUIPC_MOP_CIRCUIT_FAMILY_IDX, BIGINT_OPS_WITH_CONTROL_CSR_REGISTER,
     BLAKE2S_DELEGATION_CSR_REGISTER, JUMP_BRANCH_SLT_CIRCUIT_FAMILY_IDX,
@@ -8,6 +8,7 @@ use cs::definitions::{
 };
 use prover::risc_v_simulator::machine_mode_only_unrolled::{
     MemoryOpcodeTracingDataWithTimestamp, NonMemoryOpcodeTracingDataWithTimestamp,
+    UnifiedOpcodeTracingDataWithTimestamp,
 };
 use riscv_transpiler::witness::delegation::bigint::BigintDelegationWitness;
 use riscv_transpiler::witness::delegation::blake2_round_function::Blake2sRoundFunctionDelegationWitness;
@@ -58,7 +59,7 @@ pub(crate) struct SplitTracer {
 }
 
 impl SplitTracer {
-    pub fn new(trace_ranges: DelegationsAndFamiliesDataTraceRanges) -> Self {
+    pub fn new(trace_ranges: SplitDataTraceRanges) -> Self {
         Self {
             blake_calls: TracerRanges::new(trace_ranges.blake_calls),
             bigint_calls: TracerRanges::new(trace_ranges.bigint_calls),
@@ -107,6 +108,77 @@ impl WitnessTracer for SplitTracer {
             } else {
                 core::hint::unreachable_unchecked()
             };
+        }
+    }
+
+    #[inline(always)]
+    fn write_delegation<
+        const DELEGATION_TYPE: u16,
+        const REG_ACCESSES: usize,
+        const INDIRECT_READS: usize,
+        const INDIRECT_WRITES: usize,
+        const VARIABLE_OFFSETS: usize,
+    >(
+        &mut self,
+        data: riscv_transpiler::witness::DelegationWitness<
+            REG_ACCESSES,
+            INDIRECT_READS,
+            INDIRECT_WRITES,
+            VARIABLE_OFFSETS,
+        >,
+    ) {
+        unsafe {
+            if const { DELEGATION_TYPE == BLAKE2S_DELEGATION_CSR_REGISTER as u16 } {
+                self.blake_calls.write_type_unchecked(data)
+            } else if const { DELEGATION_TYPE == BIGINT_OPS_WITH_CONTROL_CSR_REGISTER as u16 } {
+                self.bigint_calls.write_type_unchecked(data)
+            } else if const { DELEGATION_TYPE == KECCAK_SPECIAL5_CSR_REGISTER as u16 } {
+                self.keccak_calls.write_type_unchecked(data)
+            } else {
+                core::hint::unreachable_unchecked()
+            };
+        }
+    }
+}
+
+pub(crate) struct UnifiedTracer {
+    blake_calls: TracerRanges<Blake2sRoundFunctionDelegationWitness>,
+    bigint_calls: TracerRanges<BigintDelegationWitness>,
+    keccak_calls: TracerRanges<KeccakSpecial5DelegationWitness>,
+    cycles: TracerRanges<UnifiedOpcodeTracingDataWithTimestamp>,
+}
+
+impl UnifiedTracer {
+    pub fn new(trace_ranges: UnifiedDataTraceRanges) -> Self {
+        Self {
+            blake_calls: TracerRanges::new(trace_ranges.blake_calls),
+            bigint_calls: TracerRanges::new(trace_ranges.bigint_calls),
+            keccak_calls: TracerRanges::new(trace_ranges.keccak_calls),
+            cycles: TracerRanges::new(trace_ranges.cycles),
+        }
+    }
+}
+
+impl WitnessTracer for UnifiedTracer {
+    #[inline(always)]
+    fn write_non_memory_family_data<const FAMILY: u8>(
+        &mut self,
+        data: NonMemoryOpcodeTracingDataWithTimestamp,
+    ) {
+        unsafe {
+            self.cycles
+                .write(UnifiedOpcodeTracingDataWithTimestamp::NonMem(data))
+        }
+    }
+
+    #[inline(always)]
+    fn write_memory_family_data<const FAMILY: u8>(
+        &mut self,
+        data: MemoryOpcodeTracingDataWithTimestamp,
+    ) {
+        unsafe {
+            self.cycles
+                .write(UnifiedOpcodeTracingDataWithTimestamp::Mem(data))
         }
     }
 

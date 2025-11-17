@@ -1,5 +1,5 @@
 use super::precomputations::CircuitPrecomputations;
-use crate::allocator::host::ConcurrentStaticHostAllocator;
+use super::A;
 use crate::circuit_type::{CircuitType, UnrolledCircuitType};
 use crate::cudart::device::set_device;
 use crate::cudart::result::CudaResult;
@@ -28,8 +28,6 @@ use std::mem;
 use std::ops::Deref;
 use std::process::exit;
 use verifier_common::num_queries_for_security_params;
-
-type A = ConcurrentStaticHostAllocator;
 
 pub struct MemoryCommitmentRequest<A: GoodAllocator> {
     pub batch_id: u64,
@@ -364,21 +362,14 @@ fn gpu_worker(
                             let inits_and_teardowns = &inits_and_teardowns.data_host;
                             get_aux_arguments_boundary_values(compiled_circuit, inits_and_teardowns)
                         } else {
-                            let sets_count = if circuit_type
-                                == CircuitType::Unrolled(UnrolledCircuitType::InitsAndTeardowns)
-                            {
-                                let sets_count = compiled_circuit
-                                    .memory_layout
-                                    .shuffle_ram_inits_and_teardowns
-                                    .len();
-                                assert_eq!(
-                                    sets_count,
-                                    compiled_circuit.lazy_init_address_aux_vars.len()
-                                );
-                                sets_count
-                            } else {
-                                0
-                            };
+                            let sets_count = compiled_circuit
+                                .memory_layout
+                                .shuffle_ram_inits_and_teardowns
+                                .len();
+                            assert_eq!(
+                                sets_count,
+                                compiled_circuit.lazy_init_address_aux_vars.len()
+                            );
                             vec![AuxArgumentsBoundaryValues::default(); sets_count]
                         };
                     let mut setup = setup.unwrap();

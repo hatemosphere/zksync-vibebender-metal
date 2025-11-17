@@ -1,3 +1,5 @@
+use crate::allocator::host::ConcurrentStaticHostAllocator;
+
 mod cpu_worker;
 mod gpu_manager;
 mod gpu_worker;
@@ -7,3 +9,6 @@ pub mod prover;
 mod ram;
 mod snapshotter;
 mod tracer;
+mod tracing_data_producers;
+
+type A = ConcurrentStaticHostAllocator;

@@ -1,6 +1,6 @@
 use super::gpu_worker::{get_gpu_worker_func, GpuWorkRequest, GpuWorkResult};
 use super::messages::WorkerResult;
-use crate::allocator::host::ConcurrentStaticHostAllocator;
+use super::A;
 use crate::cudart::device::get_device_count;
 use crate::cudart::result::CudaResult;
 use crate::prover::context::ProverContextConfig;
@@ -13,8 +13,6 @@ use log::{error, info, trace};
 use std::collections::{HashMap, HashSet, VecDeque};
 use std::process::exit;
 use std::thread;
-
-type A = ConcurrentStaticHostAllocator;
 
 pub struct GpuWorkBatch {
     pub batch_id: u64,

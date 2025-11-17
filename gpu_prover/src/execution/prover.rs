@@ -1,12 +1,15 @@
 use super::gpu_manager::{GpuManager, GpuWorkBatch};
 use super::precomputations::{get_common_precomputations, CircuitPrecomputations};
-use crate::allocator::host::ConcurrentStaticHostAllocator;
+use super::A;
 use crate::circuit_type::{
     CircuitType, UnrolledCircuitType, UnrolledMemoryCircuitType, UnrolledNonMemoryCircuitType,
 };
 use crate::cudart::device::get_device_count;
 use crate::cudart::memory::{CudaHostAllocFlags, HostAllocation};
-use crate::execution::cpu_worker::{run_split_replayer, run_split_simulator, NonDeterminism};
+use crate::execution::cpu_worker::{
+    run_split_replayer, run_split_simulator, run_unified_replayer, run_unified_simulator,
+    NonDeterminism,
+};
 use crate::execution::gpu_worker::{
     GpuWorkRequest, GpuWorkResult, MemoryCommitmentRequest, MemoryCommitmentResult, ProofRequest,
     ProofResult,
@@ -40,8 +43,6 @@ use trace_and_split::{
     fs_transform_for_memory_and_delegation_arguments_for_unrolled_circuits, FinalRegisterValue,
 };
 use worker::Worker;
-
-type A = ConcurrentStaticHostAllocator;
 
 #[derive(Clone, Copy, Debug, Eq, Hash, PartialEq)]
 pub enum ExecutionKind {
@@ -187,8 +188,7 @@ impl ExecutionProver {
         (0..host_allocators_count).into_par_iter().for_each(|_| {
             let allocation =
                 HostAllocation::alloc(host_allocation_size, CudaHostAllocFlags::DEFAULT).unwrap();
-            let allocator =
-                ConcurrentStaticHostAllocator::new([allocation], host_allocation_log_chunk_size);
+            let allocator = A::new([allocation], host_allocation_log_chunk_size);
             free_allocators_sender_ref.send(allocator).unwrap();
         });
         gpu_wait_group.wait();
@@ -281,7 +281,8 @@ impl ExecutionProver {
         let (work_results_sender, work_results_receiver) = unbounded();
         let (gpu_work_requests_sender, gpu_work_requests_receiver) = unbounded();
         let mut gpu_work_requests_sender = Some(gpu_work_requests_sender);
-        let (snapshot_sender, snapshot_receiver) = bounded(replayers_count);
+        let (split_snapshot_sender, split_snapshot_receiver) = bounded(replayers_count);
+        let (unified_snapshot_sender, unified_snapshot_receiver) = bounded(replayers_count);
         let gpu_work_batch = GpuWorkBatch {
             batch_id,
             receiver: gpu_work_requests_receiver,
@@ -305,64 +306,116 @@ impl ExecutionProver {
                     instruction_tape,
                     non_determinism_source,
                     cycles_limit,
-                    snapshot_sender,
+                    split_snapshot_sender,
                     work_results_sender,
                     free_allocators_receiver,
                 ),
-                ExecutionKind::Unified => todo!(),
+                ExecutionKind::Unified => run_unified_simulator(
+                    batch_id,
+                    binary_image,
+                    instruction_tape,
+                    non_determinism_source,
+                    cycles_limit,
+                    unified_snapshot_sender,
+                    work_results_sender,
+                    free_allocators_receiver,
+                ),
             });
         }
         trace!("BATCH[{batch_id}] PROVER spawning REPLAY workers");
         for worker_id in 0..replayers_count {
             let instruction_tape = holder.instruction_tape.clone();
-            let snapshot_receiver = snapshot_receiver.clone();
+            let split_snapshot_receiver = split_snapshot_receiver.clone();
+            let unified_snapshot_receiver = unified_snapshot_receiver.clone();
             let work_results_sender = work_results_sender.clone();
             self.worker.pool.spawn(move || match execution_kind {
                 ExecutionKind::Unrolled => run_split_replayer(
                     batch_id,
                     worker_id,
                     instruction_tape,
-                    snapshot_receiver,
+                    split_snapshot_receiver,
                     work_results_sender,
                 ),
-                ExecutionKind::Unified => todo!(),
+                ExecutionKind::Unified => run_unified_replayer(
+                    batch_id,
+                    worker_id,
+                    instruction_tape,
+                    unified_snapshot_receiver,
+                    work_results_sender,
+                ),
             });
         }
-        drop(snapshot_receiver);
+        drop(split_snapshot_receiver);
         drop(work_results_sender);
         let mut simulation_result = None;
-        let mut expected_requests_count = 0;
         let mut pending_requests_count = 0;
-        let mut tracing_data = BTreeMap::new();
-        let mut tracing_data_key_by_snapshot_index = BTreeMap::new();
+        let mut uninitialized_tracing_data = BTreeMap::new();
+        let mut uninitialized_tracing_data_key_by_snapshot_index = BTreeMap::new();
         let mut processed_snapshots = BTreeSet::<usize>::new();
-        let mut gpu_work_requests = VecDeque::new();
+        let mut unpaired_unified_inits_and_teardowns = BTreeMap::new();
+        let mut unpaired_unified_tracing_data = BTreeMap::new();
         let mut circuit_families_memory_caps = BTreeMap::new();
         let mut inits_and_teardowns_memory_caps = BTreeMap::new();
         let mut delegation_circuits_memory_caps = BTreeMap::new();
         let mut circuit_families_proofs = BTreeMap::new();
         let mut inits_and_teardowns_proofs = BTreeMap::new();
         let mut delegation_circuits_proofs = BTreeMap::new();
-        for family_idx in
-            UnrolledNonMemoryCircuitType::get_circuit_types_for_machine_type(machine_type)
-                .iter()
-                .map(|t| t.get_family_idx())
-                .chain(
+        match execution_kind {
+            ExecutionKind::Unrolled => {
+                let non_memory =
+                    UnrolledNonMemoryCircuitType::get_circuit_types_for_machine_type(machine_type)
+                        .iter()
+                        .map(|t| t.get_family_idx());
+                let memory =
                     UnrolledMemoryCircuitType::get_circuit_types_for_machine_type(machine_type)
                         .iter()
-                        .map(|t| t.get_family_idx()),
-                )
-        {
-            circuit_families_memory_caps.insert(family_idx, BTreeMap::new());
-            circuit_families_proofs.insert(family_idx, BTreeMap::new());
+                        .map(|t| t.get_family_idx());
+                for family_idx in non_memory.chain(memory) {
+                    circuit_families_memory_caps.insert(family_idx, BTreeMap::new());
+                    circuit_families_proofs.insert(family_idx, BTreeMap::new());
+                }
+            }
+            ExecutionKind::Unified => {
+                let family_idx = UnrolledCircuitType::Unified.get_family_idx();
+                circuit_families_memory_caps.insert(family_idx, BTreeMap::new());
+                circuit_families_proofs.insert(family_idx, BTreeMap::new());
+            }
         }
-        let get_gpu_work_request = |tracing_data: TracingData<A>| -> GpuWorkRequest<A> {
-            let TracingData {
-                circuit_type,
-                sequence_id,
-                tracing_data,
-                ..
-            } = tracing_data;
+        let get_gpu_work_request = |inits_and_teardowns: Option<InitsAndTeardownsData<A>>,
+                                    tracing_data: Option<TracingData<A>>|
+         -> GpuWorkRequest<A> {
+            let mut circuit_type_value = None;
+            let mut sequence_id_vealue = None;
+            let inits_and_teardowns = if let Some(inits_and_teardowns) = inits_and_teardowns {
+                let InitsAndTeardownsData {
+                    circuit_type,
+                    sequence_id,
+                    inits_and_teardowns,
+                } = inits_and_teardowns;
+                circuit_type_value = Some(circuit_type);
+                sequence_id_vealue = Some(sequence_id);
+                inits_and_teardowns
+            } else {
+                None
+            };
+            let tracing_data = if let Some(tracing_data) = tracing_data {
+                let TracingData {
+                    circuit_type,
+                    sequence_id,
+                    tracing_data,
+                    ..
+                } = tracing_data;
+                assert_eq!(
+                    circuit_type_value.get_or_insert(circuit_type),
+                    &circuit_type
+                );
+                assert_eq!(sequence_id_vealue.get_or_insert(sequence_id), &sequence_id);
+                Some(tracing_data)
+            } else {
+                None
+            };
+            let circuit_type = circuit_type_value.unwrap();
+            let sequence_id = sequence_id_vealue.unwrap();
             let precomputations = match circuit_type {
                 CircuitType::Delegation(_)
                 | CircuitType::Unrolled(UnrolledCircuitType::InitsAndTeardowns) => {
@@ -372,11 +425,6 @@ impl ExecutionProver {
                     holder.precomputations[&circuit_type].clone()
                 }
             };
-            let inits_and_teardowns = match circuit_type {
-                CircuitType::Unrolled(UnrolledCircuitType::Unified) => todo!(),
-                _ => None,
-            };
-            let tracing_data = Some(tracing_data);
             if proving {
                 let request = ProofRequest {
                     batch_id,
@@ -401,175 +449,214 @@ impl ExecutionProver {
             }
         };
         for work_result in work_results_receiver {
+            let mut gpu_work_requests = VecDeque::new();
             match work_result {
-                WorkerResult::InitsAndTeardownsData(data) => {
-                    let InitsAndTeardownsData {
-                        circuit_type,
-                        sequence_id,
-                        inits_and_teardowns,
-                    } = data;
-                    match circuit_type {
-                        CircuitType::Unrolled(UnrolledCircuitType::InitsAndTeardowns) => {
-                            assert!(inits_and_teardowns.is_some());
-                            let precomputations =
-                                self.common_precomputations[&circuit_type].clone();
-                            let request = if proving {
-                                let request = ProofRequest {
-                                    batch_id,
-                                    circuit_type,
-                                    sequence_id,
-                                    precomputations,
-                                    inits_and_teardowns,
-                                    tracing_data: None,
-                                    external_challenges: external_challenges.clone().unwrap(),
-                                };
-                                GpuWorkRequest::Proof(request)
-                            } else {
-                                let request = MemoryCommitmentRequest {
-                                    batch_id,
-                                    circuit_type,
-                                    sequence_id,
-                                    precomputations,
-                                    inits_and_teardowns,
-                                    tracing_data: None,
-                                };
-                                GpuWorkRequest::MemoryCommitment(request)
-                            };
-                            gpu_work_requests.push_back(request);
-                            expected_requests_count += 1;
-                        }
-                        CircuitType::Unrolled(UnrolledCircuitType::Unified) => todo!(),
-                        _ => panic!("unexpected circuit type for inits and teardowns data"),
+                WorkerResult::InitsAndTeardownsData(data) => match data.circuit_type {
+                    CircuitType::Unrolled(UnrolledCircuitType::InitsAndTeardowns) => {
+                        let request = get_gpu_work_request(Some(data), None);
+                        gpu_work_requests.push_back(request);
                     }
-                }
+                    CircuitType::Unrolled(UnrolledCircuitType::Unified) => {
+                        let sequence_id = data.sequence_id;
+                        assert!(!unpaired_unified_inits_and_teardowns.contains_key(&sequence_id));
+                        if let Some(tracing_data) =
+                            unpaired_unified_tracing_data.remove(&sequence_id)
+                        {
+                            let request = get_gpu_work_request(Some(data), Some(tracing_data));
+                            gpu_work_requests.push_back(request);
+                        } else {
+                            assert!(unpaired_unified_inits_and_teardowns
+                                .insert(sequence_id, data)
+                                .is_none());
+                        }
+                    }
+                    _ => panic!("unexpected circuit type for inits and teardowns data"),
+                },
                 WorkerResult::TracingData(data) => {
                     if data
                         .participating_snapshot_indexes
                         .is_subset(&processed_snapshots)
                     {
-                        let request = get_gpu_work_request(data);
-                        gpu_work_requests.push_back(request);
+                        match data.circuit_type {
+                            CircuitType::Unrolled(UnrolledCircuitType::InitsAndTeardowns) => {
+                                panic!(
+                                "tracing data can not have the inits and teardowns circuit_type"
+                            )
+                            }
+                            CircuitType::Unrolled(UnrolledCircuitType::Unified) => {
+                                let sequence_id = data.sequence_id;
+                                assert!(!unpaired_unified_tracing_data.contains_key(&sequence_id));
+                                if let Some(inits_and_teardowns) =
+                                    unpaired_unified_inits_and_teardowns.remove(&sequence_id)
+                                {
+                                    let request =
+                                        get_gpu_work_request(Some(inits_and_teardowns), Some(data));
+                                    gpu_work_requests.push_back(request);
+                                } else {
+                                    assert!(unpaired_unified_tracing_data
+                                        .insert(sequence_id, data)
+                                        .is_none());
+                                }
+                            }
+                            _ => {
+                                let request = get_gpu_work_request(None, Some(data));
+                                gpu_work_requests.push_back(request);
+                            }
+                        }
                     } else {
                         let key = (data.circuit_type, data.sequence_id);
                         for snapshot_index in data.participating_snapshot_indexes.iter().copied() {
-                            let entry = tracing_data_key_by_snapshot_index
+                            let entry = uninitialized_tracing_data_key_by_snapshot_index
                                 .entry(snapshot_index)
-                                .or_insert_with(|| Vec::new());
+                                .or_insert_with(|| BTreeSet::new());
                             assert!(!entry.contains(&key));
-                            entry.push(key);
+                            entry.insert(key);
                         }
-                        assert!(tracing_data.insert(key, data).is_none());
+                        assert!(uninitialized_tracing_data.insert(key, data).is_none());
                     }
-                    expected_requests_count += 1;
                 }
                 WorkerResult::SimulationResult(result) => {
                     simulation_result = Some(result);
                 }
                 WorkerResult::SnapshotReplayed(sequence_id) => {
                     assert!(processed_snapshots.insert(sequence_id));
-                    if let Some(keys) = tracing_data_key_by_snapshot_index.get_mut(&sequence_id) {
-                        for key in keys.clone().iter() {
-                            if tracing_data
-                                .get(key)
+                    if let Some(keys) =
+                        uninitialized_tracing_data_key_by_snapshot_index.get_mut(&sequence_id)
+                    {
+                        for key in keys.clone().into_iter() {
+                            if uninitialized_tracing_data
+                                .get(&key)
                                 .unwrap()
                                 .participating_snapshot_indexes
                                 .is_subset(&processed_snapshots)
                             {
-                                let (index, _) =
-                                    keys.iter().copied().find_position(|k| k.eq(key)).unwrap();
-                                keys.remove(index);
-                                let data = tracing_data.remove(key).unwrap();
-                                let request = get_gpu_work_request(data);
-                                gpu_work_requests.push_back(request);
+                                keys.remove(&key);
+                                let data = uninitialized_tracing_data.remove(&key).unwrap();
+                                match data.circuit_type {
+                                    CircuitType::Unrolled(
+                                        UnrolledCircuitType::InitsAndTeardowns,
+                                    ) => {
+                                        panic!(
+                                            "tracing data can not have the inits and teardowns circuit_type"
+                                        )
+                                    }
+                                    CircuitType::Unrolled(UnrolledCircuitType::Unified) => {
+                                        let sequence_id = data.sequence_id;
+                                        assert!(!unpaired_unified_tracing_data
+                                            .contains_key(&sequence_id));
+                                        if let Some(inits_and_teardowns) =
+                                            unpaired_unified_inits_and_teardowns
+                                                .remove(&sequence_id)
+                                        {
+                                            let request = get_gpu_work_request(
+                                                Some(inits_and_teardowns),
+                                                Some(data),
+                                            );
+                                            gpu_work_requests.push_back(request);
+                                        } else {
+                                            assert!(unpaired_unified_tracing_data
+                                                .insert(sequence_id, data)
+                                                .is_none());
+                                        }
+                                    }
+                                    _ => {
+                                        let request = get_gpu_work_request(None, Some(data));
+                                        gpu_work_requests.push_back(request);
+                                    }
+                                }
                             }
                         }
                     }
                 }
-                WorkerResult::GpuWorkResult(result) => match result {
-                    GpuWorkResult::MemoryCommitment(commitment) => {
-                        assert!(!proving);
-                        let MemoryCommitmentResult {
-                            batch_id,
-                            circuit_type,
-                            sequence_id,
-                            inits_and_teardowns,
-                            tracing_data,
-                            merkle_tree_caps,
-                        } = commitment;
-                        trace!("BATCH[{batch_id}] PROVER received memory commitment for circuit {circuit_type:?}[{sequence_id}]");
-                        if let Some(inits_and_teardowns) = inits_and_teardowns {
-                            for allocator in inits_and_teardowns.into_allocators() {
-                                self.free_allocators_sender.send(allocator).unwrap();
-                            }
-                        }
-                        if let Some(tracing_data) = tracing_data {
-                            for allocator in tracing_data.into_allocators() {
-                                self.free_allocators_sender.send(allocator).unwrap();
-                            }
-                        }
-                        let caps = match circuit_type {
-                            CircuitType::Delegation(circuit_type) => {
-                                &mut delegation_circuits_memory_caps
-                                    .entry(circuit_type as u32)
-                                    .or_insert_with(|| BTreeMap::new())
-                            }
-                            CircuitType::Unrolled(circuit_type) => match circuit_type {
-                                UnrolledCircuitType::InitsAndTeardowns => {
-                                    &mut inits_and_teardowns_memory_caps
+                WorkerResult::GpuWorkResult(result) => {
+                    assert_ne!(pending_requests_count, 0);
+                    pending_requests_count -= 1;
+                    match result {
+                        GpuWorkResult::MemoryCommitment(commitment) => {
+                            assert!(!proving);
+                            let MemoryCommitmentResult {
+                                batch_id,
+                                circuit_type,
+                                sequence_id,
+                                inits_and_teardowns,
+                                tracing_data,
+                                merkle_tree_caps,
+                            } = commitment;
+                            trace!("BATCH[{batch_id}] PROVER received memory commitment for circuit {circuit_type:?}[{sequence_id}]");
+                            if let Some(inits_and_teardowns) = inits_and_teardowns {
+                                for allocator in inits_and_teardowns.into_allocators() {
+                                    self.free_allocators_sender.send(allocator).unwrap();
                                 }
-                                _ => &mut circuit_families_memory_caps
-                                    .get_mut(&circuit_type.get_family_idx())
-                                    .unwrap(),
-                            },
-                        };
-                        assert!(caps.insert(sequence_id, merkle_tree_caps).is_none());
-                    }
-                    GpuWorkResult::Proof(proof) => {
-                        assert!(proving);
-                        let ProofResult {
-                            batch_id,
-                            circuit_type,
-                            sequence_id,
-                            inits_and_teardowns,
-                            tracing_data,
-                            proof,
-                        } = proof;
-                        trace!("BATCH[{batch_id}] PROVER received proof for circuit {circuit_type:?}[{sequence_id}]");
-                        if let Some(inits_and_teardowns) = inits_and_teardowns {
-                            for allocator in inits_and_teardowns.into_allocators() {
-                                self.free_allocators_sender.send(allocator).unwrap();
                             }
+                            if let Some(tracing_data) = tracing_data {
+                                for allocator in tracing_data.into_allocators() {
+                                    self.free_allocators_sender.send(allocator).unwrap();
+                                }
+                            }
+                            let caps = match circuit_type {
+                                CircuitType::Delegation(circuit_type) => {
+                                    &mut delegation_circuits_memory_caps
+                                        .entry(circuit_type as u32)
+                                        .or_insert_with(|| BTreeMap::new())
+                                }
+                                CircuitType::Unrolled(circuit_type) => match circuit_type {
+                                    UnrolledCircuitType::InitsAndTeardowns => {
+                                        &mut inits_and_teardowns_memory_caps
+                                    }
+                                    _ => &mut circuit_families_memory_caps
+                                        .get_mut(&circuit_type.get_family_idx())
+                                        .unwrap(),
+                                },
+                            };
+                            assert!(caps.insert(sequence_id, merkle_tree_caps).is_none());
                         }
-                        if let Some(tracing_data) = tracing_data {
-                            for allocator in tracing_data.into_allocators() {
-                                self.free_allocators_sender.send(allocator).unwrap();
+                        GpuWorkResult::Proof(proof) => {
+                            assert!(proving);
+                            let ProofResult {
+                                batch_id,
+                                circuit_type,
+                                sequence_id,
+                                inits_and_teardowns,
+                                tracing_data,
+                                proof,
+                            } = proof;
+                            trace!("BATCH[{batch_id}] PROVER received proof for circuit {circuit_type:?}[{sequence_id}]");
+                            if let Some(inits_and_teardowns) = inits_and_teardowns {
+                                for allocator in inits_and_teardowns.into_allocators() {
+                                    self.free_allocators_sender.send(allocator).unwrap();
+                                }
                             }
-                        }
-                        match circuit_type {
-                            CircuitType::Delegation(circuit_type) => {
-                                assert!(delegation_circuits_proofs
-                                    .entry(circuit_type as u32)
-                                    .or_insert_with(|| BTreeMap::new())
-                                    .insert(sequence_id, unrolled_proof_into_proof(proof))
-                                    .is_none())
+                            if let Some(tracing_data) = tracing_data {
+                                for allocator in tracing_data.into_allocators() {
+                                    self.free_allocators_sender.send(allocator).unwrap();
+                                }
                             }
-                            CircuitType::Unrolled(circuit_type) => match circuit_type {
-                                UnrolledCircuitType::InitsAndTeardowns => {
-                                    assert!(inits_and_teardowns_proofs
-                                        .insert(sequence_id, proof)
+                            match circuit_type {
+                                CircuitType::Delegation(circuit_type) => {
+                                    assert!(delegation_circuits_proofs
+                                        .entry(circuit_type as u32)
+                                        .or_insert_with(|| BTreeMap::new())
+                                        .insert(sequence_id, unrolled_proof_into_proof(proof))
                                         .is_none())
                                 }
-                                _ => assert!(circuit_families_proofs
-                                    .get_mut(&circuit_type.get_family_idx())
-                                    .unwrap()
-                                    .insert(sequence_id, proof)
-                                    .is_none()),
-                            },
-                        };
+                                CircuitType::Unrolled(circuit_type) => match circuit_type {
+                                    UnrolledCircuitType::InitsAndTeardowns => {
+                                        assert!(inits_and_teardowns_proofs
+                                            .insert(sequence_id, proof)
+                                            .is_none())
+                                    }
+                                    _ => assert!(circuit_families_proofs
+                                        .get_mut(&circuit_type.get_family_idx())
+                                        .unwrap()
+                                        .insert(sequence_id, proof)
+                                        .is_none()),
+                                },
+                            };
+                        }
                     }
-                },
+                }
             }
-            while let Some(request) = gpu_work_requests.pop_front() {
+            for request in gpu_work_requests {
                 gpu_work_requests_sender
                     .as_ref()
                     .unwrap()
@@ -577,26 +664,21 @@ impl ExecutionProver {
                     .unwrap();
                 pending_requests_count += 1;
             }
-            if pending_requests_count == expected_requests_count && simulation_result.is_some() {
+            if simulation_result.is_some()
+                && uninitialized_tracing_data.is_empty()
+                && unpaired_unified_inits_and_teardowns.is_empty()
+                && unpaired_unified_tracing_data.is_empty()
+            {
                 gpu_work_requests_sender = None;
             }
         }
+        assert_eq!(pending_requests_count, 0);
         let SimulationResult {
             final_register_values,
             final_pc,
             final_timestamp,
         } = simulation_result.unwrap();
         if proving {
-            let count = circuit_families_proofs
-                .values()
-                .map(|v| v.len())
-                .sum::<usize>()
-                + inits_and_teardowns_proofs.len()
-                + delegation_circuits_proofs
-                    .values()
-                    .map(|v| v.len())
-                    .sum::<usize>();
-            assert_eq!(expected_requests_count, count);
             let circuit_families_proofs = circuit_families_proofs
                 .into_iter()
                 .map(|(i, v)| (i, v.into_values().collect_vec()))
@@ -619,16 +701,6 @@ impl ExecutionProver {
             };
             ExecutionProverResult::Prove(result)
         } else {
-            let count = circuit_families_memory_caps
-                .values()
-                .map(|v| v.len())
-                .sum::<usize>()
-                + inits_and_teardowns_memory_caps.len()
-                + delegation_circuits_memory_caps
-                    .values()
-                    .map(|v| v.len())
-                    .sum::<usize>();
-            assert_eq!(expected_requests_count, count);
             let circuit_families_memory_caps = circuit_families_memory_caps
                 .into_iter()
                 .map(|(i, v)| (i, v.into_values().collect_vec()))

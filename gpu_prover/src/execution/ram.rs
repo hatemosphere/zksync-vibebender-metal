@@ -1,42 +1,36 @@
 use cs::definitions::{TimestampData, TimestampScalar};
+use prover::common_constants;
 use prover::definitions::LazyInitAndTeardown;
 use riscv_transpiler::vm::RAM;
 use std::mem::replace;
 
-const PAGE_WORDS_LOG_SIZE: u32 = 10; // 4 KiB page size, 1K x 4 bytes per word
-const PAGE_WORDS_SIZE: usize = 1 << PAGE_WORDS_LOG_SIZE;
+pub(crate) const ROM_ADDRESS_SPACE_SECOND_WORD_BITS: usize = common_constants::rom::ROM_SECOND_WORD_BITS;
+const ROM_LOG_SIZE: u32 = 16 + ROM_ADDRESS_SPACE_SECOND_WORD_BITS as u32;
+const ROM_BOUND: u32 = 1 << ROM_LOG_SIZE;
+const ROM_BOUND_MASK: u32 = ROM_BOUND - 1;
+const ROM_WORDS_LOG_SIZE: u32 = ROM_LOG_SIZE - 2;
+const ROM_WORDS_SIZE: usize = 1 << ROM_WORDS_LOG_SIZE;
 
-pub struct RamWithRomRegion<
-    const RAM_LOG_SIZE: u32,
-    const ROM_LOG_SIZE: u32,
-    const TRACK_TOUCHED_RAM: bool = true,
-> {
+pub struct RamWithRomRegion<const RAM_LOG_SIZE: u32, const TRACK_TOUCHED_RAM: bool = true> {
     pub(crate) word_values: Box<[u32]>,
     pub(crate) word_timestamps: Box<[TimestampScalar]>,
     pub(crate) touched_words_in_page_counts: Box<[u32]>,
 }
 
-impl<const RAM_LOG_SIZE: u32, const ROM_LOG_SIZE: u32, const TRACK_TOUCHED_RAM: bool>
-    RamWithRomRegion<RAM_LOG_SIZE, ROM_LOG_SIZE, TRACK_TOUCHED_RAM>
+impl<const RAM_LOG_SIZE: u32, const TRACK_TOUCHED_RAM: bool>
+    RamWithRomRegion<RAM_LOG_SIZE, TRACK_TOUCHED_RAM>
 {
-    const ROM_PAGES_COUNT: usize = {
-        assert!(PAGE_WORDS_LOG_SIZE + 2 <= ROM_LOG_SIZE);
-        1 << (ROM_LOG_SIZE - 2 - PAGE_WORDS_LOG_SIZE)
-    };
-    const ROM_BOUND: u32 = 1 << ROM_LOG_SIZE;
-    const ROM_BOUND_MASK: u32 = Self::ROM_BOUND - 1;
     pub fn new(rom: &[u32]) -> Self {
         assert!(RAM_LOG_SIZE >= ROM_LOG_SIZE);
         let words_log_count = RAM_LOG_SIZE - 2;
         let words_count = 1 << words_log_count;
         let mut word_values = unsafe { Box::new_zeroed_slice(words_count).assume_init() };
         let rom_len = rom.len();
-        assert!(rom_len <= 1 << (ROM_LOG_SIZE - 2));
+        assert_eq!(rom_len, ROM_WORDS_SIZE);
         word_values[..rom_len].copy_from_slice(rom);
         let word_timestamps = unsafe { Box::new_zeroed_slice(words_count).assume_init() };
         let pages_count = if TRACK_TOUCHED_RAM {
-            assert!(PAGE_WORDS_LOG_SIZE <= words_log_count);
-            1 << (words_log_count - PAGE_WORDS_LOG_SIZE)
+            1 << (RAM_LOG_SIZE - ROM_LOG_SIZE)
         } else {
             0
         };
@@ -53,12 +47,12 @@ impl<const RAM_LOG_SIZE: u32, const ROM_LOG_SIZE: u32, const TRACK_TOUCHED_RAM: 
     fn touch_word(&mut self, word_idx: usize, timestamp: TimestampScalar) {
         if TRACK_TOUCHED_RAM {
             if core::hint::unlikely(timestamp == 0) {
-                let page_idx = word_idx >> PAGE_WORDS_LOG_SIZE;
-                let touched_count_ref = unsafe {
-                    self.touched_words_in_page_counts
-                        .get_unchecked_mut(page_idx)
+                let page_idx = word_idx >> ROM_WORDS_LOG_SIZE;
+                unsafe {
+                    *self
+                        .touched_words_in_page_counts
+                        .get_unchecked_mut(page_idx) += 1;
                 };
-                *touched_count_ref += 1;
             }
         }
     }
@@ -67,7 +61,7 @@ impl<const RAM_LOG_SIZE: u32, const ROM_LOG_SIZE: u32, const TRACK_TOUCHED_RAM: 
         let touched_zero = if self.word_timestamps[0] == 0 { 0 } else { 1 };
         self.touched_words_in_page_counts
             .iter()
-            .skip(Self::ROM_PAGES_COUNT)
+            .skip(1)
             .copied()
             .sum::<u32>()
             + touched_zero
@@ -107,21 +101,21 @@ impl<const RAM_LOG_SIZE: u32, const ROM_LOG_SIZE: u32, const TRACK_TOUCHED_RAM: 
             .iter()
             .copied()
             .enumerate()
-            .skip(Self::ROM_PAGES_COUNT)
+            .skip(1)
             .filter_map(|(index, count)| {
                 if count == 0 {
                     None
                 } else {
-                    Some(index << PAGE_WORDS_LOG_SIZE)
+                    Some(index << ROM_WORDS_LOG_SIZE)
                 }
             })
-            .flat_map(move |index| (index..index + PAGE_WORDS_SIZE).filter_map(get_value_fn));
+            .flat_map(move |index| (index..index + ROM_WORDS_SIZE).filter_map(get_value_fn));
         zero_slot_contribution.into_iter().chain(ram_iter)
     }
 }
 
-impl<const RAM_LOG_SIZE: u32, const ROM_LOG_SIZE: u32, const TRACK_TOUCHED_RAM: bool> RAM
-    for RamWithRomRegion<RAM_LOG_SIZE, ROM_LOG_SIZE, TRACK_TOUCHED_RAM>
+impl<const RAM_LOG_SIZE: u32, const TRACK_TOUCHED_RAM: bool> RAM
+    for RamWithRomRegion<RAM_LOG_SIZE, TRACK_TOUCHED_RAM>
 {
     #[inline(always)]
     fn peek_word(&self, address: u32) -> u32 {
@@ -136,7 +130,7 @@ impl<const RAM_LOG_SIZE: u32, const ROM_LOG_SIZE: u32, const TRACK_TOUCHED_RAM: 
         debug_assert_eq!(address & 3, 0);
         debug_assert_eq!(address >> RAM_LOG_SIZE, 0);
         let word_idx = (address >> 2) as usize;
-        let read_timestamp = if address & !Self::ROM_BOUND_MASK == 0 {
+        let read_timestamp = if address & !ROM_BOUND_MASK == 0 {
             let timestamp_ref = unsafe { self.word_timestamps.get_unchecked_mut(0) };
             replace(timestamp_ref, timestamp | 1)
         } else {
@@ -162,7 +156,7 @@ impl<const RAM_LOG_SIZE: u32, const ROM_LOG_SIZE: u32, const TRACK_TOUCHED_RAM: 
     ) -> (TimestampScalar, u32) {
         debug_assert_eq!(address & 3, 0);
         debug_assert_eq!(address >> RAM_LOG_SIZE, 0);
-        debug_assert!(address & !Self::ROM_BOUND_MASK != 0);
+        debug_assert!(address & !ROM_BOUND_MASK != 0);
         let word_idx = (address >> 2) as usize;
         let timestamp_ref = unsafe { self.word_timestamps.get_unchecked_mut(word_idx) };
         let read_timestamp = replace(timestamp_ref, timestamp | 2);

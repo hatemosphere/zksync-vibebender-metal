@@ -1,9 +1,12 @@
-use crate::allocator::host::ConcurrentStaticHostAllocator;
+use super::A;
 use cs::definitions::TimestampScalar;
 use prover::risc_v_simulator::machine_mode_only_unrolled::{
     MemoryOpcodeTracingDataWithTimestamp, NonMemoryOpcodeTracingDataWithTimestamp,
+    UnifiedOpcodeTracingDataWithTimestamp,
 };
-use riscv_transpiler::vm::{Counters, DelegationsAndFamiliesCounters, State};
+use riscv_transpiler::vm::{
+    Counters, DelegationsAndFamiliesCounters, DelegationsAndUnifiedCounters, State,
+};
 use riscv_transpiler::witness::delegation::bigint::BigintDelegationWitness;
 use riscv_transpiler::witness::delegation::blake2_round_function::Blake2sRoundFunctionDelegationWitness;
 use riscv_transpiler::witness::delegation::keccak_special5::KeccakSpecial5DelegationWitness;
@@ -66,8 +69,6 @@ impl<C: Counters> riscv_transpiler::vm::Snapshotter<C> for OnceSnapshotter {
     }
 }
 
-type A = ConcurrentStaticHostAllocator;
-
 pub(crate) struct PtrRange<T> {
     pub start: *mut T,
     pub end: *mut T,
@@ -87,7 +88,7 @@ impl<T> Default for PtrRange<T> {
 unsafe impl<T> Send for PtrRange<T> {}
 
 #[derive(Default)]
-pub(crate) struct DelegationsAndFamiliesDataTraceRanges {
+pub(crate) struct SplitDataTraceRanges {
     pub blake_calls: VecDeque<PtrRange<Blake2sRoundFunctionDelegationWitness>>,
     pub bigint_calls: VecDeque<PtrRange<BigintDelegationWitness>>,
     pub keccak_calls: VecDeque<PtrRange<KeccakSpecial5DelegationWitness>>,
@@ -105,7 +106,24 @@ pub(crate) struct SplitSnapshot {
     pub initial_state: State<DelegationsAndFamiliesCounters>,
     pub non_determinism_reads: Vec<u32>,
     pub memory_reads: Vec<(u32, (u32, u32))>,
-    pub trace_ranges: DelegationsAndFamiliesDataTraceRanges,
+    pub trace_ranges: SplitDataTraceRanges,
+}
+
+#[derive(Default)]
+pub(crate) struct UnifiedDataTraceRanges {
+    pub blake_calls: VecDeque<PtrRange<Blake2sRoundFunctionDelegationWitness>>,
+    pub bigint_calls: VecDeque<PtrRange<BigintDelegationWitness>>,
+    pub keccak_calls: VecDeque<PtrRange<KeccakSpecial5DelegationWitness>>,
+    pub cycles: VecDeque<PtrRange<UnifiedOpcodeTracingDataWithTimestamp>>,
+}
+
+pub(crate) struct UnifiedSnapshot {
+    pub index: usize,
+    pub cycles_count: usize,
+    pub initial_state: State<DelegationsAndUnifiedCounters>,
+    pub non_determinism_reads: Vec<u32>,
+    pub memory_reads: Vec<(u32, (u32, u32))>,
+    pub trace_ranges: UnifiedDataTraceRanges,
 }
 
 #[cfg(test)]
@@ -126,7 +144,7 @@ mod tests {
         let text_section = read_binary(&Path::new("../examples/hashed_fibonacci/app.text"));
         // let mut non_determinism_source = QuasiUARTSource::new_with_reads(vec![1 << 24, 0]);
         let mut non_determinism_source = QuasiUARTSource::new_with_reads(vec![0, 1 << 18]);
-        let mut ram = RamWithRomRegion::<30, 22, true>::new(&binary_image);
+        let mut ram = RamWithRomRegion::<30>::new(&binary_image);
         let preprocessed_bytecode = text_section
             .iter()
             .copied()
