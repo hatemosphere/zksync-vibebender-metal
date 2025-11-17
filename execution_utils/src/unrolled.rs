@@ -126,13 +126,17 @@ pub struct UnrolledProgramProof {
 }
 
 impl UnrolledProgramProof {
-    pub fn debug_info(&self) -> String {
+    pub fn get_proof_counts(&self) -> (usize, usize) {
         let proofs: usize = self
             .circuit_families_proofs
             .iter()
             .map(|(_, v)| v.len())
             .sum();
         let delegation_proofs: usize = self.delegation_proofs.iter().map(|(_, v)| v.len()).sum();
+        (proofs, delegation_proofs)
+    }
+    pub fn debug_info(&self) -> String {
+        let (proofs, delegation_proofs) = self.get_proof_counts();
         format!(
             "Proofs: {} circuit family proofs, {} delegation proofs",
             proofs, delegation_proofs

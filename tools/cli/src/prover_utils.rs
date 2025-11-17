@@ -828,7 +828,8 @@ impl UnrolledProver {
             let (binary, binary_u32) = read_and_pad_binary(Path::new(&bin_path));
             let (text, text_u32) = read_and_pad_binary(Path::new(&text_path));
 
-            println!("Computing setup");
+            println!("Computing base setup");
+
             let base_layer_setup =
                 execution_utils::unrolled::compute_setup_for_machine_configuration::<
                     IMStandardIsaConfigWithUnsignedMulDiv,
@@ -851,6 +852,8 @@ impl UnrolledProver {
             let (binary, binary_u32) = pad_binary(RECURSION_OVER_BASE_BIN.to_vec());
             let (text, text_u32) = pad_binary(RECURSION_OVER_BASE_TXT.to_vec());
 
+            println!("Computing recursion over base setup");
+
             let setup = execution_utils::unrolled::compute_setup_for_machine_configuration::<
                 IWithoutByteAccessIsaConfigWithDelegation,
             >(&binary, &text);
@@ -872,6 +875,8 @@ impl UnrolledProver {
         let recursion_over_recursion = {
             let (binary, binary_u32) = pad_binary(RECURSION_OVER_RECURSION_BIN.to_vec());
             let (text, text_u32) = pad_binary(RECURSION_OVER_RECURSION_TXT.to_vec());
+
+            println!("Computing recursion over recursion setup");
 
             let setup = execution_utils::unrolled::compute_setup_for_machine_configuration::<
                 IWithoutByteAccessIsaConfigWithDelegation,
@@ -924,7 +929,7 @@ impl UnrolledProver {
         }
     }
 
-    pub fn prove(&self, data: Vec<u32>) {
+    pub fn prove(&self, data: Vec<u32>) -> UnrolledProgramProof {
         println!("Computing proof");
 
         let source = QuasiUARTSource::new_with_reads(data);
@@ -990,7 +995,7 @@ impl UnrolledProver {
         let mut previous_compiled_layouts = self.recursion_over_base.compiled_layouts.clone();
         let mut proof = proof;
 
-        for round in 0..3 {
+        for round in 0..6 {
             let start_time = std::time::Instant::now();
             let mut witness = previous_setup.flatten_for_recursion();
             witness.extend(proof.flatten_into_responses(&[1991], &previous_compiled_layouts));
@@ -1025,6 +1030,13 @@ impl UnrolledProver {
             );
             previous_compiled_layouts = self.recursion_over_recursion.compiled_layouts.clone();
             previous_setup = self.recursion_over_recursion.setup.clone();
+
+            let (circuit_proofs, _) = proof.get_proof_counts();
+            // For now, this is hardcoded.
+            if circuit_proofs <= 4 {
+                break;
+            }
         }
+        proof
     }
 }
