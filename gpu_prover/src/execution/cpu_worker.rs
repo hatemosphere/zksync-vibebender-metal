@@ -312,7 +312,7 @@ impl<T: TracingDataProducerType> TracingDataProducer<T> {
                 PtrRange {
                     start: start_ptr,
                     end: end_ptr,
-                    chunk: Some(chunk.clone()),
+                    _chunk: Some(chunk.clone()),
                 }
             };
             trace_ranges.push_back(ptr_range);
