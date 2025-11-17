@@ -332,6 +332,13 @@ pub(crate) unsafe fn parse_shuffle_ram_accesses(
                 }
             }
 
+            if is_register == false && address < common_constants::rom::ROM_BYTE_SIZE as u32 {
+                assert_eq!(read_value, 0);
+                let ShuffleRamQueryColumns::Readonly(..) = access else {
+                    panic!("write access into ROM");
+                };
+            }
+
             // if _row < 4 {
             //     println!("Row {}, index {}: read reg = {}, address = {} at ts = {} into value {}", _row, access_idx, is_register, address, read_ts, read_value);
             // }
@@ -419,7 +426,7 @@ pub(crate) unsafe fn parse_delegation_ram_accesses(
             };
 
             for indirect in access.indirect_accesses.iter() {
-                assert!(base_offset >= 1 << 21);
+                assert!(base_offset >= common_constants::rom::ROM_BYTE_SIZE as u32);
                 let mut offset = indirect.offset_constant();
                 assert_eq!(offset % 4, 0);
 

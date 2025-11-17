@@ -215,6 +215,26 @@ unsafe fn evaluate_every_row_except_last(
             let contribution = {
                 let individual_term = {
                     let mut individual_term = {
+                        let mut a = *(memory.get_unchecked(17usize));
+                        let b = *(memory.get_unchecked(17usize));
+                        a.mul_assign(&b);
+                        a
+                    };
+                    {
+                        let a = *(memory.get_unchecked(17usize));
+                        individual_term.sub_assign(&a);
+                    }
+                    individual_term
+                };
+                individual_term
+            };
+            accumulated_contribution.add_assign(&contribution);
+        }
+        {
+            accumulated_contribution.mul_assign(&quotient_alpha);
+            let contribution = {
+                let individual_term = {
+                    let mut individual_term = {
                         let mut a = *(witness.get_unchecked(9usize));
                         let b = *(witness.get_unchecked(32usize));
                         a.mul_assign(&b);

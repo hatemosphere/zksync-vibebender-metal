@@ -62,7 +62,7 @@ impl<const ROM_BOUND_SECOND_WORD_BITS: usize> RAM for RamWithRomRegion<ROM_BOUND
     #[inline(always)]
     fn read_word(&mut self, address: u32, timestamp: TimestampScalar) -> (TimestampScalar, u32) {
         // NOTE: for simplicity of the JIT based simulator we will avoid masking address into 0 here for ROM access,
-        // and instead will give a timestamp of that address. In replayer we will mask a value
+        // and instead will give a timestamp of requested address. In replayer we will mask a value
         debug_assert_eq!(address % 4, 0);
         unsafe {
             let word_idx = (address / 4) as usize;
@@ -78,7 +78,6 @@ impl<const ROM_BOUND_SECOND_WORD_BITS: usize> RAM for RamWithRomRegion<ROM_BOUND
 
             // NOTE: value here will allow us to replay based on log only,
             // but timestamp will allow us to use it later on for witness gen
-            // when such reads would be masked into reading from 0 address
 
             (read_timestamp, value)
         }
@@ -170,20 +169,20 @@ impl<const ROM_BOUND_SECOND_WORD_BITS: usize> RamWithRomRegion<ROM_BOUND_SECOND_
                     let el = &mut el[0];
                     let mut address = chunk_start * core::mem::size_of::<u32>();
                     for word in src.iter() {
-                        if address < (1 + (16 + ROM_BOUND_SECOND_WORD_BITS)) {
-                            if address != 0 {
-                                assert_eq!(
-                                    word.timestamp, 0,
-                                    "non-zero access timestamp in ROM region at address 0x{:08x}",
-                                    address
-                                );
-                            }
-                        }
+                        // if address < (1 << (16 + ROM_BOUND_SECOND_WORD_BITS)) {
+                        //     if address != 0 {
+                        //         assert_eq!(
+                        //             word.timestamp, 0,
+                        //             "non-zero access timestamp in ROM region at address 0x{:08x}",
+                        //             address
+                        //         );
+                        //     }
+                        // }
 
                         if word.timestamp != 0 {
                             let mut word_value = word.value;
                             // we mask ROM region to be zero-valued
-                            if address < (1 + (16 + ROM_BOUND_SECOND_WORD_BITS)) {
+                            if address < (1 << (16 + ROM_BOUND_SECOND_WORD_BITS)) {
                                 word_value = 0;
                             }
                             let last_timestamp: TimestampScalar = word.timestamp;

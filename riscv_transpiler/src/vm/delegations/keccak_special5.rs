@@ -538,9 +538,9 @@ fn keccak_f1600_impl_ext(state: &mut [u64; 31]) {
         });
 
         seq!(x in 0..5 {
+            let t1 = array[(x + 4) % 5];
+            let t2 = array[(x + 1) % 5].rotate_left(1);
             seq!(y in 0..5 {
-                let t1 = array[(x + 4) % 5];
-                let t2 = array[(x + 1) % 5].rotate_left(1);
                 state[5 * y + x] ^= t1 ^ t2;
             });
         });

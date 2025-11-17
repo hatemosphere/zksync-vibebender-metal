@@ -1,7 +1,5 @@
 use crate::vm::*;
 use common_constants::*;
-use dynasmrt::{dynasm, x64, DynasmApi, DynasmLabelApi};
-use riscv_decode::Instruction;
 use std::collections::HashSet;
 use std::{mem::offset_of, ptr::addr_of_mut};
 
@@ -9,13 +7,13 @@ mod delegations;
 
 pub use self::delegations::*;
 
-#[cfg(target_arch = "x86_64")]
+#[cfg(all(target_arch = "x86_64", feature = "jit"))]
 mod impls;
 
-#[cfg(target_arch = "x86_64")]
+#[cfg(all(target_arch = "x86_64", feature = "jit"))]
 pub use self::impls::*;
 
-#[cfg(all(target_arch = "x86_64", test))]
+#[cfg(all(target_arch = "x86_64", feature = "jit", test))]
 mod tests;
 
 const MAX_RAM_SIZE: usize = 1 << 30; // 1 Gb, as we want to avoid having separate pointers to RAM (that we want to have continuous to perform very simple read/writes), and timestamp bookkeping space

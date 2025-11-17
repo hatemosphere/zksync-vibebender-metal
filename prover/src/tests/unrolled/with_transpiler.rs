@@ -142,6 +142,11 @@ pub fn run_basic_unrolled_test_in_transpiler_with_word_specialization_impl(
     );
     assert_eq!(num_trivial, 0, "trivial padding is not expected in tests");
 
+    let flattened_inits_and_teardowns: Vec<_> = shuffle_ram_touched_addresses
+        .into_iter()
+        .flatten()
+        .collect();
+
     println!("Finished at PC = 0x{:08x}", state.pc);
     for (reg_idx, reg) in state.registers.iter().enumerate() {
         println!("x{} = {}", reg_idx, reg.value);
@@ -154,32 +159,6 @@ pub fn run_basic_unrolled_test_in_transpiler_with_word_specialization_impl(
         last_access_timestamp: el.timestamp,
         current_value: el.value,
     });
-
-    // for (k, v) in family_circuits.iter() {
-    //     println!(
-    //         "Traced {} circuits of type {}, total len: {}",
-    //         v.len(),
-    //         k,
-    //         v.iter().map(|el| el.data.len()).sum::<usize>()
-    //     );
-    // }
-
-    // println!(
-    //     "Traced {} word-sized memory circuits, total len {}",
-    //     word_mem_circuits.len(),
-    //     word_mem_circuits
-    //         .iter()
-    //         .map(|el| el.data.len())
-    //         .sum::<usize>()
-    // );
-    // println!(
-    //     "Traced {} subword-sized memory circuits, total len {}",
-    //     subword_mem_circuits.len(),
-    //     subword_mem_circuits
-    //         .iter()
-    //         .map(|el| el.data.len())
-    //         .sum::<usize>()
-    // );
 
     let memory_argument_alpha = Mersenne31Quartic::from_array_of_base([
         Mersenne31Field(2),
@@ -1966,8 +1945,9 @@ pub fn run_basic_unrolled_test_in_transpiler_with_word_specialization_impl(
         let expected_init_set: Vec<_> = memory_read_set.difference(&memory_write_set).collect();
         let expected_teardown_set: Vec<_> = memory_write_set.difference(&memory_read_set).collect();
         assert_eq!(expected_init_set.len(), expected_teardown_set.len());
+        assert_eq!(expected_init_set.len(), flattened_inits_and_teardowns.len());
 
-        for (is_register, addr, ts, init_value) in expected_init_set.iter() {
+        for (idx, (is_register, addr, ts, init_value)) in expected_init_set.iter().enumerate() {
             assert!(
                 *is_register == false,
                 "found an unexpected init for register {} with value {} at timestamp {}",
@@ -1985,19 +1965,34 @@ pub fn run_basic_unrolled_test_in_transpiler_with_word_specialization_impl(
                 "init value is invalid for memory address {}",
                 addr
             );
+            assert_eq!(
+                flattened_inits_and_teardowns[idx].0, *addr,
+                "diverged at expected lazy init {}",
+                idx
+            );
         }
-        for (is_register, addr, ts, _value) in expected_teardown_set.iter() {
+        for (idx, (is_register, addr, ts, value)) in expected_teardown_set.iter().enumerate() {
             assert!(
                 *is_register == false,
                 "found an unexpected teardown for register {} with value {} at timestamp {}",
                 *addr,
-                *_value,
+                *value,
                 *ts
             );
             assert!(
                 *ts > INITIAL_TIMESTAMP,
                 "teardown timestamp is invalid for memory address {}",
                 addr
+            );
+            assert_eq!(
+                flattened_inits_and_teardowns[idx].1 .0, *ts,
+                "diverged at expected lazy init {}",
+                idx
+            );
+            assert_eq!(
+                flattened_inits_and_teardowns[idx].1 .1, *value,
+                "diverged at expected lazy init {}",
+                idx
             );
         }
 

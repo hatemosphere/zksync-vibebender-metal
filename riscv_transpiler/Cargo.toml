@@ -21,9 +21,12 @@ seq-macro = { workspace = true }
 serde-big-array = "*"
 keccak = "*"
 
-dynasmrt = "4"
-riscv-decode = "0.2"
-capstone = "0.13"
+dynasmrt = { version = "4", optional = true }
+riscv-decode = {version = "0.2", optional = true }
+capstone = {version = "0.13", optional = true }
+
+[features]
+jit = ["dynasmrt", "riscv-decode", "capstone"]
 
 [dev-dependencies]
 lib-rv32-asm = {git = "https://github.com/shamatar/lib-rv32.git" }

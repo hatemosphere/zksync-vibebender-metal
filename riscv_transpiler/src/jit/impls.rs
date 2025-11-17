@@ -1,5 +1,8 @@
 use super::*;
 
+use dynasmrt::{dynasm, x64, DynasmApi, DynasmLabelApi};
+use riscv_decode::Instruction;
+
 pub type ReceiveTraceFn =
     extern "sysv64" fn(*mut (), &mut TraceChunk, &MachineState) -> *mut TraceChunk;
 pub type ReceiveFinalStateFn = extern "sysv64" fn(*mut (), &mut TraceChunk, &MachineState);

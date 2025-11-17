@@ -299,7 +299,6 @@ impl Blake2RoundFunctionEvaluator {
                         | BLAKE2S_COMPRESSION_MODE_EXTRA_BITS
                         | (BLAKE2S_COMPRESSION_MODE_IS_RIGHT_EXTRA_BITS * (is_right as u32));
                 for round_idx in 0..7 {
-                    let round_bitmask = 1 << round_idx;
                     control_register = unsafe {
                         blake2s_csr_trigger_delegation(
                             self.state.as_mut_ptr(),
