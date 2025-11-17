@@ -12,6 +12,7 @@ use risc_v_simulator::machine_mode_only_unrolled::UnifiedOpcodeTracingDataWithTi
 use risc_v_simulator::machine_mode_only_unrolled::{
     DelegationCSRProcessor, RiscV32StateForUnrolledProver,
 };
+use riscv_transpiler::ir::preprocess_bytecode;
 use riscv_transpiler::witness::delegation::bigint::BigintDelegationWitness;
 use riscv_transpiler::witness::delegation::blake2_round_function::Blake2sRoundFunctionDelegationWitness;
 use riscv_transpiler::witness::delegation::keccak_special5::KeccakSpecial5DelegationWitness;
@@ -428,12 +429,9 @@ pub fn run_unrolled_machine<
     initial_pc: u32,
     text_section: &[u32],
     rom_image: &[u32],
-    replayer_max_snapshots: usize,
-    replayer_snapshot_period: usize,
+    cycles_upper_bound: usize,
     ram_bound_bytes: usize,
-    non_determinism: &mut impl riscv_transpiler::vm::NonDeterminismCSRSource<
-        riscv_transpiler::vm::RamWithRomRegion<ROM_BOUND_SECOND_WORD_BITS>,
-    >,
+    non_determinism: &mut impl riscv_transpiler::vm::NonDeterminismCSRSource,
     opcode_family_chunk_sizes: HashMap<u8, usize>,
     delegation_chunk_sizes: HashMap<u16, usize>,
     worker: &Worker,
@@ -451,6 +449,7 @@ pub fn run_unrolled_machine<
     [RamShuffleMemStateRecord; NUM_REGISTERS], // register final values
     Vec<Vec<(u32, (TimestampScalar, u32)), A>>, // lazy iniy/teardown data - all unique words touched, sorted ascending, but not in one vector
 ) {
+    use riscv_transpiler::ir::*;
     use riscv_transpiler::vm::*;
     use riscv_transpiler::witness::*;
     use riscv_transpiler::*;
@@ -461,44 +460,29 @@ pub fn run_unrolled_machine<
     assert!(rom_image.len() * 4 <= ram_bound_bytes);
     let mut ram = RamWithRomRegion::from_rom_content(rom_image, ram_bound_bytes);
 
-    let preprocessed_bytecode: Vec<_> = text_section
-        .iter()
-        .map(|el| {
-            let opcode = *el;
-            use riscv_transpiler::ir::*;
-            if core::any::TypeId::of::<C>()
-                == core::any::TypeId::of::<risc_v_simulator::cycle::IMStandardIsaConfig>()
-            {
-                decode::<FullMachineDecoderConfig>(opcode)
-            } else if core::any::TypeId::of::<C>()
-                == core::any::TypeId::of::<
-                    risc_v_simulator::cycle::IMStandardIsaConfigWithUnsignedMulDiv,
-                >()
-            {
-                decode::<FullUnsignedMachineDecoderConfig>(opcode)
-            } else if core::any::TypeId::of::<C>()
-                == core::any::TypeId::of::<
-                    risc_v_simulator::cycle::IWithoutByteAccessIsaConfigWithDelegation,
-                >()
-            {
-                decode::<ReducedMachineDecoderConfig>(opcode)
-            } else {
-                panic!("Unknown machine config {}", core::any::type_name::<C>());
-            }
-        })
-        .collect();
-    let tape = SimpleTape::new(&preprocessed_bytecode);
+    let preprocessed_bytecode: Vec<_> = if core::any::TypeId::of::<C>()
+        == core::any::TypeId::of::<risc_v_simulator::cycle::IMStandardIsaConfig>()
+    {
+        preprocess_bytecode::<FullMachineDecoderConfig>(text_section)
+    } else if core::any::TypeId::of::<C>()
+        == core::any::TypeId::of::<risc_v_simulator::cycle::IMStandardIsaConfigWithUnsignedMulDiv>()
+    {
+        preprocess_bytecode::<FullUnsignedMachineDecoderConfig>(text_section)
+    } else if core::any::TypeId::of::<C>()
+        == core::any::TypeId::of::<risc_v_simulator::cycle::IWithoutByteAccessIsaConfigWithDelegation>(
+        )
+    {
+        preprocess_bytecode::<ReducedMachineDecoderConfig>(text_section)
+    } else {
+        panic!("Unknown machine config {}", core::any::type_name::<C>());
+    };
 
-    let cycles_upper_bound = replayer_snapshot_period * replayer_max_snapshots;
+    let tape = SimpleTape::new(&preprocessed_bytecode);
 
     type CountersT = DelegationsAndFamiliesCounters;
 
     let mut state = State::initial_with_counters(CountersT::default());
-    let mut snapshotter = SimpleSnapshotter::new_with_cycle_limit(
-        cycles_upper_bound,
-        replayer_snapshot_period,
-        state,
-    );
+    let mut snapshotter = SimpleSnapshotter::new_with_cycle_limit(cycles_upper_bound, state);
 
     let now = std::time::Instant::now();
     let is_program_finished = VM::<CountersT>::run_basic_unrolled::<
@@ -507,11 +491,10 @@ pub fn run_unrolled_machine<
         _,
     >(
         &mut state,
-        replayer_max_snapshots,
         &mut ram,
         &mut snapshotter,
         &tape,
-        replayer_snapshot_period,
+        cycles_upper_bound,
         non_determinism,
     );
     assert!(
@@ -570,13 +553,7 @@ pub fn run_unrolled_machine<
             ADD_SUB_LUI_AUIPC_MOP_CIRCUIT_FAMILY_IDX,
             A,
             ROM_BOUND_SECOND_WORD_BITS,
-        >(
-            &tape,
-            &snapshotter,
-            replayer_snapshot_period,
-            cycles_per_circuit,
-            worker,
-        );
+        >(&tape, &snapshotter, cycles_per_circuit, worker);
         non_mem_circuits.insert(ADD_SUB_LUI_AUIPC_MOP_CIRCUIT_FAMILY_IDX, t);
     }
     {
@@ -592,7 +569,6 @@ pub fn run_unrolled_machine<
         let t = replay_non_mem::<JUMP_BRANCH_SLT_CIRCUIT_FAMILY_IDX, A, ROM_BOUND_SECOND_WORD_BITS>(
             &tape,
             &snapshotter,
-            replayer_snapshot_period,
             cycles_per_circuit,
             worker,
         );
@@ -611,7 +587,6 @@ pub fn run_unrolled_machine<
         let t = replay_non_mem::<SHIFT_BINARY_CSR_CIRCUIT_FAMILY_IDX, A, ROM_BOUND_SECOND_WORD_BITS>(
             &tape,
             &snapshotter,
-            replayer_snapshot_period,
             cycles_per_circuit,
             worker,
         );
@@ -630,7 +605,6 @@ pub fn run_unrolled_machine<
         let t = replay_non_mem::<MUL_DIV_CIRCUIT_FAMILY_IDX, A, ROM_BOUND_SECOND_WORD_BITS>(
             &tape,
             &snapshotter,
-            replayer_snapshot_period,
             cycles_per_circuit,
             worker,
         );
@@ -651,7 +625,6 @@ pub fn run_unrolled_machine<
         let t = replay_mem::<LOAD_STORE_WORD_ONLY_CIRCUIT_FAMILY_IDX, A, ROM_BOUND_SECOND_WORD_BITS>(
             &tape,
             &snapshotter,
-            replayer_snapshot_period,
             cycles_per_circuit,
             worker,
         );
@@ -671,13 +644,7 @@ pub fn run_unrolled_machine<
             LOAD_STORE_SUBWORD_ONLY_CIRCUIT_FAMILY_IDX,
             A,
             ROM_BOUND_SECOND_WORD_BITS,
-        >(
-            &tape,
-            &snapshotter,
-            replayer_snapshot_period,
-            cycles_per_circuit,
-            worker,
-        );
+        >(&tape, &snapshotter, cycles_per_circuit, worker);
         mem_circuits.insert(LOAD_STORE_SUBWORD_ONLY_CIRCUIT_FAMILY_IDX, t);
     }
 
@@ -701,7 +668,6 @@ pub fn run_unrolled_machine<
         >(
             &tape,
             &snapshotter,
-            replayer_snapshot_period,
             cycles_per_circuit,
             |cycles: &DelegationsAndFamiliesCounters| cycles.blake_calls,
             common_constants::blake2s_with_control::BLAKE2S_DELEGATION_CSR_REGISTER as usize,
@@ -734,7 +700,6 @@ pub fn run_unrolled_machine<
         >(
             &tape,
             &snapshotter,
-            replayer_snapshot_period,
             cycles_per_circuit,
             |cycles: &DelegationsAndFamiliesCounters| cycles.bigint_calls,
             common_constants::bigint_with_control::BIGINT_OPS_WITH_CONTROL_CSR_REGISTER as usize,
@@ -764,7 +729,6 @@ pub fn run_unrolled_machine<
         >(
             &tape,
             &snapshotter,
-            replayer_snapshot_period,
             cycles_per_circuit,
             |cycles: &DelegationsAndFamiliesCounters| cycles.keccak_calls,
             common_constants::keccak_special5::KECCAK_SPECIAL5_CSR_REGISTER as usize,
@@ -792,12 +756,9 @@ pub fn run_unified_machine<
     initial_pc: u32,
     text_section: &[u32],
     rom_image: &[u32],
-    replayer_max_snapshots: usize,
-    replayer_snapshot_period: usize,
+    cycles_upper_bound: usize,
     ram_bound_bytes: usize,
-    non_determinism: &mut impl riscv_transpiler::vm::NonDeterminismCSRSource<
-        riscv_transpiler::vm::RamWithRomRegion<ROM_BOUND_SECOND_WORD_BITS>,
-    >,
+    non_determinism: &mut impl riscv_transpiler::vm::NonDeterminismCSRSource,
     chunk_size: usize,
     delegation_chunk_sizes: HashMap<u16, usize>,
     worker: &Worker,
@@ -814,6 +775,7 @@ pub fn run_unified_machine<
     [RamShuffleMemStateRecord; NUM_REGISTERS], // register final values
     Vec<Vec<(u32, (TimestampScalar, u32)), A>>, // lazy iniy/teardown data - all unique words touched, sorted ascending, but not in one vector
 ) {
+    use riscv_transpiler::ir::*;
     use riscv_transpiler::vm::*;
     use riscv_transpiler::witness::*;
     use riscv_transpiler::*;
@@ -824,50 +786,28 @@ pub fn run_unified_machine<
     assert!(rom_image.len() * 4 <= ram_bound_bytes);
     let mut ram = RamWithRomRegion::from_rom_content(rom_image, ram_bound_bytes);
 
-    let preprocessed_bytecode: Vec<_> = text_section
-        .iter()
-        .map(|el| {
-            let opcode = *el;
-            use riscv_transpiler::ir::*;
-            if core::any::TypeId::of::<C>()
-                == core::any::TypeId::of::<risc_v_simulator::cycle::IMStandardIsaConfig>()
-            {
-                panic!(
-                    "Unsupported machine config {} for unified circuit",
-                    core::any::type_name::<C>()
-                );
-            } else if core::any::TypeId::of::<C>()
-                == core::any::TypeId::of::<
-                    risc_v_simulator::cycle::IMStandardIsaConfigWithUnsignedMulDiv,
-                >()
-            {
-                panic!(
-                    "Unsupported machine config {} for unified circuit",
-                    core::any::type_name::<C>()
-                );
-            } else if core::any::TypeId::of::<C>()
-                == core::any::TypeId::of::<
-                    risc_v_simulator::cycle::IWithoutByteAccessIsaConfigWithDelegation,
-                >()
-            {
-                decode::<ReducedMachineDecoderConfig>(opcode)
-            } else {
-                panic!("Unknown machine config {}", core::any::type_name::<C>());
-            }
-        })
-        .collect();
+    let preprocessed_bytecode: Vec<_> = if core::any::TypeId::of::<C>()
+        == core::any::TypeId::of::<risc_v_simulator::cycle::IMStandardIsaConfig>()
+    {
+        preprocess_bytecode::<FullMachineDecoderConfig>(text_section)
+    } else if core::any::TypeId::of::<C>()
+        == core::any::TypeId::of::<risc_v_simulator::cycle::IMStandardIsaConfigWithUnsignedMulDiv>()
+    {
+        preprocess_bytecode::<FullUnsignedMachineDecoderConfig>(text_section)
+    } else if core::any::TypeId::of::<C>()
+        == core::any::TypeId::of::<risc_v_simulator::cycle::IWithoutByteAccessIsaConfigWithDelegation>(
+        )
+    {
+        preprocess_bytecode::<ReducedMachineDecoderConfig>(text_section)
+    } else {
+        panic!("Unknown machine config {}", core::any::type_name::<C>());
+    };
     let tape = SimpleTape::new(&preprocessed_bytecode);
-
-    let cycles_upper_bound = replayer_snapshot_period * replayer_max_snapshots;
 
     type CountersT = DelegationsAndUnifiedCounters;
 
     let mut state = State::initial_with_counters(CountersT::default());
-    let mut snapshotter = SimpleSnapshotter::new_with_cycle_limit(
-        cycles_upper_bound,
-        replayer_snapshot_period,
-        state,
-    );
+    let mut snapshotter = SimpleSnapshotter::new_with_cycle_limit(cycles_upper_bound, state);
 
     let now = std::time::Instant::now();
     let is_program_finished = VM::<CountersT>::run_basic_unrolled::<
@@ -876,11 +816,10 @@ pub fn run_unified_machine<
         _,
     >(
         &mut state,
-        replayer_max_snapshots,
         &mut ram,
         &mut snapshotter,
         &tape,
-        replayer_snapshot_period,
+        cycles_upper_bound,
         non_determinism,
     );
     assert!(
@@ -929,7 +868,6 @@ pub fn run_unified_machine<
         >(
             &tape,
             &snapshotter,
-            replayer_snapshot_period,
             chunk_size,
             |counters| counters.get_calls_to_circuit_family::<REDUCED_MACHINE_CIRCUIT_FAMILY_IDX>(),
             REDUCED_MACHINE_CIRCUIT_FAMILY_IDX as usize,
@@ -959,7 +897,6 @@ pub fn run_unified_machine<
         >(
             &tape,
             &snapshotter,
-            replayer_snapshot_period,
             cycles_per_circuit,
             |cycles| cycles.blake_calls,
             common_constants::blake2s_with_control::BLAKE2S_DELEGATION_CSR_REGISTER as usize,
@@ -992,7 +929,6 @@ pub fn run_unified_machine<
         >(
             &tape,
             &snapshotter,
-            replayer_snapshot_period,
             cycles_per_circuit,
             |cycles| cycles.bigint_calls,
             common_constants::bigint_with_control::BIGINT_OPS_WITH_CONTROL_CSR_REGISTER as usize,
@@ -1022,7 +958,6 @@ pub fn run_unified_machine<
         >(
             &tape,
             &snapshotter,
-            replayer_snapshot_period,
             cycles_per_circuit,
             |cycles| cycles.keccak_calls,
             common_constants::keccak_special5::KECCAK_SPECIAL5_CSR_REGISTER as usize,
@@ -1051,14 +986,11 @@ fn replay_non_mem<
         riscv_transpiler::vm::DelegationsAndFamiliesCounters,
         ROM_BOUND_SECOND_WORD_BITS,
     >,
-    replayer_snapshot_period: usize,
     cycles_per_circuit: usize,
     worker: &Worker,
 ) -> Vec<NonMemTracingFamilyChunk<A>> {
     use risc_v_simulator::machine_mode_only_unrolled::*;
     use riscv_transpiler::vm::Counters;
-
-    let cycles_upper_bound = replayer_snapshot_period * snapshotter.snapshots.len();
 
     let counters = snapshotter
         .snapshots
@@ -1082,6 +1014,18 @@ fn replay_non_mem<
         "In total {} of circuits for family {}",
         num_circuits, FAMILY_IDX
     );
+
+    let initial_state = snapshotter.initial_snapshot.state;
+    let last_state = snapshotter
+        .snapshots
+        .last()
+        .expect("at least one counter")
+        .state;
+    assert_eq!(
+        (last_state.timestamp - initial_state.timestamp) % TIMESTAMP_STEP,
+        0
+    );
+    let total_num_cycles = (last_state.timestamp - initial_state.timestamp) / TIMESTAMP_STEP;
 
     // allocate ALL of them - not that we can not use macro as it DOES NOT preserve capacity
     let mut total_witness: Vec<_> =
@@ -1183,12 +1127,13 @@ fn replay_non_mem<
                 }
             }
 
-            let ram_range_end = current_snapshot.memory_reads_end;
-            let nd_range_end = current_snapshot.non_determinism_reads_end;
+            let ram_range_end = current_snapshot.reads_end;
 
             let ram_range =
                 ram_range_start..ram_range_end;
-            let nd_range = nd_range_start..nd_range_end;
+
+            assert_eq!((current_snapshot.state.timestamp - starting_snapshot.state.timestamp) % TIMESTAMP_STEP, 0);
+            let num_cycles = (current_snapshot.state.timestamp - starting_snapshot.state.timestamp) / TIMESTAMP_STEP;
 
             use riscv_transpiler::replayer::*;
             use riscv_transpiler::witness::*;
@@ -1202,14 +1147,8 @@ fn replay_non_mem<
             // spawn replayer
             scope.spawn(move |_| {
                 let mut ram_log_buffers = snapshotter_ref.reads_buffer.make_range(ram_range);
-                let mut nd_log_buffers = snapshotter_ref
-                    .non_determinism_reads_buffer
-                    .make_range(nd_range);
                 let mut ram = ReplayerRam::<ROM_BOUND_SECOND_WORD_BITS> {
                     ram_log: &mut ram_log_buffers,
-                };
-                let mut nd = ReplayerNonDeterminism {
-                    non_determinism_reads_log: &mut nd_log_buffers,
                 };
 
                 let mut chunks = chunks;
@@ -1220,11 +1159,10 @@ fn replay_non_mem<
                 let mut state = starting_snapshot.state;
                 ReplayerVM::<riscv_transpiler::vm::DelegationsAndFamiliesCounters>::replay_basic_unrolled::<_, _>(
                     &mut state,
-                    num_snapshots,
                     &mut ram,
                     tape_ref,
-                    replayer_snapshot_period,
-                    &mut nd,
+                    &mut (),
+                    num_cycles as usize,
                     &mut tracer,
                 );
 
@@ -1233,20 +1171,17 @@ fn replay_non_mem<
             });
 
             ram_range_start = ram_range_end;
-            nd_range_start = nd_range_end;
             starting_snapshot = current_snapshot;
         }
 
         assert_eq!(ram_range_start, snapshotter.reads_buffer.len());
-        assert_eq!(nd_range_start, snapshotter.non_determinism_reads_buffer.len());
     });
     let elapsed = now.elapsed();
 
     println!(
-        "Parallel replay performance is {} MHz ({} total snapshots with period of {} cycles) at {} cores for family {}",
-        (cycles_upper_bound as f64) / (elapsed.as_micros() as f64),
-        total_snapshots,
-        replayer_snapshot_period,
+        "Parallel replay performance is {} MHz ({} cycles) at {} cores for family {}",
+        (total_num_cycles as f64) / (elapsed.as_micros() as f64),
+        total_num_cycles,
         worker.get_num_cores(),
         FAMILY_IDX,
     );
@@ -1287,14 +1222,11 @@ fn replay_mem<const FAMILY_IDX: u8, A: GoodAllocator, const ROM_BOUND_SECOND_WOR
         riscv_transpiler::vm::DelegationsAndFamiliesCounters,
         ROM_BOUND_SECOND_WORD_BITS,
     >,
-    replayer_snapshot_period: usize,
     cycles_per_circuit: usize,
     worker: &Worker,
 ) -> Vec<MemTracingFamilyChunk<A>> {
     use risc_v_simulator::machine_mode_only_unrolled::*;
     use riscv_transpiler::vm::Counters;
-
-    let cycles_upper_bound = replayer_snapshot_period * snapshotter.snapshots.len();
 
     let counters = snapshotter
         .snapshots
@@ -1318,6 +1250,18 @@ fn replay_mem<const FAMILY_IDX: u8, A: GoodAllocator, const ROM_BOUND_SECOND_WOR
         "In total {} of circuits for family {}",
         num_circuits, FAMILY_IDX
     );
+
+    let initial_state = snapshotter.initial_snapshot.state;
+    let last_state = snapshotter
+        .snapshots
+        .last()
+        .expect("at least one counter")
+        .state;
+    assert_eq!(
+        (last_state.timestamp - initial_state.timestamp) % TIMESTAMP_STEP,
+        0
+    );
+    let total_num_cycles = (last_state.timestamp - initial_state.timestamp) / TIMESTAMP_STEP;
 
     // allocate ALL of them - not that we can not use macro as it DOES NOT preserve capacity
     let mut total_witness: Vec<_> =
@@ -1417,12 +1361,14 @@ fn replay_mem<const FAMILY_IDX: u8, A: GoodAllocator, const ROM_BOUND_SECOND_WOR
                 }
             }
 
-            let ram_range_end = current_snapshot.memory_reads_end;
-            let nd_range_end = current_snapshot.non_determinism_reads_end;
+            let ram_range_end = current_snapshot.reads_end;
 
             let ram_range =
                 ram_range_start..ram_range_end;
-            let nd_range = nd_range_start..nd_range_end;
+
+            assert_eq!((current_snapshot.state.timestamp - starting_snapshot.state.timestamp) % TIMESTAMP_STEP, 0);
+            let num_cycles = (current_snapshot.state.timestamp - starting_snapshot.state.timestamp) / TIMESTAMP_STEP;
+
 
             use riscv_transpiler::replayer::*;
             use riscv_transpiler::witness::*;
@@ -1436,14 +1382,9 @@ fn replay_mem<const FAMILY_IDX: u8, A: GoodAllocator, const ROM_BOUND_SECOND_WOR
             // spawn replayer
             scope.spawn(move |_| {
                 let mut ram_log_buffers = snapshotter_ref.reads_buffer.make_range(ram_range);
-                let mut nd_log_buffers = snapshotter_ref
-                    .non_determinism_reads_buffer
-                    .make_range(nd_range);
+
                 let mut ram = ReplayerRam::<ROM_BOUND_SECOND_WORD_BITS> {
                     ram_log: &mut ram_log_buffers,
-                };
-                let mut nd = ReplayerNonDeterminism {
-                    non_determinism_reads_log: &mut nd_log_buffers,
                 };
 
                 let mut chunks = chunks;
@@ -1454,11 +1395,10 @@ fn replay_mem<const FAMILY_IDX: u8, A: GoodAllocator, const ROM_BOUND_SECOND_WOR
                 let mut state = starting_snapshot.state;
                 ReplayerVM::<riscv_transpiler::vm::DelegationsAndFamiliesCounters>::replay_basic_unrolled::<_, _>(
                     &mut state,
-                    num_snapshots,
                     &mut ram,
                     tape_ref,
-                    replayer_snapshot_period,
-                    &mut nd,
+                    &mut (),
+                    num_cycles as usize,
                     &mut tracer,
                 );
 
@@ -1467,20 +1407,17 @@ fn replay_mem<const FAMILY_IDX: u8, A: GoodAllocator, const ROM_BOUND_SECOND_WOR
             });
 
             ram_range_start = ram_range_end;
-            nd_range_start = nd_range_end;
             starting_snapshot = current_snapshot;
         }
 
         assert_eq!(ram_range_start, snapshotter.reads_buffer.len());
-        assert_eq!(nd_range_start, snapshotter.non_determinism_reads_buffer.len());
     });
     let elapsed = now.elapsed();
 
     println!(
-        "Parallel replay performance is {} MHz ({} total snapshots with period of {} cycles) at {} cores for family {}",
-        (cycles_upper_bound as f64) / (elapsed.as_micros() as f64),
-        total_snapshots,
-        replayer_snapshot_period,
+        "Parallel replay performance is {} MHz ({} cycles) at {} cores for family {}",
+        (total_num_cycles as f64) / (elapsed.as_micros() as f64),
+        total_num_cycles,
         worker.get_num_cores(),
         FAMILY_IDX,
     );
@@ -1524,7 +1461,6 @@ fn replay_generic_work<
 >(
     tape: &impl riscv_transpiler::vm::InstructionTape,
     snapshotter: &riscv_transpiler::vm::SimpleSnapshotter<C, ROM_BOUND_SECOND_WORD_BITS>,
-    replayer_snapshot_period: usize,
     cycles_per_circuit: usize,
     cycles_fn: FN,
     work_type_idx: usize,
@@ -1533,8 +1469,6 @@ fn replay_generic_work<
     use risc_v_simulator::machine_mode_only_unrolled::*;
     use riscv_transpiler::vm::Counters;
     use riscv_transpiler::witness::DestinationHolderConstructor;
-
-    let cycles_upper_bound = replayer_snapshot_period * snapshotter.snapshots.len();
 
     let counters = snapshotter
         .snapshots
@@ -1553,6 +1487,18 @@ fn replay_generic_work<
         "In total {} of circuits for type {}",
         num_circuits, work_type_idx
     );
+
+    let initial_state = snapshotter.initial_snapshot.state;
+    let last_state = snapshotter
+        .snapshots
+        .last()
+        .expect("at least one counter")
+        .state;
+    assert_eq!(
+        (last_state.timestamp - initial_state.timestamp) % TIMESTAMP_STEP,
+        0
+    );
+    let total_num_cycles = (last_state.timestamp - initial_state.timestamp) / TIMESTAMP_STEP;
 
     // allocate ALL of them - not that we can not use macro as it DOES NOT preserve capacity
     let mut total_witness: Vec<Vec<D::Element, A>> =
@@ -1633,11 +1579,17 @@ fn replay_generic_work<
                 }
             }
 
-            let ram_range_end = current_snapshot.memory_reads_end;
-            let nd_range_end = current_snapshot.non_determinism_reads_end;
+            let ram_range_end = current_snapshot.reads_end;
 
             let ram_range = ram_range_start..ram_range_end;
-            let nd_range = nd_range_start..nd_range_end;
+
+            assert_eq!(
+                (current_snapshot.state.timestamp - starting_snapshot.state.timestamp)
+                    % TIMESTAMP_STEP,
+                0
+            );
+            let num_cycles = (current_snapshot.state.timestamp - starting_snapshot.state.timestamp)
+                / TIMESTAMP_STEP;
 
             use riscv_transpiler::replayer::*;
             use riscv_transpiler::vm::ReplayBuffer;
@@ -1651,14 +1603,8 @@ fn replay_generic_work<
             // spawn replayer
             scope.spawn(move |_| {
                 let mut ram_log_buffers = snapshotter_ref.reads_buffer.make_range(ram_range);
-                let mut nd_log_buffers = snapshotter_ref
-                    .non_determinism_reads_buffer
-                    .make_range(nd_range);
                 let mut ram = ReplayerRam::<ROM_BOUND_SECOND_WORD_BITS> {
                     ram_log: &mut ram_log_buffers,
-                };
-                let mut nd = ReplayerNonDeterminism {
-                    non_determinism_reads_log: &mut nd_log_buffers,
                 };
 
                 let mut chunks = chunks;
@@ -1666,11 +1612,10 @@ fn replay_generic_work<
                 let mut state = starting_snapshot.state;
                 ReplayerVM::<C>::replay_basic_unrolled::<_, _>(
                     &mut state,
-                    num_snapshots,
                     &mut ram,
                     tape_ref,
-                    replayer_snapshot_period,
-                    &mut nd,
+                    &mut (),
+                    num_cycles as usize,
                     &mut tracer,
                 );
 
@@ -1679,7 +1624,6 @@ fn replay_generic_work<
             });
 
             ram_range_start = ram_range_end;
-            nd_range_start = nd_range_end;
             starting_snapshot = current_snapshot;
         }
 
@@ -1688,10 +1632,9 @@ fn replay_generic_work<
     let elapsed = now.elapsed();
 
     println!(
-        "Parallel replay performance is {} MHz ({} total snapshots with period of {} cycles) at {} cores for type {}",
-        (cycles_upper_bound as f64) / (elapsed.as_micros() as f64),
-        total_snapshots,
-        replayer_snapshot_period,
+        "Parallel replay performance is {} MHz ({} cycles) at {} cores for type {}",
+        (total_num_cycles as f64) / (elapsed.as_micros() as f64),
+        total_num_cycles,
         worker.get_num_cores(),
         work_type_idx,
     );

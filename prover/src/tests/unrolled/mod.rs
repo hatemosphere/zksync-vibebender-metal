@@ -22,7 +22,6 @@ use crate::witness_evaluator::unrolled::evaluate_memory_witness_for_executor_fam
 
 mod reduced_machine;
 pub mod with_transpiler;
-// pub mod word_specialized; // pub because some gpu_prover tests use it
 
 pub mod add_sub_lui_auipc_mod {
     use crate::unrolled::NonMemoryCircuitOracle;

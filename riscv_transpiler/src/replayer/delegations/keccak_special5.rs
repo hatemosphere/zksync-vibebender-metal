@@ -70,7 +70,6 @@ pub(crate) fn keccak_special5_call<C: Counters, R: RAM>(
                 let traced_data = NonMemoryOpcodeTracingDataWithTimestamp {
                     opcode_data: NonMemoryOpcodeTracingData {
                         initial_pc: state.pc,
-                        opcode: 0u32,
                         rs1_value: 0,
                         rs2_value: 0,
                         rd_old_value: 0,

@@ -92,19 +92,14 @@ pub fn run_basic_unrolled_test_in_transpiler_with_word_specialization_impl(
         .collect();
 
     // first run to capture minimal information
-    let instructions: Vec<Instruction> = text_section
-        .iter()
-        .copied()
-        .map(|el| decode::<FullUnsignedMachineDecoderConfig>(el))
-        .collect();
+    let instructions: Vec<Instruction> =
+        preprocess_bytecode::<FullUnsignedMachineDecoderConfig>(&text_section);
     let tape = SimpleTape::new(&instructions);
     let mut ram = RamWithRomRegion::<SECOND_WORD_BITS>::from_rom_content(&binary, 1 << 30);
-    let period = 1 << 20;
-    let num_snapshots = 1;
-    let cycles_bound = period * num_snapshots;
+    let cycles_bound = 1 << 20;
 
     let mut state = State::initial_with_counters(CountersT::default());
-    let mut snapshotter = SimpleSnapshotter::new_with_cycle_limit(cycles_bound, period, state);
+    let mut snapshotter = SimpleSnapshotter::new_with_cycle_limit(cycles_bound, state);
     let mut non_determinism = QuasiUARTSource::new_with_reads(vec![15, 1]);
 
     let is_program_finished = VM::<CountersT>::run_basic_unrolled::<
@@ -113,17 +108,15 @@ pub fn run_basic_unrolled_test_in_transpiler_with_word_specialization_impl(
         _,
     >(
         &mut state,
-        num_snapshots,
         &mut ram,
         &mut snapshotter,
         &tape,
-        period,
+        cycles_bound,
         &mut non_determinism,
     );
     assert!(is_program_finished); // check that we reached looping state (ie. end state for our vm)
 
     let total_snapshots = snapshotter.snapshots.len();
-    let cycles_upper_bound = total_snapshots * period;
 
     let exact_cycles_passed = (state.timestamp - INITIAL_TIMESTAMP) / TIMESTAMP_STEP;
 
@@ -390,16 +383,11 @@ pub fn run_basic_unrolled_test_in_transpiler_with_word_specialization_impl(
         let mut ram_log_buffers = snapshotter
             .reads_buffer
             .make_range(0..snapshotter.reads_buffer.len());
-        let mut nd_log_buffers = snapshotter
-            .non_determinism_reads_buffer
-            .make_range(0..snapshotter.non_determinism_reads_buffer.len());
 
         let mut ram = ReplayerRam::<SECOND_WORD_BITS> {
             ram_log: &mut ram_log_buffers,
         };
-        let mut nd = ReplayerNonDeterminism {
-            non_determinism_reads_log: &mut nd_log_buffers,
-        };
+
         let mut buffer = vec![NonMemoryOpcodeTracingDataWithTimestamp::default(); num_calls];
         let mut buffers = vec![&mut buffer[..]];
         let mut tracer = NonMemDestinationHolder::<ADD_SUB_LUI_AUIPC_MOP_CIRCUIT_FAMILY_IDX> {
@@ -408,11 +396,10 @@ pub fn run_basic_unrolled_test_in_transpiler_with_word_specialization_impl(
 
         ReplayerVM::<CountersT>::replay_basic_unrolled::<_, _>(
             &mut state,
-            num_snapshots,
             &mut ram,
             &tape,
-            period,
-            &mut nd,
+            &mut (),
+            cycles_bound,
             &mut tracer,
         );
 
@@ -590,16 +577,11 @@ pub fn run_basic_unrolled_test_in_transpiler_with_word_specialization_impl(
         let mut ram_log_buffers = snapshotter
             .reads_buffer
             .make_range(0..snapshotter.reads_buffer.len());
-        let mut nd_log_buffers = snapshotter
-            .non_determinism_reads_buffer
-            .make_range(0..snapshotter.non_determinism_reads_buffer.len());
 
         let mut ram = ReplayerRam::<SECOND_WORD_BITS> {
             ram_log: &mut ram_log_buffers,
         };
-        let mut nd = ReplayerNonDeterminism {
-            non_determinism_reads_log: &mut nd_log_buffers,
-        };
+
         let mut buffer = vec![NonMemoryOpcodeTracingDataWithTimestamp::default(); num_calls];
         let mut buffers = vec![&mut buffer[..]];
         let mut tracer = NonMemDestinationHolder::<JUMP_BRANCH_SLT_CIRCUIT_FAMILY_IDX> {
@@ -608,11 +590,10 @@ pub fn run_basic_unrolled_test_in_transpiler_with_word_specialization_impl(
 
         ReplayerVM::<CountersT>::replay_basic_unrolled::<_, _>(
             &mut state,
-            num_snapshots,
             &mut ram,
             &tape,
-            period,
-            &mut nd,
+            &mut (),
+            cycles_bound,
             &mut tracer,
         );
 
@@ -792,15 +773,9 @@ pub fn run_basic_unrolled_test_in_transpiler_with_word_specialization_impl(
         let mut ram_log_buffers = snapshotter
             .reads_buffer
             .make_range(0..snapshotter.reads_buffer.len());
-        let mut nd_log_buffers = snapshotter
-            .non_determinism_reads_buffer
-            .make_range(0..snapshotter.non_determinism_reads_buffer.len());
 
         let mut ram = ReplayerRam::<SECOND_WORD_BITS> {
             ram_log: &mut ram_log_buffers,
-        };
-        let mut nd = ReplayerNonDeterminism {
-            non_determinism_reads_log: &mut nd_log_buffers,
         };
         let mut buffer = vec![NonMemoryOpcodeTracingDataWithTimestamp::default(); num_calls];
         let mut buffers = vec![&mut buffer[..]];
@@ -810,11 +785,10 @@ pub fn run_basic_unrolled_test_in_transpiler_with_word_specialization_impl(
 
         ReplayerVM::<CountersT>::replay_basic_unrolled::<_, _>(
             &mut state,
-            num_snapshots,
             &mut ram,
             &tape,
-            period,
-            &mut nd,
+            &mut (),
+            cycles_bound,
             &mut tracer,
         );
 
@@ -988,16 +962,11 @@ pub fn run_basic_unrolled_test_in_transpiler_with_word_specialization_impl(
         let mut ram_log_buffers = snapshotter
             .reads_buffer
             .make_range(0..snapshotter.reads_buffer.len());
-        let mut nd_log_buffers = snapshotter
-            .non_determinism_reads_buffer
-            .make_range(0..snapshotter.non_determinism_reads_buffer.len());
 
         let mut ram = ReplayerRam::<SECOND_WORD_BITS> {
             ram_log: &mut ram_log_buffers,
         };
-        let mut nd = ReplayerNonDeterminism {
-            non_determinism_reads_log: &mut nd_log_buffers,
-        };
+
         let mut buffer = vec![NonMemoryOpcodeTracingDataWithTimestamp::default(); num_calls];
         let mut buffers = vec![&mut buffer[..]];
         let mut tracer = NonMemDestinationHolder::<MUL_DIV_CIRCUIT_FAMILY_IDX> {
@@ -1006,11 +975,10 @@ pub fn run_basic_unrolled_test_in_transpiler_with_word_specialization_impl(
 
         ReplayerVM::<CountersT>::replay_basic_unrolled::<_, _>(
             &mut state,
-            num_snapshots,
             &mut ram,
             &tape,
-            period,
-            &mut nd,
+            &mut (),
+            cycles_bound,
             &mut tracer,
         );
 
@@ -1187,16 +1155,11 @@ pub fn run_basic_unrolled_test_in_transpiler_with_word_specialization_impl(
         let mut ram_log_buffers = snapshotter
             .reads_buffer
             .make_range(0..snapshotter.reads_buffer.len());
-        let mut nd_log_buffers = snapshotter
-            .non_determinism_reads_buffer
-            .make_range(0..snapshotter.non_determinism_reads_buffer.len());
 
         let mut ram = ReplayerRam::<SECOND_WORD_BITS> {
             ram_log: &mut ram_log_buffers,
         };
-        let mut nd = ReplayerNonDeterminism {
-            non_determinism_reads_log: &mut nd_log_buffers,
-        };
+
         let mut buffer = vec![MemoryOpcodeTracingDataWithTimestamp::default(); num_calls];
         let mut buffers = vec![&mut buffer[..]];
         let mut tracer = MemDestinationHolder::<LOAD_STORE_WORD_ONLY_CIRCUIT_FAMILY_IDX> {
@@ -1205,11 +1168,10 @@ pub fn run_basic_unrolled_test_in_transpiler_with_word_specialization_impl(
 
         ReplayerVM::<CountersT>::replay_basic_unrolled::<_, _>(
             &mut state,
-            num_snapshots,
             &mut ram,
             &tape,
-            period,
-            &mut nd,
+            &mut (),
+            cycles_bound,
             &mut tracer,
         );
 
@@ -1386,16 +1348,11 @@ pub fn run_basic_unrolled_test_in_transpiler_with_word_specialization_impl(
         let mut ram_log_buffers = snapshotter
             .reads_buffer
             .make_range(0..snapshotter.reads_buffer.len());
-        let mut nd_log_buffers = snapshotter
-            .non_determinism_reads_buffer
-            .make_range(0..snapshotter.non_determinism_reads_buffer.len());
 
         let mut ram = ReplayerRam::<SECOND_WORD_BITS> {
             ram_log: &mut ram_log_buffers,
         };
-        let mut nd = ReplayerNonDeterminism {
-            non_determinism_reads_log: &mut nd_log_buffers,
-        };
+
         let mut buffer = vec![MemoryOpcodeTracingDataWithTimestamp::default(); num_calls];
         let mut buffers = vec![&mut buffer[..]];
         let mut tracer = MemDestinationHolder::<LOAD_STORE_SUBWORD_ONLY_CIRCUIT_FAMILY_IDX> {
@@ -1404,11 +1361,10 @@ pub fn run_basic_unrolled_test_in_transpiler_with_word_specialization_impl(
 
         ReplayerVM::<CountersT>::replay_basic_unrolled::<_, _>(
             &mut state,
-            num_snapshots,
             &mut ram,
             &tape,
-            period,
-            &mut nd,
+            &mut (),
+            cycles_bound,
             &mut tracer,
         );
 
@@ -1714,16 +1670,11 @@ pub fn run_basic_unrolled_test_in_transpiler_with_word_specialization_impl(
         let mut ram_log_buffers = snapshotter
             .reads_buffer
             .make_range(0..snapshotter.reads_buffer.len());
-        let mut nd_log_buffers = snapshotter
-            .non_determinism_reads_buffer
-            .make_range(0..snapshotter.non_determinism_reads_buffer.len());
 
         let mut ram = ReplayerRam::<SECOND_WORD_BITS> {
             ram_log: &mut ram_log_buffers,
         };
-        let mut nd = ReplayerNonDeterminism {
-            non_determinism_reads_log: &mut nd_log_buffers,
-        };
+
         let mut buffer = vec![DelegationWitness::empty(); num_calls];
         let mut buffers = vec![&mut buffer[..]];
         let mut tracer = BlakeDelegationDestinationHolder {
@@ -1732,11 +1683,10 @@ pub fn run_basic_unrolled_test_in_transpiler_with_word_specialization_impl(
 
         ReplayerVM::<CountersT>::replay_basic_unrolled::<_, _>(
             &mut state,
-            num_snapshots,
             &mut ram,
             &tape,
-            period,
-            &mut nd,
+            &mut (),
+            cycles_bound,
             &mut tracer,
         );
 
@@ -1897,15 +1847,9 @@ pub fn run_basic_unrolled_test_in_transpiler_with_word_specialization_impl(
         let mut ram_log_buffers = snapshotter
             .reads_buffer
             .make_range(0..snapshotter.reads_buffer.len());
-        let mut nd_log_buffers = snapshotter
-            .non_determinism_reads_buffer
-            .make_range(0..snapshotter.non_determinism_reads_buffer.len());
 
         let mut ram = ReplayerRam::<SECOND_WORD_BITS> {
             ram_log: &mut ram_log_buffers,
-        };
-        let mut nd = ReplayerNonDeterminism {
-            non_determinism_reads_log: &mut nd_log_buffers,
         };
         let mut buffer = vec![DelegationWitness::empty(); num_calls];
         let mut buffers = vec![&mut buffer[..]];
@@ -1915,11 +1859,10 @@ pub fn run_basic_unrolled_test_in_transpiler_with_word_specialization_impl(
 
         ReplayerVM::<CountersT>::replay_basic_unrolled::<_, _>(
             &mut state,
-            num_snapshots,
             &mut ram,
             &tape,
-            period,
-            &mut nd,
+            &mut (),
+            cycles_bound,
             &mut tracer,
         );
 

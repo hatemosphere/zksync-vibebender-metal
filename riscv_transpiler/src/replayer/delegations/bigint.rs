@@ -87,7 +87,6 @@ pub(crate) fn bigint_call<C: Counters, R: RAM>(
         let traced_data = NonMemoryOpcodeTracingDataWithTimestamp {
             opcode_data: NonMemoryOpcodeTracingData {
                 initial_pc: state.pc,
-                opcode: 0u32,
                 rs1_value: 0,
                 rs2_value: 0,
                 rd_old_value: 0,
@@ -100,9 +99,7 @@ pub(crate) fn bigint_call<C: Counters, R: RAM>(
             rd_read_timestamp: TimestampData::from_scalar(state.timestamp | 1),
             cycle_timestamp: TimestampData::from_scalar(state.timestamp),
         };
-        tracer.write_non_memory_family_data::<SHIFT_BINARY_CSR_CIRCUIT_FAMILY_IDX>(
-            traced_data,
-        );
+        tracer.write_non_memory_family_data::<SHIFT_BINARY_CSR_CIRCUIT_FAMILY_IDX>(traced_data);
         state.pc = next_pc;
     }
 
