@@ -286,23 +286,104 @@ fn prove_recursion_over_base() {
     // compare_program_proofs(&cpu_proof, &gpu_proof);
 }
 
-// #[test]
-// fn verify_recursion_proof() {
-//     let setup: UnrolledProgramSetup = serde_json::from_reader(&File::open("setup_recursion_over_base.json").unwrap()).unwrap();
-//     let layouts: CompiledCircuitsSet = serde_json::from_reader(&File::open("layouts_recursion_over_base.json").unwrap()).unwrap();
-//     let cpu_proof: UnrolledProgramProof = serde_json::from_reader(&File::open("cpu_proof_recursion_over_base.json").unwrap()).unwrap();
-//     let gpu_proof: UnrolledProgramProof = serde_json::from_reader(&File::open("gpu_proof_recursion_over_base.json").unwrap()).unwrap();
+#[test]
+fn prove_recursion_over_recursion() {
+    init_logger();
+    let base_layer_setup: UnrolledProgramSetup =
+        serde_json::from_reader(&File::open("setup_recursion_over_base.json").unwrap()).unwrap();
+    let proof: UnrolledProgramProof =
+        serde_json::from_reader(&File::open("gpu_proof_recursion_over_base.json").unwrap()).unwrap();
+    let layout: CompiledCircuitsSet =
+        serde_json::from_reader(&File::open("layouts_recursion_over_base.json").unwrap()).unwrap();
 
-//     assert_eq!(setup.circuit_families_setups.len(), 4);
+    for (family, proofs) in proof.circuit_families_proofs.iter() {
+        println!("{} proofs for family {}", proofs.len(), family);
+    }
+    for (delegation_type, proofs) in proof.delegation_proofs.iter() {
+        println!("{} proofs for delegation {}", proofs.len(), delegation_type);
+    }
+
+    let mut witness = base_layer_setup.flatten_for_recursion();
+    witness.extend(proof.flatten_into_responses(&[1991], &layout));
+    let source = QuasiUARTSource::new_with_reads(witness);
+
+    let (binary, binary_u32) =
+        read_and_pad_binary(Path::new("../tools/verifier/unrolled_recursion_layer.bin"));
+    let (text, text_u32) =
+        read_and_pad_binary(Path::new("../tools/verifier/unrolled_recursion_layer.text"));
+    println!("Computing setup");
+    let setup = execution_utils::unrolled::compute_setup_for_machine_configuration::<
+        IWithoutByteAccessIsaConfigWithDelegation,
+    >(&binary, &text);
+    serde_json::to_writer_pretty(
+        File::create("setup_recursion_over_recursion.json").unwrap(),
+        &setup,
+    )
+    .unwrap();
+    let compiled_layouts =
+        execution_utils::setups::get_unrolled_circuits_artifacts_for_machine_type::<
+            IWithoutByteAccessIsaConfigWithDelegation,
+        >(&binary_u32);
+    serde_json::to_writer_pretty(
+        File::create("layouts_recursion_over_recursion.json").unwrap(),
+        &compiled_layouts,
+    )
+    .unwrap();
+    println!("Computing proof");
+
+    let mut configuration = ExecutionProverConfiguration::default();
+    configuration.replay_worker_threads_count = 8;
+    let mut prover = ExecutionProver::with_configuration(configuration);
+    prover.add_binary(
+        0,
+        ExecutionKind::Unrolled,
+        MachineType::Reduced,
+        binary_u32.clone(),
+        text_u32.clone(),
+    );
+    let result = prover.commit_memory_and_prove(0, 0, 1 << 36, source.clone());
+    let mut gpu_proof = UnrolledProgramProof {
+        final_pc: result.final_pc,
+        final_timestamp: result.final_timestamp,
+        circuit_families_proofs: result.circuit_families_proofs,
+        inits_and_teardowns_proofs: result.inits_and_teardowns_proofs,
+        delegation_proofs: result.delegation_proofs,
+        register_final_values: result.register_final_values,
+        recursion_chain_preimage: None,
+        recursion_chain_hash: None,
+    };
+    // make a hash chain
+    let (hash_chain, preimage) = UnrolledProgramSetup::continue_recursion_chain(&base_layer_setup.end_params,
+        &proof.recursion_chain_hash.expect("has recursion chain"),
+        &proof.recursion_chain_preimage.expect("has recursion preimage"));
+
+    gpu_proof.recursion_chain_hash = Some(hash_chain);
+    gpu_proof.recursion_chain_preimage = Some(preimage);
+    serde_json::to_writer_pretty(
+        File::create("gpu_proof_recursion_over_recursion.json").unwrap(),
+        &gpu_proof,
+    )
+    .unwrap();
+}
+
+
+ #[test]
+ fn verify_recursion_proof() {
+     let setup: UnrolledProgramSetup = serde_json::from_reader(&File::open("setup_recursion_over_base.json").unwrap()).unwrap();
+     let layouts: CompiledCircuitsSet = serde_json::from_reader(&File::open("layouts_recursion_over_base.json").unwrap()).unwrap();
+     //let cpu_proof: UnrolledProgramProof = serde_json::from_reader(&File::open("cpu_proof_recursion_over_base.json").unwrap()).unwrap();
+     let gpu_proof: UnrolledProgramProof = serde_json::from_reader(&File::open("gpu_proof_recursion_over_base.json").unwrap()).unwrap();
+
+     assert_eq!(setup.circuit_families_setups.len(), 4);
 
 //     println!("Verifying CPU proof...");
 //     let result = execution_utils::unrolled::verify_unrolled_recursion_layer_via_full_statement_verifier(&cpu_proof, &setup, &layouts).expect("is valid proof");
 //     assert_eq!(result.iter().all(|el| *el == 0), false);
 
-//     println!("Verifying GPU proof...");
-//     let result = execution_utils::unrolled::verify_unrolled_recursion_layer_via_full_statement_verifier(&gpu_proof, &setup, &layouts).expect("is valid proof");
-//     assert_eq!(result.iter().all(|el| *el == 0), false);
-// }
+     println!("Verifying GPU proof...");
+     let result = execution_utils::unrolled::verify_unrolled_recursion_layer_via_full_statement_verifier(&gpu_proof, &setup, &layouts).expect("is valid proof");
+     assert_eq!(result.iter().all(|el| *el == 0), false);
+ }
 
 fn init_logger() {
     env_logger::Builder::from_env(env_logger::Env::default().default_filter_or("trace"))

@@ -195,6 +195,7 @@ opt-level = 3
 lto = "fat"
 codegen-units = 1
 debug = false
+overflow-checks = true
 
 
 # Special profile for compiling the cli tool.
