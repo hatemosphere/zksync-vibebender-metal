@@ -666,6 +666,20 @@ pub fn read_and_pad_binary(path: &Path) -> (Vec<u8>, Vec<u32>) {
     (buffer, binary)
 }
 
+pub fn pad_binary(buffer: Vec<u8>) -> (Vec<u8>, Vec<u32>) {
+    assert_eq!(buffer.len() % core::mem::size_of::<u32>(), 0);
+    let mut binary = Vec::with_capacity(buffer.len() / core::mem::size_of::<u32>());
+    for el in buffer.as_chunks::<4>().0 {
+        binary.push(u32::from_le_bytes(*el));
+    }
+
+    let mut padded_buffer = buffer;
+    pad_bytecode_bytes_for_proving(&mut padded_buffer);
+    pad_bytecode_for_proving(&mut binary);
+
+    (padded_buffer, binary)
+}
+
 pub fn compute_and_save_params(
     binary_image_path: &Path,
     bytecode_path: &Path,

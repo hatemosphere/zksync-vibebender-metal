@@ -1,20 +1,28 @@
 use clap::ValueEnum;
-use execution_utils::verifier_binaries::UNIVERSAL_CIRCUIT_VERIFIER;
 pub use execution_utils::{
     generate_oracle_data_for_universal_verifier, generate_oracle_data_from_metadata_and_proof_list,
     get_padded_binary, Machine, ProgramProof, ProofList, ProofMetadata, RecursionStrategy,
 };
+use execution_utils::{
+    unrolled::{UnrolledProgramProof, UnrolledProgramSetup},
+    verifier_binaries::UNIVERSAL_CIRCUIT_VERIFIER,
+};
+use gpu_prover::{
+    execution::prover::{ExecutionKind, ExecutionProver, ExecutionProverConfiguration},
+    machine_type::MachineType,
+};
+use setups::{pad_binary, read_and_pad_binary, CompiledCircuitsSet};
 use verifier_common::parse_field_els_as_u32_from_u16_limbs_checked;
 
 use prover::{
     prover_stages::Proof,
-    risc_v_simulator::abstractions::non_determinism::QuasiUARTSource,
+    risc_v_simulator::{
+        abstractions::non_determinism::QuasiUARTSource,
+        cycle::{IMStandardIsaConfigWithUnsignedMulDiv, IWithoutByteAccessIsaConfigWithDelegation},
+    },
     transcript::{Blake2sBufferingTranscript, Seed},
 };
 use std::{alloc::Global, fs, io::Read, path::Path};
-
-#[cfg(feature = "gpu")]
-pub use gpu_prover::circuit_type::MainCircuitType;
 
 fn deserialize_from_file<T: serde::de::DeserializeOwned>(filename: &str) -> T {
     let src = std::fs::File::open(filename).expect(&format!("{filename}"));
@@ -59,6 +67,8 @@ pub fn u32_from_hex_string(hex_string: &str) -> Vec<u32> {
 
 #[cfg(feature = "gpu")]
 pub fn multi_prove(bin_path: &String, input_files: Vec<Vec<u32>>) {
+    todo!();
+    /*
     let binary = load_binary_from_path(bin_path);
 
     // TODO: hardcoded for now.
@@ -107,6 +117,7 @@ pub fn multi_prove(bin_path: &String, input_files: Vec<Vec<u32>>) {
     for (i, time) in final_results.iter().enumerate() {
         println!("Input {}: total proof time {:.3}s", i, time);
     }
+    */
 }
 
 pub fn create_proofs(
@@ -147,11 +158,7 @@ pub fn create_proofs(
         // In order to use it for the 2nd recursion layer, you should call `create_final_proofs_from_program_proof`
         #[cfg(feature = "gpu")]
         {
-            let recursion_circuit_type = MainCircuitType::ReducedRiscVMachine;
-            (
-                Some(GpuSharedState::new(&binary, recursion_circuit_type)),
-                Some(0f64),
-            )
+            (Some(GpuSharedState::new(&binary)), Some(0f64))
         }
         #[cfg(not(feature = "gpu"))]
         {
@@ -259,8 +266,7 @@ pub fn load_binary_from_path(path: &String) -> Vec<u32> {
 // For now, we share the setup cache, only for GPU (as we really care for performance there).
 #[cfg(feature = "gpu")]
 pub struct GpuSharedState {
-    pub prover: gpu_prover::execution::prover::ExecutionProver<usize>,
-    pub recursion_circuit_type: MainCircuitType,
+    pub prover: gpu_prover::execution::prover::ExecutionProver,
 }
 
 #[cfg(feature = "gpu")]
@@ -269,19 +275,12 @@ impl GpuSharedState {
     const RECURSION_BINARY_KEY: usize = 1;
 
     #[cfg(feature = "gpu")]
-    pub fn new(binary: &Vec<u32>, recursion_circuit_type: MainCircuitType) -> Self {
+    pub fn new(binary: &Vec<u32>) -> Self {
         use execution_utils::verifier_binaries::UNIVERSAL_CIRCUIT_VERIFIER;
-        use gpu_prover::execution::prover::ExecutableBinary;
         use gpu_prover::execution::prover::ExecutionProver;
+        use gpu_prover::execution::prover::ExecutionProverConfiguration;
 
-        // We don't support MainCircuitType::FinalReducedRiscVMachine on GPU for now
-        // it's too big (2^25 rows).
-        assert!(
-            recursion_circuit_type == MainCircuitType::ReducedRiscVMachine
-                || recursion_circuit_type == MainCircuitType::ReducedRiscVLog23Machine
-        );
-
-        let main_binary = ExecutableBinary {
+        /*let main_binary = ExecutableBinary {
             key: Self::MAIN_BINARY_KEY,
             circuit_type: MainCircuitType::RiscVCycles,
             bytecode: binary.clone(),
@@ -290,12 +289,12 @@ impl GpuSharedState {
             key: Self::RECURSION_BINARY_KEY,
             circuit_type: recursion_circuit_type,
             bytecode: get_padded_binary(UNIVERSAL_CIRCUIT_VERIFIER),
-        };
-        let prover = ExecutionProver::new(1, vec![main_binary, recursion_binary]);
-        Self {
-            prover,
-            recursion_circuit_type,
-        }
+        };*/
+        let mut configuration = ExecutionProverConfiguration::default();
+        configuration.replay_worker_threads_count = 8;
+        let prover = ExecutionProver::with_configuration(configuration);
+
+        Self { prover }
     }
 }
 
@@ -341,7 +340,7 @@ pub fn create_proofs_internal(
                     {
                         println!("**** proving using GPU ****");
                         let timer = std::time::Instant::now();
-                        let (final_register_values, basic_proofs, delegation_proofs) =
+                        /*let (final_register_values, basic_proofs, delegation_proofs) =
                             gpu_shared_state.prover.commit_memory_and_prove(
                                 0,
                                 &GpuSharedState::MAIN_BINARY_KEY,
@@ -355,7 +354,9 @@ pub fn create_proofs_internal(
                             basic_proofs,
                             delegation_proofs,
                             final_register_values.into(),
-                        )
+                        )*/
+
+                        todo!()
                     }
                     #[cfg(not(feature = "gpu"))]
                     {
@@ -396,7 +397,7 @@ pub fn create_proofs_internal(
                     {
                         println!("**** proving using GPU ****");
                         let timer = std::time::Instant::now();
-                        let (final_register_values, basic_proofs, delegation_proofs) =
+                        /*let (final_register_values, basic_proofs, delegation_proofs) =
                             gpu_shared_state.prover.commit_memory_and_prove(
                                 0,
                                 &GpuSharedState::RECURSION_BINARY_KEY,
@@ -410,7 +411,8 @@ pub fn create_proofs_internal(
                             basic_proofs,
                             delegation_proofs,
                             final_register_values.into(),
-                        )
+                        )*/
+                        todo!()
                     }
                     #[cfg(not(feature = "gpu"))]
                     {
@@ -451,7 +453,7 @@ pub fn create_proofs_internal(
                     {
                         println!("**** proving using GPU ****");
                         let timer = std::time::Instant::now();
-                        let (final_register_values, basic_proofs, delegation_proofs) =
+                        /*let (final_register_values, basic_proofs, delegation_proofs) =
                             gpu_shared_state.prover.commit_memory_and_prove(
                                 0,
                                 &GpuSharedState::RECURSION_BINARY_KEY,
@@ -465,7 +467,9 @@ pub fn create_proofs_internal(
                             basic_proofs,
                             delegation_proofs,
                             final_register_values.into(),
-                        )
+                        )*/
+
+                        todo!()
                     }
                     #[cfg(not(feature = "gpu"))]
                     {
@@ -573,18 +577,7 @@ pub fn create_recursion_proofs(
 
     // Small sanity check, to make sure that GPU state matches the chosen machine.
     #[cfg(feature = "gpu")]
-    if let Some(gpu_shared_state) = gpu_shared_state {
-        if machine == &Machine::ReducedLog23 {
-            assert!(
-                gpu_shared_state.recursion_circuit_type
-                    == MainCircuitType::ReducedRiscVLog23Machine
-            );
-        } else {
-            assert!(
-                gpu_shared_state.recursion_circuit_type == MainCircuitType::ReducedRiscVMachine
-            );
-        }
-    }
+    if let Some(gpu_shared_state) = gpu_shared_state {}
 
     loop {
         if recursion_mode.skip_first_layer() {
@@ -638,13 +631,8 @@ pub fn create_final_proofs_from_program_proof(
         #[cfg(feature = "gpu")]
         {
             // Here we use GPU for final recursion layer only.
-            use gpu_prover::circuit_type::MainCircuitType;
-            let recursion_circuit_type = MainCircuitType::ReducedRiscVLog23Machine;
             let binary = get_padded_binary(UNIVERSAL_CIRCUIT_VERIFIER);
-            (
-                Some(GpuSharedState::new(&binary, recursion_circuit_type)),
-                Some(0f64),
-            )
+            (Some(GpuSharedState::new(&binary)), Some(0f64))
         }
 
         #[cfg(not(feature = "gpu"))]
@@ -804,4 +792,239 @@ pub fn generate_oracle_data_from_metadata(metadata_path: &String) -> (ProofMetad
         ProofList::load_from_directory(&parent.to_str().unwrap().to_string(), &metadata);
     let oracle_data = generate_oracle_data_from_metadata_and_proof_list(&metadata, &proof_list);
     (metadata, oracle_data)
+}
+
+pub struct UnrolledProver {
+    pub base_level: UnrolledProverLevel,
+    pub recursion_over_base: UnrolledProverLevel,
+    pub recursion_over_recursion: UnrolledProverLevel,
+    pub prover: ExecutionProver,
+}
+
+pub struct UnrolledProverLevel {
+    pub binary: Vec<u8>,
+    pub text: Vec<u8>,
+    pub binary_u32: Vec<u32>,
+    pub text_u32: Vec<u32>,
+    pub setup: UnrolledProgramSetup,
+    pub compiled_layouts: CompiledCircuitsSet,
+}
+
+pub const RECURSION_OVER_BASE_BIN: &[u8] = include_bytes!("../../verifier/unrolled_base_layer.bin");
+pub const RECURSION_OVER_BASE_TXT: &[u8] =
+    include_bytes!("../../verifier/unrolled_base_layer.text");
+
+pub const RECURSION_OVER_RECURSION_BIN: &[u8] =
+    include_bytes!("../../verifier/unrolled_recursion_layer.bin");
+pub const RECURSION_OVER_RECURSION_TXT: &[u8] =
+    include_bytes!("../../verifier/unrolled_recursion_layer.text");
+
+impl UnrolledProver {
+    pub fn new(path_without_bin: &String) -> Self {
+        let base_level = {
+            let bin_path = format!("{}.bin", path_without_bin);
+            let text_path = format!("{}.text", path_without_bin);
+
+            let (binary, binary_u32) = read_and_pad_binary(Path::new(&bin_path));
+            let (text, text_u32) = read_and_pad_binary(Path::new(&text_path));
+
+            println!("Computing setup");
+            let base_layer_setup =
+                execution_utils::unrolled::compute_setup_for_machine_configuration::<
+                    IMStandardIsaConfigWithUnsignedMulDiv,
+                >(&binary, &text);
+            let base_layer_compiled_layouts =
+                execution_utils::setups::get_unrolled_circuits_artifacts_for_machine_type::<
+                    IMStandardIsaConfigWithUnsignedMulDiv,
+                >(&binary_u32);
+            UnrolledProverLevel {
+                binary,
+                text,
+                binary_u32,
+                text_u32,
+                setup: base_layer_setup,
+                compiled_layouts: base_layer_compiled_layouts,
+            }
+        };
+
+        let recursion_over_base = {
+            let (binary, binary_u32) = pad_binary(RECURSION_OVER_BASE_BIN.to_vec());
+            let (text, text_u32) = pad_binary(RECURSION_OVER_BASE_TXT.to_vec());
+
+            let setup = execution_utils::unrolled::compute_setup_for_machine_configuration::<
+                IWithoutByteAccessIsaConfigWithDelegation,
+            >(&binary, &text);
+            let compiled_layouts =
+                execution_utils::setups::get_unrolled_circuits_artifacts_for_machine_type::<
+                    IWithoutByteAccessIsaConfigWithDelegation,
+                >(&binary_u32);
+
+            UnrolledProverLevel {
+                binary,
+                text,
+                binary_u32,
+                text_u32,
+                setup,
+                compiled_layouts,
+            }
+        };
+
+        let recursion_over_recursion = {
+            let (binary, binary_u32) = pad_binary(RECURSION_OVER_RECURSION_BIN.to_vec());
+            let (text, text_u32) = pad_binary(RECURSION_OVER_RECURSION_TXT.to_vec());
+
+            let setup = execution_utils::unrolled::compute_setup_for_machine_configuration::<
+                IWithoutByteAccessIsaConfigWithDelegation,
+            >(&binary, &text);
+            let compiled_layouts =
+                execution_utils::setups::get_unrolled_circuits_artifacts_for_machine_type::<
+                    IWithoutByteAccessIsaConfigWithDelegation,
+                >(&binary_u32);
+
+            UnrolledProverLevel {
+                binary,
+                text,
+                binary_u32,
+                text_u32,
+                setup,
+                compiled_layouts,
+            }
+        };
+
+        let mut configuration = ExecutionProverConfiguration::default();
+        configuration.replay_worker_threads_count = 8;
+        let mut prover = ExecutionProver::with_configuration(configuration);
+        prover.add_binary(
+            0,
+            ExecutionKind::Unrolled,
+            MachineType::FullUnsigned,
+            base_level.binary_u32.clone(),
+            base_level.text_u32.clone(),
+        );
+        prover.add_binary(
+            1,
+            ExecutionKind::Unrolled,
+            MachineType::Reduced,
+            recursion_over_base.binary_u32.clone(),
+            recursion_over_base.text_u32.clone(),
+        );
+
+        prover.add_binary(
+            2,
+            ExecutionKind::Unrolled,
+            MachineType::Reduced,
+            recursion_over_recursion.binary_u32.clone(),
+            recursion_over_recursion.text_u32.clone(),
+        );
+        Self {
+            base_level,
+            prover,
+            recursion_over_base,
+            recursion_over_recursion,
+        }
+    }
+
+    pub fn prove(&self, data: Vec<u32>) {
+        println!("Computing proof");
+
+        let source = QuasiUARTSource::new_with_reads(data);
+        let start_time = std::time::Instant::now();
+        let result = self
+            .prover
+            .commit_memory_and_prove(0, 0, 1 << 36, source.clone());
+        let base_proof = UnrolledProgramProof {
+            final_pc: result.final_pc,
+            final_timestamp: result.final_timestamp,
+            circuit_families_proofs: result.circuit_families_proofs,
+            inits_and_teardowns_proofs: result.inits_and_teardowns_proofs,
+            delegation_proofs: result.delegation_proofs,
+            register_final_values: result.register_final_values,
+            recursion_chain_preimage: None,
+            recursion_chain_hash: None,
+        };
+        println!(
+            "Basic proof done in {:.3}s {}",
+            start_time.elapsed().as_secs_f64(),
+            base_proof.debug_info()
+        );
+
+        // Now recursion - first step.
+
+        let proof = {
+            let start_time = std::time::Instant::now();
+
+            let mut witness = self.base_level.setup.flatten_for_recursion();
+            witness.extend(base_proof.flatten_into_responses(
+                &[1984, 1991, 1994, 1995],
+                &self.base_level.compiled_layouts,
+            ));
+            let source = QuasiUARTSource::new_with_reads(witness);
+            let result = self
+                .prover
+                .commit_memory_and_prove(0, 1, 1 << 36, source.clone());
+            let mut proof = UnrolledProgramProof {
+                final_pc: result.final_pc,
+                final_timestamp: result.final_timestamp,
+                circuit_families_proofs: result.circuit_families_proofs,
+                inits_and_teardowns_proofs: result.inits_and_teardowns_proofs,
+                delegation_proofs: result.delegation_proofs,
+                register_final_values: result.register_final_values,
+                recursion_chain_preimage: None,
+                recursion_chain_hash: None,
+            };
+            // make a hash chain
+            let (hash_chain, preimage) =
+                UnrolledProgramSetup::begin_recursion_chain(&self.base_level.setup.end_params);
+            proof.recursion_chain_hash = Some(hash_chain);
+            proof.recursion_chain_preimage = Some(preimage);
+            println!(
+                "Recursion over base proof done in {:.3}s {}",
+                start_time.elapsed().as_secs_f64(),
+                proof.debug_info()
+            );
+            proof
+        };
+        // Now real recursion.
+
+        let mut previous_setup = self.recursion_over_base.setup.clone();
+        let mut previous_compiled_layouts = self.recursion_over_base.compiled_layouts.clone();
+        let mut proof = proof;
+
+        for round in 0..3 {
+            let start_time = std::time::Instant::now();
+            let mut witness = previous_setup.flatten_for_recursion();
+            witness.extend(proof.flatten_into_responses(&[1991], &previous_compiled_layouts));
+            let source = QuasiUARTSource::new_with_reads(witness);
+            let result = self
+                .prover
+                .commit_memory_and_prove(0, 2, 1 << 36, source.clone());
+
+            let (hash_chain, preimage) = UnrolledProgramSetup::continue_recursion_chain(
+                &previous_setup.end_params,
+                &proof.recursion_chain_hash.expect("has recursion chain"),
+                &proof
+                    .recursion_chain_preimage
+                    .expect("has recursion preimage"),
+            );
+            proof = UnrolledProgramProof {
+                final_pc: result.final_pc,
+                final_timestamp: result.final_timestamp,
+                circuit_families_proofs: result.circuit_families_proofs,
+                inits_and_teardowns_proofs: result.inits_and_teardowns_proofs,
+                delegation_proofs: result.delegation_proofs,
+                register_final_values: result.register_final_values,
+                recursion_chain_preimage: Some(preimage),
+                recursion_chain_hash: Some(hash_chain),
+            };
+            // make a hash chain
+            println!(
+                "Recursion round {} over recursion proof done in {:.3}s {}",
+                round,
+                start_time.elapsed().as_secs_f64(),
+                proof.debug_info()
+            );
+            previous_compiled_layouts = self.recursion_over_recursion.compiled_layouts.clone();
+            previous_setup = self.recursion_over_recursion.setup.clone();
+        }
+    }
 }

@@ -126,6 +126,19 @@ pub struct UnrolledProgramProof {
 }
 
 impl UnrolledProgramProof {
+    pub fn debug_info(&self) -> String {
+        let proofs: usize = self
+            .circuit_families_proofs
+            .iter()
+            .map(|(_, v)| v.len())
+            .sum();
+        let delegation_proofs: usize = self.delegation_proofs.iter().map(|(_, v)| v.len()).sum();
+        format!(
+            "Proofs: {} circuit family proofs, {} delegation proofs",
+            proofs, delegation_proofs
+        )
+    }
+
     pub fn flatten_into_responses(
         &self,
         allowed_delegation_circuits: &[u32],
