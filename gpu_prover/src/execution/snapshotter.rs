@@ -1,6 +1,5 @@
 use crate::allocator::host::ConcurrentStaticHostAllocator;
 use cs::definitions::TimestampScalar;
-use fft::GoodAllocator;
 use prover::risc_v_simulator::machine_mode_only_unrolled::{
     MemoryOpcodeTracingDataWithTimestamp, NonMemoryOpcodeTracingDataWithTimestamp,
 };
@@ -17,14 +16,14 @@ pub(crate) struct OnceSnapshotter {
     pub memory_reads: Vec<(u32, (u32, u32))>,
 }
 
-const MEMORY_READS_PER_CYCLE: usize = 4;
+const MAX_MEMORY_READS_PER_CYCLE: usize = 8;
 
 impl OnceSnapshotter {
     pub fn new_for_period(period: usize) -> Self {
         Self {
             period,
             non_determinism_reads: Vec::with_capacity(period),
-            memory_reads: Vec::with_capacity(period * MEMORY_READS_PER_CYCLE),
+            memory_reads: Vec::with_capacity(period * MAX_MEMORY_READS_PER_CYCLE),
         }
     }
 }
@@ -32,12 +31,23 @@ impl OnceSnapshotter {
 impl<C: Counters> riscv_transpiler::vm::Snapshotter<C> for OnceSnapshotter {
     #[inline(always)]
     fn take_snapshot(&mut self, _state: &State<C>) {
-        assert!(self.non_determinism_reads.len() <= self.period);
-        assert!(self.memory_reads.len() <= self.period * MEMORY_READS_PER_CYCLE);
+        assert!(
+            self.non_determinism_reads.len() <= self.period,
+            "non_determinism_reads len: {}, allocation: {}",
+            self.non_determinism_reads.len(),
+            self.period
+        );
+        assert!(
+            self.memory_reads.len() <= self.period * MAX_MEMORY_READS_PER_CYCLE,
+            "memory_reads len: {}, allocation: {}",
+            self.memory_reads.len(),
+            self.period * MAX_MEMORY_READS_PER_CYCLE
+        );
     }
 
     #[inline(always)]
     fn append_non_determinism_read(&mut self, value: u32) {
+        debug_assert!(self.non_determinism_reads.len() < self.period);
         unsafe { self.non_determinism_reads.extend_one_unchecked(value) }
     }
 
@@ -51,6 +61,7 @@ impl<C: Counters> riscv_transpiler::vm::Snapshotter<C> for OnceSnapshotter {
     ) {
         let read_timestamp = (read_timestamp as u32, (read_timestamp >> 32) as u32);
         let value = (read_value, read_timestamp);
+        debug_assert!(self.memory_reads.len() < self.period * MAX_MEMORY_READS_PER_CYCLE);
         unsafe { self.memory_reads.extend_one_unchecked(value) }
     }
 }
@@ -60,7 +71,7 @@ type A = ConcurrentStaticHostAllocator;
 pub(crate) struct PtrRange<T> {
     pub start: *mut T,
     pub end: *mut T,
-    pub chunk: Option<Arc<Vec<T, A>>>,
+    pub _chunk: Option<Arc<Vec<T, A>>>,
 }
 
 impl<T> Default for PtrRange<T> {
@@ -68,7 +79,7 @@ impl<T> Default for PtrRange<T> {
         Self {
             start: std::ptr::null_mut(),
             end: std::ptr::null_mut(),
-            chunk: None,
+            _chunk: None,
         }
     }
 }
