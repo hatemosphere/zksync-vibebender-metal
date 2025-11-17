@@ -32,7 +32,6 @@ pub(crate) fn nd_read<C: Counters, R: RAM, ND: NonDeterminismCSRSource>(
     let traced_data = NonMemoryOpcodeTracingDataWithTimestamp {
         opcode_data: NonMemoryOpcodeTracingData {
             initial_pc: state.pc,
-            opcode: 0u32,
             rs1_value,
             rs2_value,
             rd_old_value,
@@ -63,7 +62,6 @@ pub(crate) fn nd_write<C: Counters, R: RAM>(
     let traced_data = NonMemoryOpcodeTracingDataWithTimestamp {
         opcode_data: NonMemoryOpcodeTracingData {
             initial_pc: state.pc,
-            opcode: 0u32,
             rs1_value,
             rs2_value,
             rd_old_value,

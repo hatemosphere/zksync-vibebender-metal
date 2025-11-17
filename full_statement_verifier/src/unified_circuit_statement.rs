@@ -1,4 +1,5 @@
 use super::*;
+use crate::imports::*;
 use crate::unrolled_proof_statement::read_setups;
 use common_constants::{INITIAL_PC, INITIAL_TIMESTAMP};
 use verifier_common::{cs::definitions::split_timestamp, DefaultNonDeterminismSource};
@@ -397,17 +398,17 @@ pub fn verify_unified_circuit_recursion_layer() -> [u32; 16] {
     }
 }
 
-pub const OP_VERIFY_UNROLLED_RECURSION_LAYER: u32 = 1;
-pub const OP_VERIFY_UNIFIED_RECURSION_LAYER: u32 = 2;
-
 pub fn verify_unrolled_or_unified_circuit_recursion_layer() -> [u32; 16] {
     // we just branch
     let op_type = DefaultNonDeterminismSource::read_word();
+    use crate::definitions::*;
     match op_type {
-        OP_VERIFY_UNROLLED_RECURSION_LAYER => {
+        OP_VERIFY_UNROLLED_RECURSION_LAYER_IN_UNIFIED_CIRCUIT => {
             crate::unrolled_proof_statement::verify_unrolled_recursion_layer()
         }
-        OP_VERIFY_UNIFIED_RECURSION_LAYER => verify_unified_circuit_recursion_layer(),
+        OP_VERIFY_UNIFIED_RECURSION_LAYER_IN_UNIFIED_CIRCUIT => {
+            verify_unified_circuit_recursion_layer()
+        }
         _ => {
             panic!("Uknown op");
         }
