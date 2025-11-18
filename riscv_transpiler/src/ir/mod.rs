@@ -665,9 +665,13 @@ pub fn preprocess_bytecode<OPT: DecodingOptions>(bytecode: &[u32]) -> Vec<Instru
 
                 instr
             }
-            opcode @ _ => {
-                panic!("Unknown opcode 0x{:08x}", opcode);
+            _ => {
+                // just some opcode of unknown nature, may be padding or whatever. Just invalid
+                illegal_instr
             }
+            // opcode @ _ => {
+            //     panic!("Unknown opcode 0x{:08x}", opcode);
+            // }
         };
 
         instructions[i] = instruction;
