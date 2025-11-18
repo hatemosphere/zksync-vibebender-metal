@@ -27,7 +27,7 @@ impl OnceSnapshotter {
         Self {
             period,
             initial_timestamp: state.timestamp,
-            reads: Vec::with_capacity(period + period * MAX_MEMORY_READS_PER_CYCLE * 3),
+            reads: Vec::with_capacity(Self::get_max_reads_len(period)),
         }
     }
 
@@ -41,7 +41,7 @@ impl OnceSnapshotter {
     }
 
     fn get_max_reads_len(period: usize) -> usize {
-        period + period * MAX_MEMORY_READS_PER_CYCLE * 3
+        period + period * MAX_MEMORY_READS_PER_CYCLE
     }
 
     #[inline(always)]
