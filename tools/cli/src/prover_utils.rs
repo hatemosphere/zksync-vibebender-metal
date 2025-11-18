@@ -929,7 +929,7 @@ impl UnrolledProver {
         }
     }
 
-    pub fn prove(&self, data: Vec<u32>) -> UnrolledProgramProof {
+    pub fn prove(&self, data: Vec<u32>) -> (UnrolledProgramProof, u64) {
         println!("Computing proof");
 
         let source = QuasiUARTSource::new_with_reads(data);
@@ -952,6 +952,8 @@ impl UnrolledProver {
             start_time.elapsed().as_secs_f64(),
             base_proof.debug_info()
         );
+
+        let cycles = result.final_timestamp / 4;
 
         // Now recursion - first step.
 
@@ -1051,6 +1053,6 @@ impl UnrolledProver {
                 break;
             }
         }
-        proof
+        (proof, cycles)
     }
 }
