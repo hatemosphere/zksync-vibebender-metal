@@ -209,6 +209,11 @@ pub mod verifier_binaries {
         include_bytes!("../../tools/verifier/recursion_in_unrolled_layer.bin");
     // include_bytes!("../../tools/verifier/universal.bin");
 
+    pub const RECURSION_UNROLLED_BIN: &[u8] =
+        include_bytes!("../../tools/verifier/recursion_in_unrolled_layer.bin");
+    pub const RECURSION_UNROLLED_TXT: &[u8] =
+        include_bytes!("../../tools/verifier/recursion_in_unrolled_layer.text");
+
     // Methods to fetch the verification keys for the binaries above.
     // They are usually refreshed with build_vk.sh
     pub fn base_layer_verifier_vk() -> VerificationKey {
