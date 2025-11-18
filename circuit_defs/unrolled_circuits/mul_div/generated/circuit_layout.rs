@@ -1942,6 +1942,34 @@ pub const VERIFIER_COMPILED_LAYOUT: VerifierCompiledCircuitArtifact<'static, Mer
                 ],
                 constant_term: Mersenne31Field(0u32),
             },
+            StaticVerifierCompiledDegree1Constraint {
+                linear_terms: &[
+                    (
+                        Mersenne31Field(524288u32),
+                        ColumnAddress::WitnessSubtree(51usize),
+                    ),
+                    (
+                        Mersenne31Field(2147483646u32),
+                        ColumnAddress::MemorySubtree(20usize),
+                    ),
+                    (Mersenne31Field(1u32), ColumnAddress::MemorySubtree(24usize)),
+                ],
+                constant_term: Mersenne31Field(2147483643u32),
+            },
+            StaticVerifierCompiledDegree1Constraint {
+                linear_terms: &[
+                    (
+                        Mersenne31Field(2147483646u32),
+                        ColumnAddress::WitnessSubtree(51usize),
+                    ),
+                    (
+                        Mersenne31Field(2147483646u32),
+                        ColumnAddress::MemorySubtree(21usize),
+                    ),
+                    (Mersenne31Field(1u32), ColumnAddress::MemorySubtree(25usize)),
+                ],
+                constant_term: Mersenne31Field(0u32),
+            },
         ],
         state_linkage_constraints: &[],
         public_inputs: &[],

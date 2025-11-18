@@ -1215,7 +1215,11 @@ pub(crate) fn replay_non_mem<
     result
 }
 
-pub(crate) fn replay_mem<const FAMILY_IDX: u8, A: GoodAllocator, const ROM_BOUND_SECOND_WORD_BITS: usize>(
+pub(crate) fn replay_mem<
+    const FAMILY_IDX: u8,
+    A: GoodAllocator,
+    const ROM_BOUND_SECOND_WORD_BITS: usize,
+>(
     tape: &impl riscv_transpiler::vm::InstructionTape,
     snapshotter: &riscv_transpiler::vm::SimpleSnapshotter<
         riscv_transpiler::vm::DelegationsAndFamiliesCounters,
