@@ -56,7 +56,7 @@ impl<C: Counters> riscv_transpiler::vm::Snapshotter<C> for OnceSnapshotter {
     fn take_snapshot_if_needed(&mut self, state: &State<C>) -> bool {
         let cycles_executed =
             ((state.timestamp - self.initial_timestamp) / TIMESTAMP_STEP) as usize;
-        self.period >= cycles_executed
+        self.period <= cycles_executed
     }
 
     #[inline(always)]
