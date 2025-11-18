@@ -801,7 +801,6 @@ pub fn generate_oracle_data_from_metadata(metadata_path: &String) -> (ProofMetad
 pub struct UnrolledProver {
     pub base_level: UnrolledProverLevel,
     pub recursion_over_base: UnrolledProverLevel,
-    pub recursion_over_recursion: UnrolledProverLevel,
     pub prover: ExecutionProver,
 }
 
@@ -872,30 +871,6 @@ impl UnrolledProver {
             }
         };
 
-        let recursion_over_recursion = {
-            let (binary, binary_u32) = pad_binary(RECURSION_UNROLLED_BIN.to_vec());
-            let (text, text_u32) = pad_binary(RECURSION_UNROLLED_TXT.to_vec());
-
-            println!("Computing recursion over recursion setup");
-
-            let setup = execution_utils::unrolled::compute_setup_for_machine_configuration::<
-                IWithoutByteAccessIsaConfigWithDelegation,
-            >(&binary, &text);
-            let compiled_layouts =
-                execution_utils::setups::get_unrolled_circuits_artifacts_for_machine_type::<
-                    IWithoutByteAccessIsaConfigWithDelegation,
-                >(&binary_u32);
-
-            UnrolledProverLevel {
-                binary,
-                text,
-                binary_u32,
-                text_u32,
-                setup,
-                compiled_layouts,
-            }
-        };
-
         let mut configuration = ExecutionProverConfiguration::default();
         configuration.replay_worker_threads_count = replay_worker_threads_count;
         let mut prover = ExecutionProver::with_configuration(configuration);
@@ -914,18 +889,10 @@ impl UnrolledProver {
             recursion_over_base.text_u32.clone(),
         );
 
-        prover.add_binary(
-            2,
-            ExecutionKind::Unrolled,
-            MachineType::Reduced,
-            recursion_over_recursion.binary_u32.clone(),
-            recursion_over_recursion.text_u32.clone(),
-        );
         Self {
             base_level,
             prover,
             recursion_over_base,
-            recursion_over_recursion,
         }
     }
 
@@ -999,8 +966,8 @@ impl UnrolledProver {
         };
         // Now real recursion.
 
-        let mut previous_setup = self.recursion_over_base.setup.clone();
-        let mut previous_compiled_layouts = self.recursion_over_base.compiled_layouts.clone();
+        let previous_setup = self.recursion_over_base.setup.clone();
+        let previous_compiled_layouts = self.recursion_over_base.compiled_layouts.clone();
         let mut proof = proof;
 
         for round in 0..6 {
@@ -1018,7 +985,7 @@ impl UnrolledProver {
             let source = QuasiUARTSource::new_with_reads(witness);
             let result = self
                 .prover
-                .commit_memory_and_prove(0, 2, 1 << 36, source.clone());
+                .commit_memory_and_prove(0, 1, 1 << 36, source.clone());
 
             let (hash_chain, preimage) = UnrolledProgramSetup::continue_recursion_chain(
                 &previous_setup.end_params,
@@ -1044,8 +1011,6 @@ impl UnrolledProver {
                 start_time.elapsed().as_secs_f64(),
                 proof.debug_info()
             );
-            previous_compiled_layouts = self.recursion_over_recursion.compiled_layouts.clone();
-            previous_setup = self.recursion_over_recursion.setup.clone();
 
             let (circuit_proofs, _) = proof.get_proof_counts();
             // For now, this is hardcoded.
