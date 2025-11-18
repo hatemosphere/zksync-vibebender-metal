@@ -10,6 +10,7 @@ use execution_utils::{
     },
     verifier_binaries::UNIVERSAL_CIRCUIT_VERIFIER,
 };
+#[cfg(feature = "gpu")]
 use gpu_prover::{
     execution::prover::{ExecutionKind, ExecutionProver, ExecutionProverConfiguration},
     machine_type::MachineType,
@@ -819,7 +820,7 @@ pub const RECURSION_UNROLLED_TXT: &[u8] =
     include_bytes!("../../verifier/recursion_in_unrolled_layer.text");
 
 impl UnrolledProver {
-    pub fn new(path_without_bin: &String) -> Self {
+    pub fn new(path_without_bin: &String, replay_worker_threads_count: usize) -> Self {
         let base_level = {
             let bin_path = format!("{}.bin", path_without_bin);
             let text_path = format!("{}.text", path_without_bin);
@@ -896,7 +897,7 @@ impl UnrolledProver {
         };
 
         let mut configuration = ExecutionProverConfiguration::default();
-        configuration.replay_worker_threads_count = 8;
+        configuration.replay_worker_threads_count = replay_worker_threads_count;
         let mut prover = ExecutionProver::with_configuration(configuration);
         prover.add_binary(
             0,
