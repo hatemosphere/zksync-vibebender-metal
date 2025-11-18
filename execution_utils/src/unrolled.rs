@@ -6,7 +6,6 @@ use trace_and_split::setups;
 
 use super::*;
 use prover::common_constants::TimestampScalar;
-use prover::cs::one_row_compiler::CompiledCircuitArtifact;
 use prover::cs::utils::split_timestamp;
 use prover::field::*;
 use prover::prover_stages::unrolled_prover::UnrolledModeProof;
