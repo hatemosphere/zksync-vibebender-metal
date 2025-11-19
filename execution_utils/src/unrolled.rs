@@ -15,6 +15,8 @@ use prover::risc_v_simulator;
 use setups::CompiledCircuitsSet;
 use trace_and_split::FinalRegisterValue;
 
+pub use setups::unrolled_circuits::get_unrolled_circuits_artifacts_for_machine_type;
+
 #[derive(Clone, Debug, Hash, serde::Serialize, serde::Deserialize)]
 pub struct UnrolledProgramSetup {
     pub expected_final_pc: u32,

@@ -16,6 +16,8 @@ use prover::risc_v_simulator;
 use setups::CompiledCircuitsSet;
 use trace_and_split::FinalRegisterValue;
 
+pub use setups::unrolled_circuits::get_unified_circuit_artifact_for_machine_type;
+
 pub fn compute_unified_setup_for_machine_configuration<C: MachineConfig>(
     binary_image: &[u8],
     text_section: &[u8],
