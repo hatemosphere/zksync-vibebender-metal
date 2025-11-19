@@ -11,6 +11,7 @@ use verifier_common::prover::fft::GoodAllocator;
 use verifier_common::prover::prover_stages::flatten_merkle_caps;
 use verifier_common::transcript::Blake2sBufferingTranscript;
 
+pub use prover_examples;
 pub use setups;
 
 mod constants;
