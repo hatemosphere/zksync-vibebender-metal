@@ -23,6 +23,9 @@ mod verifiers;
 pub mod unified_circuit;
 pub mod unrolled;
 
+#[cfg(feature = "gpu_prover")]
+pub mod unrolled_gpu;
+
 #[derive(Clone, Debug, ValueEnum, Serialize, Deserialize, PartialEq, Eq)]
 pub enum Machine {
     Standard,
