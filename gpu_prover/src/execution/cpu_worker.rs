@@ -30,9 +30,9 @@ const RAM_LOG_SIZE: u32 = 30;
 
 type Ram = RamWithRomRegion<RAM_LOG_SIZE>;
 
-pub trait NonDeterminism: NonDeterminismCSRSource<Ram> + Clone {}
+pub trait NonDeterminism: NonDeterminismCSRSource<Ram> {}
 
-impl<T> NonDeterminism for T where T: NonDeterminismCSRSource<Ram> + Clone {}
+impl<T> NonDeterminism for T where T: NonDeterminismCSRSource<Ram> {}
 
 const SNAPSHOT_PERIOD: usize = 1 << 22;
 
@@ -41,7 +41,7 @@ pub(crate) fn run_split_simulator(
     machine_type: MachineType,
     binary_image: impl Deref<Target = impl Deref<Target = [u32]>>,
     tape: impl Deref<Target = impl InstructionTape>,
-    mut non_determinism: impl NonDeterminism,
+    non_determinism: &mut impl NonDeterminism,
     cycles_limit: usize,
     snapshots: Sender<SplitSnapshot>,
     results: Sender<WorkerResult<A>>,
@@ -65,7 +65,7 @@ pub(crate) fn run_split_simulator(
             &mut snapshotter,
             tape.deref(),
             SNAPSHOT_PERIOD,
-            &mut non_determinism,
+            non_determinism,
         );
         let elapsed = instant.elapsed();
         total_elapsed += elapsed;
@@ -158,7 +158,7 @@ pub(crate) fn run_unified_simulator(
     batch_id: u64,
     binary_image: impl Deref<Target = impl Deref<Target = [u32]>>,
     tape: impl Deref<Target = impl InstructionTape>,
-    mut non_determinism: impl NonDeterminism,
+    non_determinism: &mut impl NonDeterminism,
     cycles_limit: usize,
     snapshots: Sender<UnifiedSnapshot>,
     results: Sender<WorkerResult<A>>,
@@ -186,7 +186,7 @@ pub(crate) fn run_unified_simulator(
             &mut snapshotter,
             tape.deref(),
             SNAPSHOT_PERIOD,
-            &mut non_determinism,
+            non_determinism,
         );
         let elapsed = instant.elapsed();
         total_elapsed += elapsed;
@@ -468,7 +468,7 @@ mod tests {
         let text_section = read_binary(&Path::new("../examples/hashed_fibonacci/app.text"));
         // let nd = vec![1 << 22, 0];
         let nd = vec![0, 1 << 16];
-        let non_determinism_source = QuasiUARTSource::new_with_reads(nd.clone());
+        let mut non_determinism_source = QuasiUARTSource::new_with_reads(nd.clone());
         let preprocessed_bytecode = text_section
             .iter()
             .copied()
@@ -491,7 +491,7 @@ mod tests {
             MachineType::Full,
             binary_image.clone(),
             tape.clone(),
-            non_determinism_source,
+            &mut non_determinism_source,
             1 << 30,
             snapshots_sender,
             results_sender,
@@ -499,7 +499,7 @@ mod tests {
         );
         results_receiver.iter().for_each(|_| {});
         drop(results_receiver);
-        let non_determinism_source = QuasiUARTSource::new_with_reads(nd.clone());
+        let mut non_determinism_source = QuasiUARTSource::new_with_reads(nd.clone());
         let preprocessed_bytecode = text_section
             .iter()
             .copied()
@@ -521,7 +521,7 @@ mod tests {
             MachineType::Full,
             binary_image,
             tape,
-            non_determinism_source,
+            &mut non_determinism_source,
             1 << 30,
             snapshots_sender,
             results_sender,
