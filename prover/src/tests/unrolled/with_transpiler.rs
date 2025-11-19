@@ -152,6 +152,9 @@ pub fn run_basic_unrolled_test_in_transpiler_with_word_specialization_impl(
         println!("x{} = {}", reg_idx, reg.value);
     }
 
+    let mut expected_final_state = state;
+    expected_final_state.counters = Default::default();
+
     let final_pc = state.pc;
     let final_timestamp = state.timestamp;
 
@@ -381,6 +384,7 @@ pub fn run_basic_unrolled_test_in_transpiler_with_word_specialization_impl(
             cycles_bound,
             &mut tracer,
         );
+        assert_eq!(expected_final_state, state);
 
         let (decoder_table_data, witness_gen_data) =
             &preprocessing_data[&ADD_SUB_LUI_AUIPC_MOP_CIRCUIT_FAMILY_IDX];
@@ -412,6 +416,8 @@ pub fn run_basic_unrolled_test_in_transpiler_with_word_specialization_impl(
             &worker,
             Global,
         );
+
+        ensure_memory_trace_consistency(&memory_trace, &full_trace);
 
         parse_state_permutation_elements_from_full_trace(
             &add_sub_circuit,
@@ -562,6 +568,7 @@ pub fn run_basic_unrolled_test_in_transpiler_with_word_specialization_impl(
             cycles_bound,
             &mut tracer,
         );
+        assert_eq!(expected_final_state, state);
 
         let (decoder_table_data, witness_gen_data) =
             &preprocessing_data[&JUMP_BRANCH_SLT_CIRCUIT_FAMILY_IDX];
@@ -592,6 +599,8 @@ pub fn run_basic_unrolled_test_in_transpiler_with_word_specialization_impl(
             &worker,
             Global,
         );
+
+        ensure_memory_trace_consistency(&memory_trace, &full_trace);
 
         parse_state_permutation_elements_from_full_trace(
             &jump_branch_circuit,
@@ -752,6 +761,7 @@ pub fn run_basic_unrolled_test_in_transpiler_with_word_specialization_impl(
             cycles_bound,
             &mut tracer,
         );
+        assert_eq!(expected_final_state, state);
 
         let (decoder_table_data, witness_gen_data) =
             &preprocessing_data[&SHIFT_BINARY_CSR_CIRCUIT_FAMILY_IDX];
@@ -782,6 +792,8 @@ pub fn run_basic_unrolled_test_in_transpiler_with_word_specialization_impl(
             &worker,
             Global,
         );
+
+        ensure_memory_trace_consistency(&memory_trace, &full_trace);
 
         parse_state_permutation_elements_from_full_trace(
             &shift_binop_csrrw_circuit,
@@ -937,6 +949,7 @@ pub fn run_basic_unrolled_test_in_transpiler_with_word_specialization_impl(
             cycles_bound,
             &mut tracer,
         );
+        assert_eq!(expected_final_state, state);
 
         let (decoder_table_data, witness_gen_data) =
             &preprocessing_data[&MUL_DIV_CIRCUIT_FAMILY_IDX];
@@ -967,6 +980,8 @@ pub fn run_basic_unrolled_test_in_transpiler_with_word_specialization_impl(
             &worker,
             Global,
         );
+
+        ensure_memory_trace_consistency(&memory_trace, &full_trace);
 
         parse_state_permutation_elements_from_full_trace(
             &mul_div_circuit,
@@ -1129,6 +1144,7 @@ pub fn run_basic_unrolled_test_in_transpiler_with_word_specialization_impl(
             cycles_bound,
             &mut tracer,
         );
+        assert_eq!(expected_final_state, state);
 
         let (decoder_table_data, witness_gen_data) =
             &preprocessing_data[&LOAD_STORE_WORD_ONLY_CIRCUIT_FAMILY_IDX];
@@ -1158,6 +1174,8 @@ pub fn run_basic_unrolled_test_in_transpiler_with_word_specialization_impl(
             &worker,
             Global,
         );
+
+        ensure_memory_trace_consistency(&memory_trace, &full_trace);
 
         parse_state_permutation_elements_from_full_trace(
             &word_load_store_circuit,
@@ -1318,6 +1336,7 @@ pub fn run_basic_unrolled_test_in_transpiler_with_word_specialization_impl(
             cycles_bound,
             &mut tracer,
         );
+        assert_eq!(expected_final_state, state);
 
         let (decoder_table_data, witness_gen_data) =
             &preprocessing_data[&LOAD_STORE_SUBWORD_ONLY_CIRCUIT_FAMILY_IDX];
@@ -1351,6 +1370,8 @@ pub fn run_basic_unrolled_test_in_transpiler_with_word_specialization_impl(
             &worker,
             Global,
         );
+
+        ensure_memory_trace_consistency(&memory_trace, &full_trace);
 
         parse_state_permutation_elements_from_full_trace(
             &subword_load_store_circuit,
@@ -1635,6 +1656,7 @@ pub fn run_basic_unrolled_test_in_transpiler_with_word_specialization_impl(
             cycles_bound,
             &mut tracer,
         );
+        assert_eq!(expected_final_state, state);
 
         // evaluate a witness and memory-only witness for each
 
@@ -1811,6 +1833,7 @@ pub fn run_basic_unrolled_test_in_transpiler_with_word_specialization_impl(
             cycles_bound,
             &mut tracer,
         );
+        assert_eq!(expected_final_state, state);
 
         // evaluate a witness and memory-only witness for each
 

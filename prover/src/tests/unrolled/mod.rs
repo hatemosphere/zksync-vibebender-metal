@@ -15,6 +15,7 @@ use cs::machine::NON_DETERMINISM_CSR;
 use risc_v_simulator::abstractions::non_determinism::QuasiUARTSource;
 use risc_v_simulator::{cycle::*, delegations::DelegationsCSRProcessor};
 use riscv_transpiler::witness::delegation::bigint::BigintDelegationWitness;
+use std::alloc::Allocator;
 use std::collections::BTreeSet;
 
 use crate::prover_stages::unrolled_prover::prove_configured_for_unrolled_circuits;
@@ -574,6 +575,31 @@ pub(crate) fn parse_delegation_ram_accesses_from_full_trace<const N: usize>(
             let (_, memory) = trace.current_row_split(witness.num_witness_columns);
             parse_delegation_ram_accesses(compiled_circuit, &*memory, write_set, read_set);
             trace.advance_row();
+        }
+    }
+}
+
+pub(crate) fn ensure_memory_trace_consistency<const N: usize, const M: usize>(
+    memory_trace: &MemoryOnlyWitnessEvaluationDataForExecutionFamily<N, impl Allocator + Clone>,
+    witness_trace: &WitnessEvaluationDataForExecutionFamily<M, impl Allocator + Clone>,
+) {
+    assert_eq!(
+        witness_trace.exec_trace.len(),
+        witness_trace.exec_trace.len()
+    );
+    let mut trace = witness_trace
+        .exec_trace
+        .row_view(0..(witness_trace.exec_trace.len() - 1));
+    let mut memory = memory_trace
+        .memory_trace
+        .row_view(0..(memory_trace.memory_trace.len() - 1));
+    for row in 0..(witness_trace.exec_trace.len() - 1) {
+        unsafe {
+            let (_, memory_in_witness) = trace.current_row_split(witness_trace.num_witness_columns);
+            let memory_row = memory.current_row();
+            assert_eq!(memory_in_witness, memory_row, "diverged at row {}", row);
+            trace.advance_row();
+            memory.advance_row();
         }
     }
 }
