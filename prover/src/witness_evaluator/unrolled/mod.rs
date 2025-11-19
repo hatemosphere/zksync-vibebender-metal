@@ -1052,11 +1052,15 @@ pub(crate) fn replay_non_mem<
         let mut snapshots_iter = snapshotter.snapshots.iter();
         let mut ram_range_start = 0;
 
+        let mut total_snapshots_processed = 0;
+
         // split snapshots over workers
         for _i in 0..worker.get_num_cores() {
             if current_snapshot == last_snapshot {
                 break;
             }
+
+            let initial_snapshot_idx = total_snapshots_processed;
 
             'inner: while current_snapshot
                 .state
@@ -1069,6 +1073,7 @@ pub(crate) fn replay_non_mem<
             ) < average_calls_per_worker
             {
                 if let Some(next_snapshot) = snapshots_iter.next() {
+                    total_snapshots_processed += 1;
                     current_snapshot = *next_snapshot;
                 } else {
                     break 'inner;
@@ -1162,9 +1167,9 @@ pub(crate) fn replay_non_mem<
                     &mut tracer,
                 );
 
-                assert_eq!(expected_final_snapshot_state.registers, state.registers);
-                assert_eq!(expected_final_snapshot_state.pc, state.pc);
-                assert_eq!(expected_final_snapshot_state.timestamp, state.timestamp);
+                assert_eq!(expected_final_snapshot_state.registers, state.registers, "diverged in thread {}: snapshots range {}..{}", _i, initial_snapshot_idx, total_snapshots_processed);
+                assert_eq!(expected_final_snapshot_state.pc, state.pc, "diverged in thread {}: snapshots range {}..{}", _i, initial_snapshot_idx, total_snapshots_processed);
+                assert_eq!(expected_final_snapshot_state.timestamp, state.timestamp, "diverged in thread {}: snapshots range {}..{}", _i, initial_snapshot_idx, total_snapshots_processed);
             });
 
             ram_range_start = ram_range_end;
@@ -1289,11 +1294,15 @@ pub(crate) fn replay_mem<
         let mut snapshots_iter = snapshotter.snapshots.iter();
         let mut ram_range_start = 0;
 
+        let mut total_snapshots_processed = 0;
+
         // split snapshots over workers
         for _i in 0..worker.get_num_cores() {
             if current_snapshot == last_snapshot {
                 break;
             }
+
+            let initial_snapshot_idx = total_snapshots_processed;
 
             'inner: while current_snapshot
                 .state
@@ -1306,6 +1315,7 @@ pub(crate) fn replay_mem<
             ) < average_calls_per_worker
             {
                 if let Some(next_snapshot) = snapshots_iter.next() {
+                    total_snapshots_processed += 1;
                     current_snapshot = *next_snapshot;
                 } else {
                     break 'inner;
@@ -1400,9 +1410,9 @@ pub(crate) fn replay_mem<
                     &mut tracer,
                 );
 
-                assert_eq!(expected_final_snapshot_state.registers, state.registers);
-                assert_eq!(expected_final_snapshot_state.pc, state.pc);
-                assert_eq!(expected_final_snapshot_state.timestamp, state.timestamp);
+                assert_eq!(expected_final_snapshot_state.registers, state.registers, "diverged in thread {}: snapshots range {}..{}", _i, initial_snapshot_idx, total_snapshots_processed);
+                assert_eq!(expected_final_snapshot_state.pc, state.pc, "diverged in thread {}: snapshots range {}..{}", _i, initial_snapshot_idx, total_snapshots_processed);
+                assert_eq!(expected_final_snapshot_state.timestamp, state.timestamp, "diverged in thread {}: snapshots range {}..{}", _i, initial_snapshot_idx, total_snapshots_processed);
             });
 
             ram_range_start = ram_range_end;
@@ -1524,17 +1534,22 @@ pub(crate) fn replay_generic_work<
         let mut snapshots_iter = snapshotter.snapshots.iter();
         let mut ram_range_start = 0;
 
+        let mut total_snapshots_processed = 0;
+
         // split snapshots over workers
         for _i in 0..worker.get_num_cores() {
             if current_snapshot == last_snapshot {
                 break;
             }
 
+            let initial_snapshot_idx = total_snapshots_processed;
+
             'inner: while cycles_fn(&current_snapshot.state.counters)
                 - cycles_fn(&starting_snapshot.state.counters)
                 < average_calls_per_worker
             {
                 if let Some(next_snapshot) = snapshots_iter.next() {
+                    total_snapshots_processed += 1;
                     current_snapshot = *next_snapshot;
                 } else {
                     break 'inner;
@@ -1615,9 +1630,9 @@ pub(crate) fn replay_generic_work<
                     &mut tracer,
                 );
 
-                assert_eq!(expected_final_snapshot_state.registers, state.registers);
-                assert_eq!(expected_final_snapshot_state.pc, state.pc);
-                assert_eq!(expected_final_snapshot_state.timestamp, state.timestamp);
+                assert_eq!(expected_final_snapshot_state.registers, state.registers, "diverged in thread {}: snapshots range {}..{}", _i, initial_snapshot_idx, total_snapshots_processed);
+                assert_eq!(expected_final_snapshot_state.pc, state.pc, "diverged in thread {}: snapshots range {}..{}", _i, initial_snapshot_idx, total_snapshots_processed);
+                assert_eq!(expected_final_snapshot_state.timestamp, state.timestamp, "diverged in thread {}: snapshots range {}..{}", _i, initial_snapshot_idx, total_snapshots_processed);
             });
 
             ram_range_start = ram_range_end;
