@@ -896,14 +896,13 @@ impl UnrolledProver {
         }
     }
 
-    pub fn prove(&self, data: impl riscv_transplier::NonDeterminism + Send + Sync + 'static) -> (UnrolledProgramProof, u64) {
+    pub fn prove(&self, source: impl riscv_transpiler::NonDeterminism + Send + Sync + 'static) -> (UnrolledProgramProof, u64) {
         println!("Computing proof");
 
-        let source = QuasiUARTSource::new_with_reads(data);
         let start_time = std::time::Instant::now();
         let result = self
             .prover
-            .commit_memory_and_prove(0, 0, 1 << 36, source.clone());
+            .commit_memory_and_prove(0, 0, 1 << 36, source);
         let base_proof = UnrolledProgramProof {
             final_pc: result.final_pc,
             final_timestamp: result.final_timestamp,
@@ -941,7 +940,7 @@ impl UnrolledProver {
             let source = QuasiUARTSource::new_with_reads(witness);
             let result = self
                 .prover
-                .commit_memory_and_prove(0, 1, 1 << 36, source.clone());
+                .commit_memory_and_prove(0, 1, 1 << 36, source);
             let mut proof = UnrolledProgramProof {
                 final_pc: result.final_pc,
                 final_timestamp: result.final_timestamp,
@@ -985,7 +984,7 @@ impl UnrolledProver {
             let source = QuasiUARTSource::new_with_reads(witness);
             let result = self
                 .prover
-                .commit_memory_and_prove(0, 1, 1 << 36, source.clone());
+                .commit_memory_and_prove(0, 1, 1 << 36, source);
 
             let (hash_chain, preimage) = UnrolledProgramSetup::continue_recursion_chain(
                 &previous_setup.end_params,
