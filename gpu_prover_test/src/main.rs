@@ -92,9 +92,11 @@ mod tests {
     fn prove_base_layer() {
         init_logger();
         let (binary, binary_u32) =
-            read_and_pad_binary(Path::new("../examples/hashed_fibonacci/app.bin"));
+            // read_and_pad_binary(Path::new("../examples/hashed_fibonacci/app.bin"));
+            read_and_pad_binary(Path::new("../riscv_transpiler/examples/keccak_f1600/app.bin"));
         let (text, text_u32) =
-            read_and_pad_binary(Path::new("../examples/hashed_fibonacci/app.text"));
+            // read_and_pad_binary(Path::new("../examples/hashed_fibonacci/app.text"));
+            read_and_pad_binary(Path::new("../riscv_transpiler/examples/keccak_f1600/app.text"));
         println!("Computing setup");
         let setup = execution_utils::unrolled::compute_setup_for_machine_configuration::<
             IMStandardIsaConfigWithUnsignedMulDiv,
@@ -118,7 +120,7 @@ mod tests {
             binary_u32.clone(),
             text_u32.clone(),
         );
-        let source = QuasiUARTSource::new_with_reads(vec![0, 0]);
+        let source = QuasiUARTSource::new_with_reads(vec![1 << 15, 1 << 10]);
         let result = prover.commit_memory_and_prove(0, 0, 1 << 36, source.clone());
         let gpu_proof = UnrolledProgramProof {
             final_pc: result.final_pc,
@@ -132,39 +134,41 @@ mod tests {
         };
         serde_json::to_writer_pretty(File::create("gpu_proof.json").unwrap(), &gpu_proof).unwrap();
 
-        // let worker = Worker::new_with_num_threads(8);
-        // let cpu_proof =
-        //     execution_utils::unrolled::prove_unrolled_for_machine_configuration_into_program_proof::<
-        //         IMStandardIsaConfigWithUnsignedMulDiv,
-        //     >(&binary_u32, &text_u32, 1 << 31, source, 1 << 30, &worker);
-        // serde_json::to_writer_pretty(File::create("cpu_proof.json").unwrap(), &cpu_proof).unwrap();
-        //
-        // compare_program_proofs(&cpu_proof, &gpu_proof);
+        let worker = Worker::new_with_num_threads(8);
+        let cpu_proof =
+            execution_utils::unrolled::prove_unrolled_for_machine_configuration_into_program_proof::<
+                IMStandardIsaConfigWithUnsignedMulDiv,
+            >(&binary_u32, &text_u32, 1 << 31, source, 1 << 30, &worker);
+        serde_json::to_writer_pretty(File::create("cpu_proof.json").unwrap(), &cpu_proof).unwrap();
+
+        compare_program_proofs(&cpu_proof, &gpu_proof);
     }
 
-    // #[test]
-    // fn verify_base_proof() {
-    //     let setup: UnrolledProgramSetup =
-    //         serde_json::from_reader(&File::open("setup.json").unwrap()).unwrap();
-    //     let layouts: CompiledCircuitsSet =
-    //         serde_json::from_reader(&File::open("layouts.json").unwrap()).unwrap();
-    //     let cpu_proof: UnrolledProgramProof =
-    //         serde_json::from_reader(&File::open("cpu_proof.json").unwrap()).unwrap();
-    //     let gpu_proof: UnrolledProgramProof =
-    //         serde_json::from_reader(&File::open("gpu_proof.json").unwrap()).unwrap();
-    //
-    //     println!("Verifying CPU proof...");
-    //     let result =
-    //         execution_utils::unrolled::verify_unrolled_layer_proof(&cpu_proof, &setup, &layouts, true)
-    //             .expect("is valid proof");
-    //     assert_eq!(result.iter().all(|el| *el == 0), false);
-    //
-    //     println!("Verifying GPU proof...");
-    //     let result =
-    //         execution_utils::unrolled::verify_unrolled_layer_proof(&cpu_proof, &setup, &layouts, true)
-    //             .expect("is valid proof");
-    //     assert_eq!(result.iter().all(|el| *el == 0), false);
-    // }
+    #[cfg(feature = "verifier_80")]
+    #[test]
+    fn verify_base_proof() {
+        let setup: UnrolledProgramSetup =
+            serde_json::from_reader(&File::open("setup.json").unwrap()).unwrap();
+        let layouts: CompiledCircuitsSet =
+            serde_json::from_reader(&File::open("layouts.json").unwrap()).unwrap();
+        // let cpu_proof: UnrolledProgramProof =
+        //     serde_json::from_reader(&File::open("cpu_proof.json").unwrap()).unwrap();
+        let gpu_proof: UnrolledProgramProof =
+            serde_json::from_reader(&File::open("gpu_proof.json").unwrap()).unwrap();
+
+        // println!("Verifying CPU proof...");
+        // let result =
+        //     execution_utils::unrolled::verify_unrolled_layer_proof(&cpu_proof, &setup, &layouts, true)
+        //         .expect("is valid proof");
+        // assert_eq!(result.iter().all(|el| *el == 0), false);
+
+        println!("Verifying GPU proof...");
+        let result = execution_utils::unrolled::verify_unrolled_layer_proof(
+            &gpu_proof, &setup, &layouts, true,
+        )
+        .expect("is valid proof");
+        assert_eq!(result.iter().all(|el| *el == 0), false);
+    }
 
     #[test]
     fn prove_recursion_over_base() {
@@ -266,23 +270,33 @@ mod tests {
         // compare_program_proofs(&cpu_proof, &gpu_proof);
     }
 
-    // #[test]
-    // fn verify_recursion_proof() {
-    //     let setup: UnrolledProgramSetup = serde_json::from_reader(&File::open("setup_recursion_over_base.json").unwrap()).unwrap();
-    //     let layouts: CompiledCircuitsSet = serde_json::from_reader(&File::open("layouts_recursion_over_base.json").unwrap()).unwrap();
-    //     // let cpu_proof: UnrolledProgramProof = serde_json::from_reader(&File::open("cpu_proof_recursion_over_base.json").unwrap()).unwrap();
-    //     let gpu_proof: UnrolledProgramProof = serde_json::from_reader(&File::open("gpu_proof_recursion_over_base.json").unwrap()).unwrap();
-    //
-    //     assert_eq!(setup.circuit_families_setups.len(), 4);
-    //
-    //     // println!("Verifying CPU proof...");
-    //     // let result = execution_utils::unrolled::verify_unrolled_layer_proof(&cpu_proof, &setup, &layouts, false).expect("is valid proof");
-    //     // assert_eq!(result.iter().all(|el| *el == 0), false);
-    //
-    //     println!("Verifying GPU proof...");
-    //     let result = execution_utils::unrolled::verify_unrolled_layer_proof(&gpu_proof, &setup, &layouts, false).expect("is valid proof");
-    //     assert_eq!(result.iter().all(|el| *el == 0), false);
-    // }
+    #[cfg(feature = "verifier_80")]
+    #[test]
+    fn verify_recursion_proof() {
+        let setup: UnrolledProgramSetup =
+            serde_json::from_reader(&File::open("setup_recursion_over_base.json").unwrap())
+                .unwrap();
+        let layouts: CompiledCircuitsSet =
+            serde_json::from_reader(&File::open("layouts_recursion_over_base.json").unwrap())
+                .unwrap();
+        // let cpu_proof: UnrolledProgramProof = serde_json::from_reader(&File::open("cpu_proof_recursion_over_base.json").unwrap()).unwrap();
+        let gpu_proof: UnrolledProgramProof =
+            serde_json::from_reader(&File::open("gpu_proof_recursion_over_base.json").unwrap())
+                .unwrap();
+
+        assert_eq!(setup.circuit_families_setups.len(), 4);
+
+        // println!("Verifying CPU proof...");
+        // let result = execution_utils::unrolled::verify_unrolled_layer_proof(&cpu_proof, &setup, &layouts, false).expect("is valid proof");
+        // assert_eq!(result.iter().all(|el| *el == 0), false);
+
+        println!("Verifying GPU proof...");
+        let result = execution_utils::unrolled::verify_unrolled_layer_proof(
+            &gpu_proof, &setup, &layouts, false,
+        )
+        .expect("is valid proof");
+        assert_eq!(result.iter().all(|el| *el == 0), false);
+    }
 
     #[test]
     fn prove_recursion_over_recursion() {
