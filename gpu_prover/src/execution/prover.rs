@@ -29,17 +29,19 @@ use prover::definitions::{AuxArgumentsBoundaryValues, ExternalChallenges, Extern
 use prover::merkle_trees::MerkleTreeCapVarLength;
 use prover::prover_stages::unrolled_prover::UnrolledModeProof;
 use prover::prover_stages::Proof;
+use prover::risc_v_simulator::abstractions::non_determinism::QuasiUARTSource;
 use rayon::iter::IntoParallelIterator;
 use rayon::iter::ParallelIterator;
 use riscv_transpiler::ir::{
     preprocess_bytecode, FullMachineDecoderConfig, FullUnsignedMachineDecoderConfig,
     ReducedMachineDecoderConfig,
 };
-use riscv_transpiler::vm::{NonDeterminismCSRSource, SimpleTape};
+use riscv_transpiler::vm::{NonDeterminismCSRSource, RamPeek, SimpleTape};
 use std::collections::{BTreeMap, BTreeSet, HashMap, VecDeque};
 use std::fmt::Debug;
 use std::hash::Hash;
-use std::sync::Arc;
+use std::ops::DerefMut;
+use std::sync::{Arc, Mutex};
 use std::time::Instant;
 use trace_and_split::{
     fs_transform_for_memory_and_delegation_arguments_for_unrolled_circuits, FinalRegisterValue,
@@ -308,7 +310,7 @@ impl ExecutionProver {
         batch_id: u64,
         binary_key: usize,
         cycles_limit: usize,
-        non_determinism_source: impl NonDeterminismCSRSource + Send + 'static,
+        non_determinism_source: Arc<Mutex<impl NonDeterminismCSRSource + Send + 'static>>,
         external_challenges: Option<ExternalChallenges>,
     ) -> ExecutionProverResult {
         assert!(proving || cache.as_ref().map_or(true, |c| c.is_empty()));
@@ -375,7 +377,7 @@ impl ExecutionProver {
                     machine_type,
                     binary_image,
                     instruction_tape,
-                    non_determinism_source,
+                    non_determinism_source.lock().unwrap().deref_mut(),
                     cycles_limit,
                     split_snapshot_sender,
                     work_results_sender,
@@ -385,7 +387,7 @@ impl ExecutionProver {
                     batch_id,
                     binary_image,
                     instruction_tape,
-                    non_determinism_source,
+                    non_determinism_source.lock().unwrap().deref_mut(),
                     cycles_limit,
                     unified_snapshot_sender,
                     work_results_sender,
@@ -455,7 +457,7 @@ impl ExecutionProver {
                                     tracing_data: Option<TracingData<A>>|
          -> GpuWorkRequest<A> {
             let mut circuit_type_value = None;
-            let mut sequence_id_vealue = None;
+            let mut sequence_id_value = None;
             let inits_and_teardowns = if let Some(inits_and_teardowns) = inits_and_teardowns {
                 let InitsAndTeardownsData {
                     circuit_type,
@@ -463,7 +465,7 @@ impl ExecutionProver {
                     inits_and_teardowns,
                 } = inits_and_teardowns;
                 circuit_type_value = Some(circuit_type);
-                sequence_id_vealue = Some(sequence_id);
+                sequence_id_value = Some(sequence_id);
                 inits_and_teardowns
             } else {
                 None
@@ -479,13 +481,13 @@ impl ExecutionProver {
                     circuit_type_value.get_or_insert(circuit_type),
                     &circuit_type
                 );
-                assert_eq!(sequence_id_vealue.get_or_insert(sequence_id), &sequence_id);
+                assert_eq!(sequence_id_value.get_or_insert(sequence_id), &sequence_id);
                 Some(tracing_data)
             } else {
                 None
             };
             let circuit_type = circuit_type_value.unwrap();
-            let sequence_id = sequence_id_vealue.unwrap();
+            let sequence_id = sequence_id_value.unwrap();
             let precomputations = match circuit_type {
                 CircuitType::Delegation(_)
                 | CircuitType::Unrolled(UnrolledCircuitType::InitsAndTeardowns) => {
@@ -841,7 +843,7 @@ impl ExecutionProver {
         batch_id: u64,
         binary_key: usize,
         cycle_limit: usize,
-        non_determinism_source: impl NonDeterminismCSRSource + Send + 'static,
+        non_determinism_source: Arc<Mutex<impl NonDeterminismCSRSource + Send + 'static>>,
     ) -> CommitMemoryResult {
         info!("BATCH[{batch_id}] PROVER producing memory commitments for binary with key {binary_key:?}");
         let timer = Instant::now();
@@ -882,6 +884,7 @@ impl ExecutionProver {
         cycle_limit: usize,
         non_determinism_source: impl NonDeterminismCSRSource + Send + 'static,
     ) -> CommitMemoryResult {
+        let non_determinism_source = Arc::new(Mutex::new(non_determinism_source));
         self.commit_memory_inner(
             None,
             batch_id,
@@ -897,7 +900,7 @@ impl ExecutionProver {
         batch_id: u64,
         binary_key: usize,
         cycle_limit: usize,
-        non_determinism_source: impl NonDeterminismCSRSource + Send + 'static,
+        non_determinism_source: Arc<Mutex<impl NonDeterminismCSRSource + Send + 'static>>,
         external_challenges: ExternalChallenges,
     ) -> ProveResult {
         info!("BATCH[{batch_id}] PROVER producing proofs for binary with key {binary_key:?}");
@@ -941,6 +944,7 @@ impl ExecutionProver {
         non_determinism_source: impl NonDeterminismCSRSource + Send + 'static,
         external_challenges: ExternalChallenges,
     ) -> ProveResult {
+        let non_determinism_source = Arc::new(Mutex::new(non_determinism_source));
         self.prove_inner(
             None,
             batch_id,
@@ -970,8 +974,10 @@ impl ExecutionProver {
         batch_id: u64,
         binary_key: usize,
         cycle_limit: usize,
-        non_determinism_source: impl NonDeterminismCSRSource + Clone + Send + 'static,
+        non_determinism_source: impl NonDeterminismCSRSource + Send + 'static,
     ) -> ProveResult {
+        let nd_rapper = NonDeterminismWrapper::new(non_determinism_source);
+        let non_determinism_source = Arc::new(Mutex::new(nd_rapper));
         let mut cache = VecDeque::new();
         let timer = Instant::now();
         let memory_commitment_result = self.commit_memory_inner(
@@ -981,6 +987,13 @@ impl ExecutionProver {
             cycle_limit,
             non_determinism_source.clone(),
         );
+        let non_determinism_values = Arc::into_inner(non_determinism_source)
+            .unwrap()
+            .into_inner()
+            .unwrap()
+            .into_values();
+        let non_determinism_source = QuasiUARTSource::new_with_reads(non_determinism_values);
+        let non_determinism_source = Arc::new(Mutex::new(non_determinism_source));
         let CommitMemoryResult {
             final_register_values,
             final_pc,
@@ -1095,6 +1108,36 @@ fn unrolled_proof_into_proof(proof: UnrolledModeProof) -> Proof {
         pow_nonce: proof.pow_nonce,
         circuit_sequence: 0,
         delegation_type: proof.delegation_type,
+    }
+}
+
+struct NonDeterminismWrapper<N> {
+    inner: N,
+    values: Vec<u32>,
+}
+
+impl<N> NonDeterminismWrapper<N> {
+    fn new(inner: N) -> Self {
+        Self {
+            inner,
+            values: Vec::new(),
+        }
+    }
+
+    fn into_values(self) -> Vec<u32> {
+        self.values
+    }
+}
+
+impl<N: NonDeterminismCSRSource> NonDeterminismCSRSource for NonDeterminismWrapper<N> {
+    fn read(&mut self) -> u32 {
+        let value = self.inner.read();
+        self.values.push(value);
+        value
+    }
+
+    fn write_with_memory_access<R: RamPeek + ?Sized>(&mut self, ram: &R, value: u32) {
+        self.inner.write_with_memory_access(ram, value);
     }
 }
 

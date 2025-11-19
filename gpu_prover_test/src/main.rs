@@ -92,11 +92,11 @@ mod tests {
     fn prove_base_layer() {
         init_logger();
         let (binary, binary_u32) =
-            // read_and_pad_binary(Path::new("../examples/hashed_fibonacci/app.bin"));
-            read_and_pad_binary(Path::new("../riscv_transpiler/examples/keccak_f1600/app.bin"));
+            read_and_pad_binary(Path::new("../examples/hashed_fibonacci/app.bin"));
+            // read_and_pad_binary(Path::new("../riscv_transpiler/examples/keccak_f1600/app.bin"));
         let (text, text_u32) =
-            // read_and_pad_binary(Path::new("../examples/hashed_fibonacci/app.text"));
-            read_and_pad_binary(Path::new("../riscv_transpiler/examples/keccak_f1600/app.text"));
+            read_and_pad_binary(Path::new("../examples/hashed_fibonacci/app.text"));
+            // read_and_pad_binary(Path::new("../riscv_transpiler/examples/keccak_f1600/app.text"));
         println!("Computing setup");
         let setup = execution_utils::unrolled::compute_setup_for_machine_configuration::<
             IMStandardIsaConfigWithUnsignedMulDiv,
@@ -120,7 +120,7 @@ mod tests {
             binary_u32.clone(),
             text_u32.clone(),
         );
-        let source = QuasiUARTSource::new_with_reads(vec![1 << 15, 1 << 10]);
+        let source = QuasiUARTSource::new_with_reads(vec![1 << 15, 0]);
         let result = prover.commit_memory_and_prove(0, 0, 1 << 36, source.clone());
         let gpu_proof = UnrolledProgramProof {
             final_pc: result.final_pc,

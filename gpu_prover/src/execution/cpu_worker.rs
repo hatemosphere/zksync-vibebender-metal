@@ -37,7 +37,7 @@ pub(crate) fn run_split_simulator(
     machine_type: MachineType,
     binary_image: impl Deref<Target = impl Deref<Target = [u32]>>,
     tape: impl Deref<Target = impl InstructionTape>,
-    mut non_determinism: impl NonDeterminismCSRSource,
+    non_determinism: &mut impl NonDeterminismCSRSource,
     cycles_limit: usize,
     snapshots: Sender<SplitSnapshot>,
     results: Sender<WorkerResult<A>>,
@@ -60,7 +60,7 @@ pub(crate) fn run_split_simulator(
             &mut snapshotter,
             tape.deref(),
             SNAPSHOT_PERIOD,
-            &mut non_determinism,
+            non_determinism,
         );
         let elapsed = instant.elapsed();
         total_elapsed += elapsed;
@@ -148,7 +148,7 @@ pub(crate) fn run_unified_simulator(
     batch_id: u64,
     binary_image: impl Deref<Target = impl Deref<Target = [u32]>>,
     tape: impl Deref<Target = impl InstructionTape>,
-    mut non_determinism: impl NonDeterminismCSRSource,
+    non_determinism: &mut impl NonDeterminismCSRSource,
     cycles_limit: usize,
     snapshots: Sender<UnifiedSnapshot>,
     results: Sender<WorkerResult<A>>,
@@ -175,7 +175,7 @@ pub(crate) fn run_unified_simulator(
             &mut snapshotter,
             tape.deref(),
             SNAPSHOT_PERIOD,
-            &mut non_determinism,
+            non_determinism,
         );
         let elapsed = instant.elapsed();
         total_elapsed += elapsed;
@@ -448,7 +448,7 @@ mod tests {
         let text_section = read_binary(&Path::new("../examples/hashed_fibonacci/app.text"));
         // let nd = vec![1 << 22, 0];
         let nd = vec![0, 1 << 16];
-        let non_determinism_source = QuasiUARTSource::new_with_reads(nd.clone());
+        let mut non_determinism_source = QuasiUARTSource::new_with_reads(nd.clone());
         let preprocessed_bytecode = preprocess_bytecode::<FullMachineDecoderConfig>(&text_section);
         let tape = Arc::new(SimpleTape::new(&preprocessed_bytecode));
         let (snapshots_sender, snapshots_receiver) = unbounded();
@@ -467,7 +467,7 @@ mod tests {
             MachineType::Full,
             binary_image.clone(),
             tape.clone(),
-            non_determinism_source,
+            &mut non_determinism_source,
             1 << 30,
             snapshots_sender,
             results_sender,
@@ -475,7 +475,7 @@ mod tests {
         );
         results_receiver.iter().for_each(|_| {});
         drop(results_receiver);
-        let non_determinism_source = QuasiUARTSource::new_with_reads(nd.clone());
+        let mut non_determinism_source = QuasiUARTSource::new_with_reads(nd.clone());
         let preprocessed_bytecode = preprocess_bytecode::<FullMachineDecoderConfig>(&text_section);
         let (snapshots_sender, snapshots_receiver) = unbounded();
         let (results_sender, results_receiver) = unbounded();
@@ -493,7 +493,7 @@ mod tests {
             MachineType::Full,
             binary_image,
             tape,
-            non_determinism_source,
+            &mut non_determinism_source,
             1 << 30,
             snapshots_sender,
             results_sender,
