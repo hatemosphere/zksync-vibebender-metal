@@ -1,11 +1,12 @@
 use super::A;
 use cs::definitions::TimestampScalar;
+use cs::one_row_compiler::TIMESTAMP_STEP;
 use prover::risc_v_simulator::machine_mode_only_unrolled::{
     MemoryOpcodeTracingDataWithTimestamp, NonMemoryOpcodeTracingDataWithTimestamp,
     UnifiedOpcodeTracingDataWithTimestamp,
 };
 use riscv_transpiler::vm::{
-    Counters, DelegationsAndFamiliesCounters, DelegationsAndUnifiedCounters, State,
+    Counters, DelegationsAndFamiliesCounters, DelegationsAndUnifiedCounters, Snapshotter, State,
 };
 use riscv_transpiler::witness::delegation::bigint::BigintDelegationWitness;
 use riscv_transpiler::witness::delegation::blake2_round_function::Blake2sRoundFunctionDelegationWitness;
@@ -15,43 +16,55 @@ use std::sync::Arc;
 
 pub(crate) struct OnceSnapshotter {
     pub period: usize,
-    pub non_determinism_reads: Vec<u32>,
-    pub memory_reads: Vec<(u32, (u32, u32))>,
+    pub initial_timestamp: TimestampScalar,
+    pub reads: Vec<(u32, (u32, u32))>,
 }
 
 const MAX_MEMORY_READS_PER_CYCLE: usize = 8;
 
 impl OnceSnapshotter {
-    pub fn new_for_period(period: usize) -> Self {
+    pub fn new_for_period(period: usize, state: &State<impl Counters>) -> Self {
         Self {
             period,
-            non_determinism_reads: Vec::with_capacity(period),
-            memory_reads: Vec::with_capacity(period * MAX_MEMORY_READS_PER_CYCLE),
+            initial_timestamp: state.timestamp,
+            reads: Vec::with_capacity(Self::get_max_reads_len(period)),
         }
+    }
+
+    pub fn assert_no_overflow(&self) {
+        let reads_len = self.reads.len();
+        let max_reads_len = Self::get_max_reads_len(self.period);
+        assert!(
+            reads_len <= max_reads_len,
+            "reads_len: {reads_len}, max_reads_len: {max_reads_len}"
+        );
+    }
+
+    fn get_max_reads_len(period: usize) -> usize {
+        period + period * MAX_MEMORY_READS_PER_CYCLE
+    }
+
+    #[inline(always)]
+    fn append_read(&mut self, value: (u32, (u32, u32))) {
+        debug_assert!(self.reads.len() < Self::get_max_reads_len(self.period));
+        unsafe { self.reads.extend_one_unchecked(value) }
     }
 }
 
 impl<C: Counters> riscv_transpiler::vm::Snapshotter<C> for OnceSnapshotter {
     #[inline(always)]
-    fn take_snapshot(&mut self, _state: &State<C>) {
-        assert!(
-            self.non_determinism_reads.len() <= self.period,
-            "non_determinism_reads len: {}, allocation: {}",
-            self.non_determinism_reads.len(),
-            self.period
-        );
-        assert!(
-            self.memory_reads.len() <= self.period * MAX_MEMORY_READS_PER_CYCLE,
-            "memory_reads len: {}, allocation: {}",
-            self.memory_reads.len(),
-            self.period * MAX_MEMORY_READS_PER_CYCLE
-        );
+    fn take_snapshot_if_needed(&mut self, state: &State<C>) -> bool {
+        let cycles_executed =
+            ((state.timestamp - self.initial_timestamp) / TIMESTAMP_STEP) as usize;
+        self.period <= cycles_executed
     }
 
     #[inline(always)]
-    fn append_non_determinism_read(&mut self, value: u32) {
-        debug_assert!(self.non_determinism_reads.len() < self.period);
-        unsafe { self.non_determinism_reads.extend_one_unchecked(value) }
+    fn take_final_snapshot(&mut self, _state: &State<C>) {}
+
+    #[inline(always)]
+    fn append_arbitrary_value(&mut self, value: u32) {
+        self.append_read((value, (0, 0)));
     }
 
     #[inline(always)]
@@ -64,8 +77,7 @@ impl<C: Counters> riscv_transpiler::vm::Snapshotter<C> for OnceSnapshotter {
     ) {
         let read_timestamp = (read_timestamp as u32, (read_timestamp >> 32) as u32);
         let value = (read_value, read_timestamp);
-        debug_assert!(self.memory_reads.len() < self.period * MAX_MEMORY_READS_PER_CYCLE);
-        unsafe { self.memory_reads.extend_one_unchecked(value) }
+        self.append_read(value);
     }
 }
 
@@ -104,8 +116,7 @@ pub(crate) struct SplitSnapshot {
     pub index: usize,
     pub cycles_count: usize,
     pub initial_state: State<DelegationsAndFamiliesCounters>,
-    pub non_determinism_reads: Vec<u32>,
-    pub memory_reads: Vec<(u32, (u32, u32))>,
+    pub reads: Vec<(u32, (u32, u32))>,
     pub trace_ranges: SplitDataTraceRanges,
 }
 
@@ -121,8 +132,7 @@ pub(crate) struct UnifiedSnapshot {
     pub index: usize,
     pub cycles_count: usize,
     pub initial_state: State<DelegationsAndUnifiedCounters>,
-    pub non_determinism_reads: Vec<u32>,
-    pub memory_reads: Vec<(u32, (u32, u32))>,
+    pub reads: Vec<(u32, (u32, u32))>,
     pub trace_ranges: UnifiedDataTraceRanges,
 }
 
@@ -131,10 +141,9 @@ mod tests {
     use super::*;
     use crate::execution::ram::RamWithRomRegion;
     use crate::tests::read_binary;
-    use itertools::Itertools;
     use prover::common_constants::{INITIAL_TIMESTAMP, TIMESTAMP_STEP};
     use prover::risc_v_simulator::abstractions::non_determinism::QuasiUARTSource;
-    use riscv_transpiler::ir::{decode, FullMachineDecoderConfig};
+    use riscv_transpiler::ir::{preprocess_bytecode, FullMachineDecoderConfig};
     use riscv_transpiler::vm::{DelegationsAndFamiliesCounters, SimpleTape, VM};
     use std::path::Path;
 
@@ -145,11 +154,7 @@ mod tests {
         // let mut non_determinism_source = QuasiUARTSource::new_with_reads(vec![1 << 24, 0]);
         let mut non_determinism_source = QuasiUARTSource::new_with_reads(vec![0, 1 << 18]);
         let mut ram = RamWithRomRegion::<30>::new(&binary_image);
-        let preprocessed_bytecode = text_section
-            .iter()
-            .copied()
-            .map(decode::<FullMachineDecoderConfig>)
-            .collect_vec();
+        let preprocessed_bytecode = preprocess_bytecode::<FullMachineDecoderConfig>(&text_section);
         let tape = SimpleTape::new(&preprocessed_bytecode);
         type CountersT = DelegationsAndFamiliesCounters;
         let mut state = State::initial_with_counters(CountersT::default());
@@ -157,10 +162,9 @@ mod tests {
         let now = std::time::Instant::now();
         loop {
             const PERIOD: usize = 1 << 20;
-            let mut snapshotter = OnceSnapshotter::new_for_period(PERIOD);
+            let mut snapshotter = OnceSnapshotter::new_for_period(PERIOD, &state);
             let is_program_finished = VM::run_basic_unrolled(
                 &mut state,
-                1,
                 &mut ram,
                 &mut snapshotter,
                 &tape,
@@ -180,18 +184,8 @@ mod tests {
             elapsed, mhz
         );
         println!(
-            "Total memory reads: {}",
-            snapshotters
-                .iter()
-                .map(|s| s.memory_reads.len())
-                .sum::<usize>()
-        );
-        println!(
-            "Total non-determinism reads: {}",
-            snapshotters
-                .iter()
-                .map(|s| s.non_determinism_reads.len())
-                .sum::<usize>()
+            "Total reads count: {}",
+            snapshotters.iter().map(|s| s.reads.len()).sum::<usize>()
         );
         let now = std::time::Instant::now();
         let count = ram.get_touched_words_count();

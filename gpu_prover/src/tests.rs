@@ -70,7 +70,7 @@ use prover::prover_stages::unrolled_prover::{
 use prover::prover_stages::Proof;
 use prover::risc_v_simulator::machine_mode_only_unrolled::UnifiedOpcodeTracingDataWithTimestamp;
 use prover::tracers::oracles::transpiler_oracles::delegation::DelegationOracle;
-use riscv_transpiler::ir::{decode, Instruction, ReducedMachineDecoderConfig};
+use riscv_transpiler::ir::{preprocess_bytecode, Instruction, ReducedMachineDecoderConfig};
 use riscv_transpiler::replayer::{ReplayerNonDeterminism, ReplayerRam, ReplayerVM};
 use riscv_transpiler::vm::{
     DelegationsCounters, RamWithRomRegion, ReplayBuffer, SimpleSnapshotter, SimpleTape, State, VM,
@@ -2704,11 +2704,8 @@ fn run_unrolled_reduced_test() -> CudaResult<()> {
     let circuit = &precomputations.compiled_circuit;
 
     // first run to capture minimal information
-    let instructions: Vec<Instruction> = text_section
-        .iter()
-        .copied()
-        .map(|el| decode::<ReducedMachineDecoderConfig>(el))
-        .collect();
+    let instructions: Vec<Instruction> =
+        preprocess_bytecode::<ReducedMachineDecoderConfig>(&text_section);
     let tape = SimpleTape::new(&instructions);
     let mut ram = RamWithRomRegion::<SECOND_WORD_BITS>::from_rom_content(&binary_image, 1 << 30);
     let period = 1 << 20;
@@ -2716,7 +2713,7 @@ fn run_unrolled_reduced_test() -> CudaResult<()> {
     let cycles_bound = period * num_snapshots;
 
     let mut state = State::initial_with_counters(CountersT::default());
-    let mut snapshotter = SimpleSnapshotter::new_with_cycle_limit(cycles_bound, period, state);
+    let mut snapshotter = SimpleSnapshotter::new_with_cycle_limit(cycles_bound, state);
     let mut non_determinism = QuasiUARTSource::default();
 
     VM::<CountersT>::run_basic_unrolled::<
@@ -2725,7 +2722,6 @@ fn run_unrolled_reduced_test() -> CudaResult<()> {
         _,
     >(
         &mut state,
-        num_snapshots,
         &mut ram,
         &mut snapshotter,
         &tape,
@@ -2932,10 +2928,7 @@ fn run_unrolled_reduced_test() -> CudaResult<()> {
     let mut ram_log_buffers = snapshotter
         .reads_buffer
         .make_range(0..snapshotter.reads_buffer.len());
-    let mut nd_log_buffers = snapshotter
-        .non_determinism_reads_buffer
-        .make_range(0..snapshotter.non_determinism_reads_buffer.len());
-
+    let mut nd_log_buffers = vec![];
     let mut ram = ReplayerRam::<SECOND_WORD_BITS> {
         ram_log: &mut ram_log_buffers,
     };
@@ -2950,11 +2943,10 @@ fn run_unrolled_reduced_test() -> CudaResult<()> {
 
     ReplayerVM::<CountersT>::replay_basic_unrolled::<_, _>(
         &mut state,
-        num_snapshots,
         &mut ram,
         &tape,
-        period,
         &mut nd,
+        period,
         &mut tracer,
     );
 
@@ -3238,9 +3230,7 @@ pub fn prove_unrolled_with_replayer_for_machine_configuration<C: MachineConfig>(
     binary_image: &[u32],
     text_section: &[u32],
     cycles_bound: usize,
-    non_determinism: impl riscv_transpiler::vm::NonDeterminismCSRSource<
-        riscv_transpiler::vm::RamWithRomRegion<{ common_constants::ROM_SECOND_WORD_BITS }>,
-    >,
+    non_determinism: impl riscv_transpiler::vm::NonDeterminismCSRSource,
     ram_bound: usize,
     worker: &Worker,
 ) -> (
@@ -3308,9 +3298,7 @@ pub fn prove_unrolled_execution_with_replayer<
     cycles_bound: usize,
     binary_image: &[u32],
     text_section: &[u32],
-    mut non_determinism: impl riscv_transpiler::vm::NonDeterminismCSRSource<
-        riscv_transpiler::vm::RamWithRomRegion<ROM_BOUND_SECOND_WORD_BITS>,
-    >,
+    mut non_determinism: impl riscv_transpiler::vm::NonDeterminismCSRSource,
     unrolled_circuits_precomputations: &BTreeMap<u8, UnrolledCircuitPrecomputations<A, A>>,
     inits_and_teardowns_precomputation: &UnrolledCircuitPrecomputations<A, A>,
     delegation_circuits_precomputations: &[(u32, DelegationCircuitPrecomputations<A, A>)],
@@ -3396,8 +3384,7 @@ pub fn prove_unrolled_execution_with_replayer<
         common_constants::INITIAL_PC,
         text_section,
         binary_image,
-        max_snapshots,
-        DEFAULT_SNAPSHOT_PERIOD,
+        cycles_bound,
         ram_bound,
         &mut non_determinism,
         family_chunk_sizes,

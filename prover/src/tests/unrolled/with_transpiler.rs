@@ -50,8 +50,6 @@ pub fn run_basic_unrolled_test_in_transpiler_with_word_specialization_impl(
     const TRACE_LEN_LOG2: usize = 24;
     const NUM_CYCLES_PER_CHUNK: usize = (1 << TRACE_LEN_LOG2) - 1;
 
-    const SECOND_WORD_BITS: usize = 4;
-
     let trace_len: usize = 1 << TRACE_LEN_LOG2;
     let lde_factor = 2;
     let tree_cap_size = 32;
@@ -92,38 +90,33 @@ pub fn run_basic_unrolled_test_in_transpiler_with_word_specialization_impl(
         .collect();
 
     // first run to capture minimal information
-    let instructions: Vec<Instruction> = text_section
-        .iter()
-        .copied()
-        .map(|el| decode::<FullUnsignedMachineDecoderConfig>(el))
-        .collect();
+    let instructions: Vec<Instruction> =
+        preprocess_bytecode::<FullUnsignedMachineDecoderConfig>(&text_section);
+
     let tape = SimpleTape::new(&instructions);
-    let mut ram = RamWithRomRegion::<SECOND_WORD_BITS>::from_rom_content(&binary, 1 << 30);
-    let period = 1 << 20;
-    let num_snapshots = 1;
-    let cycles_bound = period * num_snapshots;
+    let mut ram = RamWithRomRegion::<{ common_constants::ROM_SECOND_WORD_BITS }>::from_rom_content(
+        &binary,
+        1 << 30,
+    );
+    let cycles_bound = 1 << 20;
 
     let mut state = State::initial_with_counters(CountersT::default());
-    let mut snapshotter = SimpleSnapshotter::new_with_cycle_limit(cycles_bound, period, state);
+    let mut snapshotter = SimpleSnapshotter::<CountersT, {common_constants::ROM_SECOND_WORD_BITS}>::new_with_cycle_limit(cycles_bound, state);
     let mut non_determinism = QuasiUARTSource::new_with_reads(vec![15, 1]);
 
-    let is_program_finished = VM::<CountersT>::run_basic_unrolled::<
-        SimpleSnapshotter<CountersT, SECOND_WORD_BITS>,
-        RamWithRomRegion<SECOND_WORD_BITS>,
-        _,
-    >(
+    let is_program_finished = VM::<CountersT>::run_basic_unrolled::<_, _, _>(
         &mut state,
-        num_snapshots,
         &mut ram,
         &mut snapshotter,
         &tape,
-        period,
+        cycles_bound,
         &mut non_determinism,
     );
     assert!(is_program_finished); // check that we reached looping state (ie. end state for our vm)
 
+    dbg!(state.counters);
+
     let total_snapshots = snapshotter.snapshots.len();
-    let cycles_upper_bound = total_snapshots * period;
 
     let exact_cycles_passed = (state.timestamp - INITIAL_TIMESTAMP) / TIMESTAMP_STEP;
 
@@ -149,10 +142,18 @@ pub fn run_basic_unrolled_test_in_transpiler_with_word_specialization_impl(
     );
     assert_eq!(num_trivial, 0, "trivial padding is not expected in tests");
 
+    let flattened_inits_and_teardowns: Vec<_> = shuffle_ram_touched_addresses
+        .into_iter()
+        .flatten()
+        .collect();
+
     println!("Finished at PC = 0x{:08x}", state.pc);
     for (reg_idx, reg) in state.registers.iter().enumerate() {
         println!("x{} = {}", reg_idx, reg.value);
     }
+
+    let mut expected_final_state = state;
+    expected_final_state.counters = Default::default();
 
     let final_pc = state.pc;
     let final_timestamp = state.timestamp;
@@ -161,32 +162,6 @@ pub fn run_basic_unrolled_test_in_transpiler_with_word_specialization_impl(
         last_access_timestamp: el.timestamp,
         current_value: el.value,
     });
-
-    // for (k, v) in family_circuits.iter() {
-    //     println!(
-    //         "Traced {} circuits of type {}, total len: {}",
-    //         v.len(),
-    //         k,
-    //         v.iter().map(|el| el.data.len()).sum::<usize>()
-    //     );
-    // }
-
-    // println!(
-    //     "Traced {} word-sized memory circuits, total len {}",
-    //     word_mem_circuits.len(),
-    //     word_mem_circuits
-    //         .iter()
-    //         .map(|el| el.data.len())
-    //         .sum::<usize>()
-    // );
-    // println!(
-    //     "Traced {} subword-sized memory circuits, total len {}",
-    //     subword_mem_circuits.len(),
-    //     subword_mem_circuits
-    //         .iter()
-    //         .map(|el| el.data.len())
-    //         .sum::<usize>()
-    // );
 
     let memory_argument_alpha = Mersenne31Quartic::from_array_of_base([
         Mersenne31Field(2),
@@ -390,16 +365,11 @@ pub fn run_basic_unrolled_test_in_transpiler_with_word_specialization_impl(
         let mut ram_log_buffers = snapshotter
             .reads_buffer
             .make_range(0..snapshotter.reads_buffer.len());
-        let mut nd_log_buffers = snapshotter
-            .non_determinism_reads_buffer
-            .make_range(0..snapshotter.non_determinism_reads_buffer.len());
 
-        let mut ram = ReplayerRam::<SECOND_WORD_BITS> {
+        let mut ram = ReplayerRam::<{ common_constants::ROM_SECOND_WORD_BITS }> {
             ram_log: &mut ram_log_buffers,
         };
-        let mut nd = ReplayerNonDeterminism {
-            non_determinism_reads_log: &mut nd_log_buffers,
-        };
+
         let mut buffer = vec![NonMemoryOpcodeTracingDataWithTimestamp::default(); num_calls];
         let mut buffers = vec![&mut buffer[..]];
         let mut tracer = NonMemDestinationHolder::<ADD_SUB_LUI_AUIPC_MOP_CIRCUIT_FAMILY_IDX> {
@@ -408,16 +378,17 @@ pub fn run_basic_unrolled_test_in_transpiler_with_word_specialization_impl(
 
         ReplayerVM::<CountersT>::replay_basic_unrolled::<_, _>(
             &mut state,
-            num_snapshots,
             &mut ram,
             &tape,
-            period,
-            &mut nd,
+            &mut (),
+            cycles_bound,
             &mut tracer,
         );
+        assert_eq!(expected_final_state, state);
 
         let (decoder_table_data, witness_gen_data) =
             &preprocessing_data[&ADD_SUB_LUI_AUIPC_MOP_CIRCUIT_FAMILY_IDX];
+
         let decoder_table_data = materialize_flattened_decoder_table(decoder_table_data);
 
         let oracle = NonMemoryCircuitOracle {
@@ -427,12 +398,6 @@ pub fn run_basic_unrolled_test_in_transpiler_with_word_specialization_impl(
         };
 
         let is_empty = oracle.inner.is_empty();
-
-        // println!(
-        //     "Opcode = 0x{:08x}",
-        //     family_data[0].data[9].opcode_data.opcode
-        // );
-        // dbg!(family_data[0].data[9]);
 
         let memory_trace = evaluate_memory_witness_for_executor_family::<_, Global>(
             &add_sub_circuit,
@@ -452,13 +417,7 @@ pub fn run_basic_unrolled_test_in_transpiler_with_word_specialization_impl(
             Global,
         );
 
-        // let mut trace = full_trace.exec_trace.row_view(0..family_data[0].data.len());
-        // for _ in 0..family_data[0].data.len() {
-        //     unsafe {
-        //         let (_, memory) = trace.current_row_split(full_trace.num_witness_columns);
-        //         dbg!(&*memory);
-        //     }
-        // }
+        ensure_memory_trace_consistency(&memory_trace, &full_trace);
 
         parse_state_permutation_elements_from_full_trace(
             &add_sub_circuit,
@@ -590,16 +549,11 @@ pub fn run_basic_unrolled_test_in_transpiler_with_word_specialization_impl(
         let mut ram_log_buffers = snapshotter
             .reads_buffer
             .make_range(0..snapshotter.reads_buffer.len());
-        let mut nd_log_buffers = snapshotter
-            .non_determinism_reads_buffer
-            .make_range(0..snapshotter.non_determinism_reads_buffer.len());
 
-        let mut ram = ReplayerRam::<SECOND_WORD_BITS> {
+        let mut ram = ReplayerRam::<{ common_constants::ROM_SECOND_WORD_BITS }> {
             ram_log: &mut ram_log_buffers,
         };
-        let mut nd = ReplayerNonDeterminism {
-            non_determinism_reads_log: &mut nd_log_buffers,
-        };
+
         let mut buffer = vec![NonMemoryOpcodeTracingDataWithTimestamp::default(); num_calls];
         let mut buffers = vec![&mut buffer[..]];
         let mut tracer = NonMemDestinationHolder::<JUMP_BRANCH_SLT_CIRCUIT_FAMILY_IDX> {
@@ -608,13 +562,13 @@ pub fn run_basic_unrolled_test_in_transpiler_with_word_specialization_impl(
 
         ReplayerVM::<CountersT>::replay_basic_unrolled::<_, _>(
             &mut state,
-            num_snapshots,
             &mut ram,
             &tape,
-            period,
-            &mut nd,
+            &mut (),
+            cycles_bound,
             &mut tracer,
         );
+        assert_eq!(expected_final_state, state);
 
         let (decoder_table_data, witness_gen_data) =
             &preprocessing_data[&JUMP_BRANCH_SLT_CIRCUIT_FAMILY_IDX];
@@ -627,11 +581,6 @@ pub fn run_basic_unrolled_test_in_transpiler_with_word_specialization_impl(
         };
 
         let is_empty = oracle.inner.is_empty();
-
-        // println!(
-        //     "Opcode = 0x{:08x}",
-        //     family_data[0].data[4].opcode_data.opcode
-        // );
 
         let memory_trace = evaluate_memory_witness_for_executor_family::<_, Global>(
             &jump_branch_circuit,
@@ -650,6 +599,8 @@ pub fn run_basic_unrolled_test_in_transpiler_with_word_specialization_impl(
             &worker,
             Global,
         );
+
+        ensure_memory_trace_consistency(&memory_trace, &full_trace);
 
         parse_state_permutation_elements_from_full_trace(
             &jump_branch_circuit,
@@ -792,15 +743,9 @@ pub fn run_basic_unrolled_test_in_transpiler_with_word_specialization_impl(
         let mut ram_log_buffers = snapshotter
             .reads_buffer
             .make_range(0..snapshotter.reads_buffer.len());
-        let mut nd_log_buffers = snapshotter
-            .non_determinism_reads_buffer
-            .make_range(0..snapshotter.non_determinism_reads_buffer.len());
 
-        let mut ram = ReplayerRam::<SECOND_WORD_BITS> {
+        let mut ram = ReplayerRam::<{ common_constants::ROM_SECOND_WORD_BITS }> {
             ram_log: &mut ram_log_buffers,
-        };
-        let mut nd = ReplayerNonDeterminism {
-            non_determinism_reads_log: &mut nd_log_buffers,
         };
         let mut buffer = vec![NonMemoryOpcodeTracingDataWithTimestamp::default(); num_calls];
         let mut buffers = vec![&mut buffer[..]];
@@ -810,13 +755,13 @@ pub fn run_basic_unrolled_test_in_transpiler_with_word_specialization_impl(
 
         ReplayerVM::<CountersT>::replay_basic_unrolled::<_, _>(
             &mut state,
-            num_snapshots,
             &mut ram,
             &tape,
-            period,
-            &mut nd,
+            &mut (),
+            cycles_bound,
             &mut tracer,
         );
+        assert_eq!(expected_final_state, state);
 
         let (decoder_table_data, witness_gen_data) =
             &preprocessing_data[&SHIFT_BINARY_CSR_CIRCUIT_FAMILY_IDX];
@@ -829,11 +774,6 @@ pub fn run_basic_unrolled_test_in_transpiler_with_word_specialization_impl(
         };
 
         let is_empty = oracle.inner.is_empty();
-
-        // println!(
-        //     "Opcode = 0x{:08x}",
-        //     family_data[0].data[2].opcode_data.opcode
-        // );
 
         let memory_trace = evaluate_memory_witness_for_executor_family::<_, Global>(
             &shift_binop_csrrw_circuit,
@@ -852,6 +792,8 @@ pub fn run_basic_unrolled_test_in_transpiler_with_word_specialization_impl(
             &worker,
             Global,
         );
+
+        ensure_memory_trace_consistency(&memory_trace, &full_trace);
 
         parse_state_permutation_elements_from_full_trace(
             &shift_binop_csrrw_circuit,
@@ -988,16 +930,11 @@ pub fn run_basic_unrolled_test_in_transpiler_with_word_specialization_impl(
         let mut ram_log_buffers = snapshotter
             .reads_buffer
             .make_range(0..snapshotter.reads_buffer.len());
-        let mut nd_log_buffers = snapshotter
-            .non_determinism_reads_buffer
-            .make_range(0..snapshotter.non_determinism_reads_buffer.len());
 
-        let mut ram = ReplayerRam::<SECOND_WORD_BITS> {
+        let mut ram = ReplayerRam::<{ common_constants::ROM_SECOND_WORD_BITS }> {
             ram_log: &mut ram_log_buffers,
         };
-        let mut nd = ReplayerNonDeterminism {
-            non_determinism_reads_log: &mut nd_log_buffers,
-        };
+
         let mut buffer = vec![NonMemoryOpcodeTracingDataWithTimestamp::default(); num_calls];
         let mut buffers = vec![&mut buffer[..]];
         let mut tracer = NonMemDestinationHolder::<MUL_DIV_CIRCUIT_FAMILY_IDX> {
@@ -1006,13 +943,13 @@ pub fn run_basic_unrolled_test_in_transpiler_with_word_specialization_impl(
 
         ReplayerVM::<CountersT>::replay_basic_unrolled::<_, _>(
             &mut state,
-            num_snapshots,
             &mut ram,
             &tape,
-            period,
-            &mut nd,
+            &mut (),
+            cycles_bound,
             &mut tracer,
         );
+        assert_eq!(expected_final_state, state);
 
         let (decoder_table_data, witness_gen_data) =
             &preprocessing_data[&MUL_DIV_CIRCUIT_FAMILY_IDX];
@@ -1025,11 +962,6 @@ pub fn run_basic_unrolled_test_in_transpiler_with_word_specialization_impl(
         };
 
         let is_empty = oracle.inner.is_empty();
-
-        // println!(
-        //     "Opcode = 0x{:08x}",
-        //     family_data[0].data[26].opcode_data.opcode
-        // );
 
         let memory_trace = evaluate_memory_witness_for_executor_family::<_, Global>(
             &mul_div_circuit,
@@ -1048,6 +980,8 @@ pub fn run_basic_unrolled_test_in_transpiler_with_word_specialization_impl(
             &worker,
             Global,
         );
+
+        ensure_memory_trace_consistency(&memory_trace, &full_trace);
 
         parse_state_permutation_elements_from_full_trace(
             &mul_div_circuit,
@@ -1153,8 +1087,10 @@ pub fn run_basic_unrolled_test_in_transpiler_with_word_specialization_impl(
     if true {
         println!("Will try to prove word LOAD/STORE circuit");
 
-        let extra_tables =
-            create_word_only_load_store_special_tables::<_, SECOND_WORD_BITS>(&binary);
+        let extra_tables = create_word_only_load_store_special_tables::<
+            _,
+            { common_constants::ROM_SECOND_WORD_BITS },
+        >(&binary);
         let word_load_store_circuit = {
             compile_unrolled_circuit_state_transition::<Mersenne31Field>(
                 &|cs| {
@@ -1164,9 +1100,11 @@ pub fn run_basic_unrolled_test_in_transpiler_with_word_specialization_impl(
                     }
                 },
                 &|cs| {
-                    word_only_load_store_circuit_with_preprocessed_bytecode::<_, _, SECOND_WORD_BITS>(
-                        cs,
-                    )
+                    word_only_load_store_circuit_with_preprocessed_bytecode::<
+                        _,
+                        _,
+                        { common_constants::ROM_SECOND_WORD_BITS },
+                    >(cs)
                 },
                 1 << 20,
                 TRACE_LEN_LOG2,
@@ -1187,16 +1125,11 @@ pub fn run_basic_unrolled_test_in_transpiler_with_word_specialization_impl(
         let mut ram_log_buffers = snapshotter
             .reads_buffer
             .make_range(0..snapshotter.reads_buffer.len());
-        let mut nd_log_buffers = snapshotter
-            .non_determinism_reads_buffer
-            .make_range(0..snapshotter.non_determinism_reads_buffer.len());
 
-        let mut ram = ReplayerRam::<SECOND_WORD_BITS> {
+        let mut ram = ReplayerRam::<{ common_constants::ROM_SECOND_WORD_BITS }> {
             ram_log: &mut ram_log_buffers,
         };
-        let mut nd = ReplayerNonDeterminism {
-            non_determinism_reads_log: &mut nd_log_buffers,
-        };
+
         let mut buffer = vec![MemoryOpcodeTracingDataWithTimestamp::default(); num_calls];
         let mut buffers = vec![&mut buffer[..]];
         let mut tracer = MemDestinationHolder::<LOAD_STORE_WORD_ONLY_CIRCUIT_FAMILY_IDX> {
@@ -1205,13 +1138,13 @@ pub fn run_basic_unrolled_test_in_transpiler_with_word_specialization_impl(
 
         ReplayerVM::<CountersT>::replay_basic_unrolled::<_, _>(
             &mut state,
-            num_snapshots,
             &mut ram,
             &tape,
-            period,
-            &mut nd,
+            &mut (),
+            cycles_bound,
             &mut tracer,
         );
+        assert_eq!(expected_final_state, state);
 
         let (decoder_table_data, witness_gen_data) =
             &preprocessing_data[&LOAD_STORE_WORD_ONLY_CIRCUIT_FAMILY_IDX];
@@ -1223,12 +1156,6 @@ pub fn run_basic_unrolled_test_in_transpiler_with_word_specialization_impl(
         };
 
         let is_empty = oracle.inner.is_empty();
-
-        // println!(
-        //     "Opcode = 0x{:08x}",
-        //     family_data[0].data[203].opcode_data.opcode
-        // );
-        // dbg!(family_data[0].data[203].as_load_data());
 
         let memory_trace = evaluate_memory_witness_for_executor_family::<_, Global>(
             &word_load_store_circuit,
@@ -1247,6 +1174,8 @@ pub fn run_basic_unrolled_test_in_transpiler_with_word_specialization_impl(
             &worker,
             Global,
         );
+
+        ensure_memory_trace_consistency(&memory_trace, &full_trace);
 
         parse_state_permutation_elements_from_full_trace(
             &word_load_store_circuit,
@@ -1349,9 +1278,11 @@ pub fn run_basic_unrolled_test_in_transpiler_with_word_specialization_impl(
         println!("Will try to prove subword LOAD/STORE circuit");
 
         use cs::machine::ops::unrolled::load_store::*;
-        const SECOND_WORD_BITS: usize = 4;
 
-        let extra_tables = create_load_store_special_tables::<_, SECOND_WORD_BITS>(&binary);
+        let extra_tables = create_load_store_special_tables::<
+            _,
+            { common_constants::ROM_SECOND_WORD_BITS },
+        >(&binary);
         let subword_load_store_circuit = {
             compile_unrolled_circuit_state_transition::<Mersenne31Field>(
                 &|cs| {
@@ -1364,7 +1295,7 @@ pub fn run_basic_unrolled_test_in_transpiler_with_word_specialization_impl(
                     subword_only_load_store_circuit_with_preprocessed_bytecode::<
                         _,
                         _,
-                        SECOND_WORD_BITS,
+                        { common_constants::ROM_SECOND_WORD_BITS },
                     >(cs)
                 },
                 1 << 20,
@@ -1386,16 +1317,11 @@ pub fn run_basic_unrolled_test_in_transpiler_with_word_specialization_impl(
         let mut ram_log_buffers = snapshotter
             .reads_buffer
             .make_range(0..snapshotter.reads_buffer.len());
-        let mut nd_log_buffers = snapshotter
-            .non_determinism_reads_buffer
-            .make_range(0..snapshotter.non_determinism_reads_buffer.len());
 
-        let mut ram = ReplayerRam::<SECOND_WORD_BITS> {
+        let mut ram = ReplayerRam::<{ common_constants::ROM_SECOND_WORD_BITS }> {
             ram_log: &mut ram_log_buffers,
         };
-        let mut nd = ReplayerNonDeterminism {
-            non_determinism_reads_log: &mut nd_log_buffers,
-        };
+
         let mut buffer = vec![MemoryOpcodeTracingDataWithTimestamp::default(); num_calls];
         let mut buffers = vec![&mut buffer[..]];
         let mut tracer = MemDestinationHolder::<LOAD_STORE_SUBWORD_ONLY_CIRCUIT_FAMILY_IDX> {
@@ -1404,13 +1330,13 @@ pub fn run_basic_unrolled_test_in_transpiler_with_word_specialization_impl(
 
         ReplayerVM::<CountersT>::replay_basic_unrolled::<_, _>(
             &mut state,
-            num_snapshots,
             &mut ram,
             &tape,
-            period,
-            &mut nd,
+            &mut (),
+            cycles_bound,
             &mut tracer,
         );
+        assert_eq!(expected_final_state, state);
 
         let (decoder_table_data, witness_gen_data) =
             &preprocessing_data[&LOAD_STORE_SUBWORD_ONLY_CIRCUIT_FAMILY_IDX];
@@ -1426,11 +1352,6 @@ pub fn run_basic_unrolled_test_in_transpiler_with_word_specialization_impl(
         };
 
         let is_empty = oracle.inner.is_empty();
-
-        // println!(
-        //     "Opcode = 0x{:08x}",
-        //     family_data[0].data[29].opcode_data.opcode
-        // );
 
         let memory_trace = evaluate_memory_witness_for_executor_family::<_, Global>(
             &subword_load_store_circuit,
@@ -1449,6 +1370,8 @@ pub fn run_basic_unrolled_test_in_transpiler_with_word_specialization_impl(
             &worker,
             Global,
         );
+
+        ensure_memory_trace_consistency(&memory_trace, &full_trace);
 
         parse_state_permutation_elements_from_full_trace(
             &subword_load_store_circuit,
@@ -1714,16 +1637,11 @@ pub fn run_basic_unrolled_test_in_transpiler_with_word_specialization_impl(
         let mut ram_log_buffers = snapshotter
             .reads_buffer
             .make_range(0..snapshotter.reads_buffer.len());
-        let mut nd_log_buffers = snapshotter
-            .non_determinism_reads_buffer
-            .make_range(0..snapshotter.non_determinism_reads_buffer.len());
 
-        let mut ram = ReplayerRam::<SECOND_WORD_BITS> {
+        let mut ram = ReplayerRam::<{ common_constants::ROM_SECOND_WORD_BITS }> {
             ram_log: &mut ram_log_buffers,
         };
-        let mut nd = ReplayerNonDeterminism {
-            non_determinism_reads_log: &mut nd_log_buffers,
-        };
+
         let mut buffer = vec![DelegationWitness::empty(); num_calls];
         let mut buffers = vec![&mut buffer[..]];
         let mut tracer = BlakeDelegationDestinationHolder {
@@ -1732,13 +1650,13 @@ pub fn run_basic_unrolled_test_in_transpiler_with_word_specialization_impl(
 
         ReplayerVM::<CountersT>::replay_basic_unrolled::<_, _>(
             &mut state,
-            num_snapshots,
             &mut ram,
             &tape,
-            period,
-            &mut nd,
+            &mut (),
+            cycles_bound,
             &mut tracer,
         );
+        assert_eq!(expected_final_state, state);
 
         // evaluate a witness and memory-only witness for each
 
@@ -1897,15 +1815,9 @@ pub fn run_basic_unrolled_test_in_transpiler_with_word_specialization_impl(
         let mut ram_log_buffers = snapshotter
             .reads_buffer
             .make_range(0..snapshotter.reads_buffer.len());
-        let mut nd_log_buffers = snapshotter
-            .non_determinism_reads_buffer
-            .make_range(0..snapshotter.non_determinism_reads_buffer.len());
 
-        let mut ram = ReplayerRam::<SECOND_WORD_BITS> {
+        let mut ram = ReplayerRam::<{ common_constants::ROM_SECOND_WORD_BITS }> {
             ram_log: &mut ram_log_buffers,
-        };
-        let mut nd = ReplayerNonDeterminism {
-            non_determinism_reads_log: &mut nd_log_buffers,
         };
         let mut buffer = vec![DelegationWitness::empty(); num_calls];
         let mut buffers = vec![&mut buffer[..]];
@@ -1915,13 +1827,13 @@ pub fn run_basic_unrolled_test_in_transpiler_with_word_specialization_impl(
 
         ReplayerVM::<CountersT>::replay_basic_unrolled::<_, _>(
             &mut state,
-            num_snapshots,
             &mut ram,
             &tape,
-            period,
-            &mut nd,
+            &mut (),
+            cycles_bound,
             &mut tracer,
         );
+        assert_eq!(expected_final_state, state);
 
         // evaluate a witness and memory-only witness for each
 
@@ -2056,9 +1968,16 @@ pub fn run_basic_unrolled_test_in_transpiler_with_word_specialization_impl(
         let expected_init_set: Vec<_> = memory_read_set.difference(&memory_write_set).collect();
         let expected_teardown_set: Vec<_> = memory_write_set.difference(&memory_read_set).collect();
         assert_eq!(expected_init_set.len(), expected_teardown_set.len());
+        assert_eq!(expected_init_set.len(), flattened_inits_and_teardowns.len());
 
-        for (is_register, addr, ts, init_value) in expected_init_set.iter() {
-            assert!(*is_register == false);
+        for (idx, (is_register, addr, ts, init_value)) in expected_init_set.iter().enumerate() {
+            assert!(
+                *is_register == false,
+                "found an unexpected init for register {} with value {} at timestamp {}",
+                *addr,
+                *init_value,
+                *ts
+            );
             assert_eq!(
                 *ts, 0,
                 "init timestamp is invalid for memory address {}",
@@ -2069,13 +1988,34 @@ pub fn run_basic_unrolled_test_in_transpiler_with_word_specialization_impl(
                 "init value is invalid for memory address {}",
                 addr
             );
+            assert_eq!(
+                flattened_inits_and_teardowns[idx].0, *addr,
+                "diverged at expected lazy init {}",
+                idx
+            );
         }
-        for (is_register, addr, ts, _) in expected_teardown_set.iter() {
-            assert!(*is_register == false);
+        for (idx, (is_register, addr, ts, value)) in expected_teardown_set.iter().enumerate() {
+            assert!(
+                *is_register == false,
+                "found an unexpected teardown for register {} with value {} at timestamp {}",
+                *addr,
+                *value,
+                *ts
+            );
             assert!(
                 *ts > INITIAL_TIMESTAMP,
                 "teardown timestamp is invalid for memory address {}",
                 addr
+            );
+            assert_eq!(
+                flattened_inits_and_teardowns[idx].1 .0, *ts,
+                "diverged at expected lazy init {}",
+                idx
+            );
+            assert_eq!(
+                flattened_inits_and_teardowns[idx].1 .1, *value,
+                "diverged at expected lazy init {}",
+                idx
             );
         }
 

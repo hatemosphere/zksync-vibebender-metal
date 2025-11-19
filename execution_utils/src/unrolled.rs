@@ -6,7 +6,6 @@ use trace_and_split::setups;
 
 use super::*;
 use prover::common_constants::TimestampScalar;
-use prover::cs::one_row_compiler::CompiledCircuitArtifact;
 use prover::cs::utils::split_timestamp;
 use prover::field::*;
 use prover::prover_stages::unrolled_prover::UnrolledModeProof;
@@ -14,6 +13,8 @@ use prover::prover_stages::Proof;
 use prover::risc_v_simulator;
 use setups::CompiledCircuitsSet;
 use trace_and_split::FinalRegisterValue;
+
+pub use setups::unrolled_circuits::get_unrolled_circuits_artifacts_for_machine_type;
 
 #[derive(Clone, Debug, Hash, serde::Serialize, serde::Deserialize)]
 pub struct UnrolledProgramSetup {
@@ -357,9 +358,7 @@ pub fn prove_unrolled_for_machine_configuration_into_program_proof<C: MachineCon
     binary_image: &[u32],
     text_section: &[u32],
     cycles_bound: usize,
-    non_determinism: impl riscv_transpiler::vm::NonDeterminismCSRSource<
-        riscv_transpiler::vm::RamWithRomRegion<ROM_SECOND_WORD_BITS>,
-    >,
+    non_determinism: impl riscv_transpiler::vm::NonDeterminismCSRSource,
     ram_bound: usize,
     worker: &prover::worker::Worker,
 ) -> UnrolledProgramProof {
@@ -404,9 +403,7 @@ pub fn prove_unrolled_with_replayer_for_machine_configuration<C: MachineConfig>(
     binary_image: &[u32],
     text_section: &[u32],
     cycles_bound: usize,
-    non_determinism: impl riscv_transpiler::vm::NonDeterminismCSRSource<
-        riscv_transpiler::vm::RamWithRomRegion<ROM_SECOND_WORD_BITS>,
-    >,
+    non_determinism: impl riscv_transpiler::vm::NonDeterminismCSRSource,
     ram_bound: usize,
     worker: &prover::worker::Worker,
 ) -> (

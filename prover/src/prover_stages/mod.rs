@@ -394,6 +394,12 @@ impl<const N: usize, A: GoodAllocator, T: MerkleTreeConstructor> SetupPrecomputa
                                 let range =
                                     setup_layout.preprocessed_decoder_setup_columns.get_range(0);
                                 trace_view_row[range].copy_from_slice(flattened);
+                            } else {
+                                // pad it with something that is unreachable due to range checks on PC pieces
+                                let range =
+                                    setup_layout.preprocessed_decoder_setup_columns.get_range(0);
+                                use cs::machine::ops::unrolled::decoder_table_padding;
+                                trace_view_row[range].copy_from_slice(&decoder_table_padding());
                             }
                         }
 

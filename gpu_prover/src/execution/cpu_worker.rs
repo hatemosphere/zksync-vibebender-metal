@@ -30,10 +30,6 @@ const RAM_LOG_SIZE: u32 = 30;
 
 type Ram = RamWithRomRegion<RAM_LOG_SIZE>;
 
-pub trait NonDeterminism: NonDeterminismCSRSource<Ram> {}
-
-impl<T> NonDeterminism for T where T: NonDeterminismCSRSource<Ram> {}
-
 const SNAPSHOT_PERIOD: usize = 1 << 22;
 
 pub(crate) fn run_split_simulator(
@@ -41,7 +37,7 @@ pub(crate) fn run_split_simulator(
     machine_type: MachineType,
     binary_image: impl Deref<Target = impl Deref<Target = [u32]>>,
     tape: impl Deref<Target = impl InstructionTape>,
-    non_determinism: &mut impl NonDeterminism,
+    non_determinism: &mut impl NonDeterminismCSRSource,
     cycles_limit: usize,
     snapshots: Sender<SplitSnapshot>,
     results: Sender<WorkerResult<A>>,
@@ -56,11 +52,10 @@ pub(crate) fn run_split_simulator(
     let mut total_elapsed = Duration::default();
     loop {
         let initial_state = state.clone();
-        let mut snapshotter = OnceSnapshotter::new_for_period(SNAPSHOT_PERIOD);
+        let mut snapshotter = OnceSnapshotter::new_for_period(SNAPSHOT_PERIOD, &initial_state);
         let instant = Instant::now();
         let is_program_finished = VM::run_basic_unrolled(
             &mut state,
-            1,
             &mut ram,
             &mut snapshotter,
             tape.deref(),
@@ -81,17 +76,12 @@ pub(crate) fn run_split_simulator(
             &initial_state.counters,
             &final_state.counters,
         );
-        let OnceSnapshotter {
-            non_determinism_reads,
-            memory_reads,
-            ..
-        } = snapshotter;
+        let OnceSnapshotter { reads, .. } = snapshotter;
         let snapshot = SplitSnapshot {
             index: snapshot_index,
             cycles_count,
             initial_state,
-            non_determinism_reads,
-            memory_reads,
+            reads,
             trace_ranges,
         };
         snapshots.send(snapshot).unwrap();
@@ -158,7 +148,7 @@ pub(crate) fn run_unified_simulator(
     batch_id: u64,
     binary_image: impl Deref<Target = impl Deref<Target = [u32]>>,
     tape: impl Deref<Target = impl InstructionTape>,
-    non_determinism: &mut impl NonDeterminism,
+    non_determinism: &mut impl NonDeterminismCSRSource,
     cycles_limit: usize,
     snapshots: Sender<UnifiedSnapshot>,
     results: Sender<WorkerResult<A>>,
@@ -177,11 +167,10 @@ pub(crate) fn run_unified_simulator(
     let mut next_inits_and_teardowns_sequence_id = 0;
     loop {
         let initial_state = state.clone();
-        let mut snapshotter = OnceSnapshotter::new_for_period(SNAPSHOT_PERIOD);
+        let mut snapshotter = OnceSnapshotter::new_for_period(SNAPSHOT_PERIOD, &initial_state);
         let instant = Instant::now();
         let is_program_finished = VM::run_basic_unrolled(
             &mut state,
-            1,
             &mut ram,
             &mut snapshotter,
             tape.deref(),
@@ -216,17 +205,12 @@ pub(crate) fn run_unified_simulator(
             &initial_state.counters,
             &final_state.counters,
         );
-        let OnceSnapshotter {
-            non_determinism_reads,
-            memory_reads,
-            ..
-        } = snapshotter;
+        let OnceSnapshotter { reads, .. } = snapshotter;
         let snapshot = UnifiedSnapshot {
             index: snapshot_index,
             cycles_count,
             initial_state,
-            non_determinism_reads,
-            memory_reads,
+            reads,
             trace_ranges,
         };
         snapshots.send(snapshot).unwrap();
@@ -300,16 +284,15 @@ pub(crate) fn run_split_replayer(
             index,
             cycles_count,
             initial_state,
-            non_determinism_reads,
-            memory_reads,
+            reads,
             trace_ranges,
         } = snapshot;
         let mut state = initial_state;
-        let mut ram_log = vec![memory_reads.as_slice()];
+        let mut ram_log = vec![reads.as_slice()];
         let mut ram = ReplayerRam::<ROM_ADDRESS_SPACE_SECOND_WORD_BITS> {
             ram_log: &mut ram_log,
         };
-        let mut non_determinism_reads = vec![non_determinism_reads.as_slice()];
+        let mut non_determinism_reads = vec![];
         let mut nd = ReplayerNonDeterminism {
             non_determinism_reads_log: &mut non_determinism_reads,
         };
@@ -317,11 +300,10 @@ pub(crate) fn run_split_replayer(
         let instant = Instant::now();
         ReplayerVM::replay_basic_unrolled(
             &mut state,
-            1,
             &mut ram,
             tape.deref(),
-            cycles_count,
             &mut nd,
+            cycles_count,
             &mut tracer,
         );
         let elapsed = instant.elapsed();
@@ -354,16 +336,15 @@ pub(crate) fn run_unified_replayer(
             index,
             cycles_count,
             initial_state,
-            non_determinism_reads,
-            memory_reads,
+            reads,
             trace_ranges,
         } = snapshot;
         let mut state = initial_state;
-        let mut ram_log = vec![memory_reads.as_slice()];
+        let mut ram_log = vec![reads.as_slice()];
         let mut ram = ReplayerRam::<ROM_ADDRESS_SPACE_SECOND_WORD_BITS> {
             ram_log: &mut ram_log,
         };
-        let mut non_determinism_reads = vec![non_determinism_reads.as_slice()];
+        let mut non_determinism_reads = vec![];
         let mut nd = ReplayerNonDeterminism {
             non_determinism_reads_log: &mut non_determinism_reads,
         };
@@ -371,11 +352,10 @@ pub(crate) fn run_unified_replayer(
         let instant = Instant::now();
         ReplayerVM::replay_basic_unrolled(
             &mut state,
-            1,
             &mut ram,
             tape.deref(),
-            cycles_count,
             &mut nd,
+            cycles_count,
             &mut tracer,
         );
         let elapsed = instant.elapsed();
@@ -439,7 +419,7 @@ mod tests {
     use prover::risc_v_simulator::abstractions::non_determinism::QuasiUARTSource;
     use rayon::iter::IntoParallelIterator;
     use rayon::iter::ParallelIterator;
-    use riscv_transpiler::ir::{decode, FullMachineDecoderConfig};
+    use riscv_transpiler::ir::{preprocess_bytecode, FullMachineDecoderConfig};
     use riscv_transpiler::vm::SimpleTape;
     use std::path::Path;
     use std::sync::Arc;
@@ -469,11 +449,7 @@ mod tests {
         // let nd = vec![1 << 22, 0];
         let nd = vec![0, 1 << 16];
         let mut non_determinism_source = QuasiUARTSource::new_with_reads(nd.clone());
-        let preprocessed_bytecode = text_section
-            .iter()
-            .copied()
-            .map(decode::<FullMachineDecoderConfig>)
-            .collect_vec();
+        let preprocessed_bytecode = preprocess_bytecode::<FullMachineDecoderConfig>(&text_section);
         let tape = Arc::new(SimpleTape::new(&preprocessed_bytecode));
         let (snapshots_sender, snapshots_receiver) = unbounded();
         let (results_sender, results_receiver) = unbounded();
@@ -500,11 +476,7 @@ mod tests {
         results_receiver.iter().for_each(|_| {});
         drop(results_receiver);
         let mut non_determinism_source = QuasiUARTSource::new_with_reads(nd.clone());
-        let preprocessed_bytecode = text_section
-            .iter()
-            .copied()
-            .map(decode::<FullMachineDecoderConfig>)
-            .collect_vec();
+        let preprocessed_bytecode = preprocess_bytecode::<FullMachineDecoderConfig>(&text_section);
         let (snapshots_sender, snapshots_receiver) = unbounded();
         let (results_sender, results_receiver) = unbounded();
         for worker_id in 0..4 {

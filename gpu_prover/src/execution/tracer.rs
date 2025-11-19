@@ -76,6 +76,16 @@ impl SplitTracer {
 
 impl WitnessTracer for SplitTracer {
     #[inline(always)]
+    fn needs_tracing_data_for_circuit_family<const FAMILY: u8>(&self) -> bool {
+        true
+    }
+
+    #[inline(always)]
+    fn needs_tracing_data_for_delegation_type<const DELEGATION_TYPE: u16>(&self) -> bool {
+        true
+    }
+
+    #[inline(always)]
     fn write_non_memory_family_data<const FAMILY: u8>(
         &mut self,
         data: NonMemoryOpcodeTracingDataWithTimestamp,
@@ -160,6 +170,16 @@ impl UnifiedTracer {
 }
 
 impl WitnessTracer for UnifiedTracer {
+    #[inline(always)]
+    fn needs_tracing_data_for_circuit_family<const FAMILY: u8>(&self) -> bool {
+        true
+    }
+
+    #[inline(always)]
+    fn needs_tracing_data_for_delegation_type<const DELEGATION_TYPE: u16>(&self) -> bool {
+        true
+    }
+
     #[inline(always)]
     fn write_non_memory_family_data<const FAMILY: u8>(
         &mut self,
