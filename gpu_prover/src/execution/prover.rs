@@ -18,6 +18,8 @@ use crate::execution::messages::{
 };
 use crate::machine_type::MachineType;
 use crate::prover::context::ProverContextConfig;
+use crate::prover::tracing_data::TracingDataHost;
+use crate::witness::trace_unrolled::ShuffleRamInitsAndTeardownsHost;
 use crossbeam_channel::{bounded, unbounded, Receiver, Sender};
 use crossbeam_utils::sync::WaitGroup;
 use cs::definitions::TimestampScalar;
@@ -79,9 +81,11 @@ struct BinaryHolder {
 #[derive(Clone, Copy, Debug)]
 pub struct ExecutionProverConfiguration {
     pub prover_context_config: ProverContextConfig,
-    pub host_allocator_backing_allocation_size: usize,
     pub replay_worker_threads_count: usize,
-    pub host_allocators_per_worker_count: usize,
+    pub expected_concurrent_jobs: usize,
+    pub host_allocator_backing_allocation_size: usize,
+    pub host_allocators_per_job_count: usize,
+    pub host_allocators_per_job_cache_count: usize,
     pub host_allocators_per_device_count: usize,
 }
 
@@ -89,10 +93,12 @@ impl Default for ExecutionProverConfiguration {
     fn default() -> Self {
         Self {
             prover_context_config: Default::default(),
-            host_allocator_backing_allocation_size: 1 << 26, // 64 MB
+            expected_concurrent_jobs: 1,
             replay_worker_threads_count: 4,
-            host_allocators_per_worker_count: 16, // 1 GB
-            host_allocators_per_device_count: 64, // 4 GB
+            host_allocator_backing_allocation_size: 1 << 26, // 64 MB
+            host_allocators_per_job_count: 64,               // 4 GB
+            host_allocators_per_job_cache_count: 128,        // 8 GB
+            host_allocators_per_device_count: 64,            // 4 GB
         }
     }
 }
@@ -136,6 +142,34 @@ impl ExecutionProverResult {
     }
 }
 
+fn get_allocators_count(
+    inits_and_teardowns: &Option<ShuffleRamInitsAndTeardownsHost<A>>,
+    tracing_data: &Option<TracingDataHost<A>>,
+) -> usize {
+    let a = inits_and_teardowns
+        .as_ref()
+        .map(|v| v.get_allocators_count())
+        .unwrap_or_default();
+    let b = tracing_data
+        .as_ref()
+        .map(|v| v.get_allocators_count())
+        .unwrap_or_default();
+    a + b
+}
+
+struct CacheEntry {
+    pub circuit_type: CircuitType,
+    pub sequence_id: usize,
+    pub inits_and_teardowns: Option<ShuffleRamInitsAndTeardownsHost<A>>,
+    pub tracing_data: Option<TracingDataHost<A>>,
+}
+
+impl CacheEntry {
+    fn get_allocators_count(&self) -> usize {
+        get_allocators_count(&self.inits_and_teardowns, &self.tracing_data)
+    }
+}
+
 pub struct ExecutionProver {
     configuration: ExecutionProverConfiguration,
     gpu_manager: GpuManager,
@@ -173,8 +207,9 @@ impl ExecutionProver {
         let binary_holders = BTreeMap::new();
         info!("PROVER generating common precomputations");
         let common_precomputations = get_common_precomputations(&worker);
-        let host_allocators_count = configuration.replay_worker_threads_count
-            * configuration.host_allocators_per_worker_count
+        let host_allocators_count = configuration.expected_concurrent_jobs
+            * (configuration.host_allocators_per_job_count
+                + configuration.host_allocators_per_job_cache_count)
             + device_count * configuration.host_allocators_per_device_count;
         let host_allocation_size = configuration.host_allocator_backing_allocation_size;
         let host_allocation_log_chunk_size = host_allocation_size.trailing_zeros();
@@ -269,18 +304,19 @@ impl ExecutionProver {
     fn get_result(
         &self,
         proving: bool,
+        mut cache: Option<&mut VecDeque<CacheEntry>>,
         batch_id: u64,
         binary_key: usize,
         cycles_limit: usize,
         non_determinism_source: impl NonDeterminismCSRSource + Send + 'static,
         external_challenges: Option<ExternalChallenges>,
     ) -> ExecutionProverResult {
+        assert!(proving || cache.as_ref().map_or(true, |c| c.is_empty()));
         assert!(proving ^ external_challenges.is_none());
         let replayers_count = self.configuration.replay_worker_threads_count;
         let holder = &self.binary_holders[&binary_key];
         let (work_results_sender, work_results_receiver) = unbounded();
         let (gpu_work_requests_sender, gpu_work_requests_receiver) = unbounded();
-        let mut gpu_work_requests_sender = Some(gpu_work_requests_sender);
         let (split_snapshot_sender, split_snapshot_receiver) = bounded(replayers_count);
         let (unified_snapshot_sender, unified_snapshot_receiver) = bounded(replayers_count);
         let gpu_work_batch = GpuWorkBatch {
@@ -290,6 +326,41 @@ impl ExecutionProver {
         };
         trace!("BATCH[{batch_id}] PROVER sending work batch to GPU manager");
         self.gpu_manager.send_batch(gpu_work_batch);
+        let mut pending_requests_count = 0;
+        let mut requests_served_from_cache = BTreeSet::new();
+        if let Some(cache) = cache.as_mut() {
+            for entry in cache.drain(..) {
+                let CacheEntry {
+                    circuit_type,
+                    sequence_id,
+                    inits_and_teardowns,
+                    tracing_data,
+                } = entry;
+                let precomputations = match circuit_type {
+                    CircuitType::Delegation(_)
+                    | CircuitType::Unrolled(UnrolledCircuitType::InitsAndTeardowns) => {
+                        self.common_precomputations[&circuit_type].clone()
+                    }
+                    CircuitType::Unrolled(circuit_type) => {
+                        holder.precomputations[&circuit_type].clone()
+                    }
+                };
+                let request = ProofRequest {
+                    batch_id,
+                    circuit_type,
+                    sequence_id,
+                    precomputations,
+                    inits_and_teardowns,
+                    tracing_data,
+                    external_challenges: external_challenges.clone().unwrap(),
+                };
+                let request = GpuWorkRequest::Proof(request);
+                gpu_work_requests_sender.send(request).unwrap();
+                pending_requests_count += 1;
+                requests_served_from_cache.insert((circuit_type, sequence_id));
+            }
+        }
+        let mut gpu_work_requests_sender = Some(gpu_work_requests_sender);
         let execution_kind = holder.execution_kind;
         let machine_type = holder.machine_type;
         trace!("BATCH[{batch_id}] PROVER spawning SIMULATOR worker");
@@ -348,7 +419,6 @@ impl ExecutionProver {
         drop(split_snapshot_receiver);
         drop(work_results_sender);
         let mut simulation_result = None;
-        let mut pending_requests_count = 0;
         let mut uninitialized_tracing_data = BTreeMap::new();
         let mut uninitialized_tracing_data_key_by_snapshot_index = BTreeMap::new();
         let mut processed_snapshots = BTreeSet::<usize>::new();
@@ -446,6 +516,19 @@ impl ExecutionProver {
                     tracing_data,
                 };
                 GpuWorkRequest::MemoryCommitment(request)
+            }
+        };
+        let free_traces = |inits_and_teardowns: Option<ShuffleRamInitsAndTeardownsHost<A>>,
+                           tracing_data: Option<TracingDataHost<A>>| {
+            if let Some(inits_and_teardowns) = inits_and_teardowns {
+                for allocator in inits_and_teardowns.into_allocators() {
+                    self.free_allocators_sender.send(allocator).unwrap();
+                }
+            }
+            if let Some(tracing_data) = tracing_data {
+                for allocator in tracing_data.into_allocators() {
+                    self.free_allocators_sender.send(allocator).unwrap();
+                }
             }
         };
         for work_result in work_results_receiver {
@@ -583,15 +666,32 @@ impl ExecutionProver {
                                 merkle_tree_caps,
                             } = commitment;
                             trace!("BATCH[{batch_id}] PROVER received memory commitment for circuit {circuit_type:?}[{sequence_id}]");
-                            if let Some(inits_and_teardowns) = inits_and_teardowns {
-                                for allocator in inits_and_teardowns.into_allocators() {
-                                    self.free_allocators_sender.send(allocator).unwrap();
+                            if let Some(cache) = cache.as_mut() {
+                                let cache_entry = CacheEntry {
+                                    circuit_type,
+                                    sequence_id,
+                                    inits_and_teardowns,
+                                    tracing_data,
+                                };
+                                cache.push_back(cache_entry);
+                                let mut cached_allocators_count = cache
+                                    .iter()
+                                    .map(CacheEntry::get_allocators_count)
+                                    .sum::<usize>();
+                                while cached_allocators_count
+                                    > self.configuration.host_allocators_per_job_cache_count
+                                {
+                                    let evicted_entry = cache.pop_front().unwrap();
+                                    let evicted_allocators_count =
+                                        evicted_entry.get_allocators_count();
+                                    cached_allocators_count -= evicted_allocators_count;
+                                    free_traces(
+                                        evicted_entry.inits_and_teardowns,
+                                        evicted_entry.tracing_data,
+                                    );
                                 }
-                            }
-                            if let Some(tracing_data) = tracing_data {
-                                for allocator in tracing_data.into_allocators() {
-                                    self.free_allocators_sender.send(allocator).unwrap();
-                                }
+                            } else {
+                                free_traces(inits_and_teardowns, tracing_data)
                             }
                             let caps = match circuit_type {
                                 CircuitType::Delegation(circuit_type) => {
@@ -621,16 +721,7 @@ impl ExecutionProver {
                                 proof,
                             } = proof;
                             trace!("BATCH[{batch_id}] PROVER received proof for circuit {circuit_type:?}[{sequence_id}]");
-                            if let Some(inits_and_teardowns) = inits_and_teardowns {
-                                for allocator in inits_and_teardowns.into_allocators() {
-                                    self.free_allocators_sender.send(allocator).unwrap();
-                                }
-                            }
-                            if let Some(tracing_data) = tracing_data {
-                                for allocator in tracing_data.into_allocators() {
-                                    self.free_allocators_sender.send(allocator).unwrap();
-                                }
-                            }
+                            free_traces(inits_and_teardowns, tracing_data);
                             match circuit_type {
                                 CircuitType::Delegation(circuit_type) => {
                                     assert!(delegation_circuits_proofs
@@ -657,6 +748,25 @@ impl ExecutionProver {
                 }
             }
             for request in gpu_work_requests {
+                let key = (request.circuit_type(), request.sequence_id());
+                if requests_served_from_cache.contains(&key) {
+                    match request {
+                        GpuWorkRequest::Proof(request) => {
+                            let ProofRequest {
+                                batch_id,
+                                circuit_type,
+                                sequence_id,
+                                inits_and_teardowns,
+                                tracing_data,
+                                ..
+                            } = request;
+                            trace!("BATCH[{batch_id}] PROVER skipping cached proof request for circuit {circuit_type:?}[{sequence_id}]");
+                            free_traces(inits_and_teardowns, tracing_data);
+                        }
+                        _ => panic!("only proof requests are cached"),
+                    }
+                    continue;
+                }
                 gpu_work_requests_sender
                     .as_ref()
                     .unwrap()
@@ -727,6 +837,7 @@ impl ExecutionProver {
 
     fn commit_memory_inner(
         &self,
+        cache: Option<&mut VecDeque<CacheEntry>>,
         batch_id: u64,
         binary_key: usize,
         cycle_limit: usize,
@@ -737,6 +848,7 @@ impl ExecutionProver {
         let result = self
             .get_result(
                 false,
+                cache,
                 batch_id,
                 binary_key,
                 cycle_limit,
@@ -770,11 +882,18 @@ impl ExecutionProver {
         cycle_limit: usize,
         non_determinism_source: impl NonDeterminismCSRSource + Send + 'static,
     ) -> CommitMemoryResult {
-        self.commit_memory_inner(batch_id, binary_key, cycle_limit, non_determinism_source)
+        self.commit_memory_inner(
+            None,
+            batch_id,
+            binary_key,
+            cycle_limit,
+            non_determinism_source,
+        )
     }
 
     fn prove_inner(
         &self,
+        cache: Option<&mut VecDeque<CacheEntry>>,
         batch_id: u64,
         binary_key: usize,
         cycle_limit: usize,
@@ -786,6 +905,7 @@ impl ExecutionProver {
         let result = self
             .get_result(
                 true,
+                cache,
                 batch_id,
                 binary_key,
                 cycle_limit,
@@ -822,6 +942,7 @@ impl ExecutionProver {
         external_challenges: ExternalChallenges,
     ) -> ProveResult {
         self.prove_inner(
+            None,
             batch_id,
             binary_key,
             cycle_limit,
@@ -851,8 +972,10 @@ impl ExecutionProver {
         cycle_limit: usize,
         non_determinism_source: impl NonDeterminismCSRSource + Clone + Send + 'static,
     ) -> ProveResult {
+        let mut cache = VecDeque::new();
         let timer = Instant::now();
         let memory_commitment_result = self.commit_memory_inner(
+            Some(&mut cache),
             batch_id,
             binary_key,
             cycle_limit,
@@ -886,6 +1009,7 @@ impl ExecutionProver {
                 all_challenges_seed,
             );
         let prove_result = self.prove_inner(
+            Some(&mut cache),
             batch_id,
             binary_key,
             cycle_limit,

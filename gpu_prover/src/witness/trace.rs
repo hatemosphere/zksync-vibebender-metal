@@ -1,5 +1,4 @@
 use fft::GoodAllocator;
-use itertools::Itertools;
 use std::sync::Arc;
 
 #[derive(Clone)]
@@ -29,6 +28,10 @@ impl<T, A: GoodAllocator> ChunkedTraceHolder<T, A> {
             }
         }
         panic!("Index out of bounds");
+    }
+
+    pub fn get_allocators_count(&self) -> usize {
+        self.chunks.len()
     }
 
     pub fn into_allocators(self) -> Vec<A> {

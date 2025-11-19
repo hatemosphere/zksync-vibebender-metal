@@ -39,6 +39,14 @@ pub(crate) enum DelegationTracingDataHost<A: GoodAllocator> {
 }
 
 impl<A: GoodAllocator> DelegationTracingDataHost<A> {
+    pub fn get_allocators_count(&self) -> usize {
+        match self {
+            DelegationTracingDataHost::BigIntWithControl(trace) => trace.get_allocators_count(),
+            DelegationTracingDataHost::Blake2WithCompression(trace) => trace.get_allocators_count(),
+            DelegationTracingDataHost::KeccakSpecial5(trace) => trace.get_allocators_count(),
+        }
+    }
+
     pub fn into_allocators(self) -> Vec<A> {
         match self {
             DelegationTracingDataHost::BigIntWithControl(trace) => trace.into_allocators(),
@@ -82,6 +90,14 @@ pub(crate) enum UnrolledTracingDataHost<A: GoodAllocator> {
 }
 
 impl<A: GoodAllocator> UnrolledTracingDataHost<A> {
+    pub fn get_allocators_count(&self) -> usize {
+        match self {
+            UnrolledTracingDataHost::Memory(trace) => trace.get_allocators_count(),
+            UnrolledTracingDataHost::NonMemory(trace) => trace.get_allocators_count(),
+            UnrolledTracingDataHost::Unified(trace) => trace.get_allocators_count(),
+        }
+    }
+
     pub fn into_allocators(self) -> Vec<A> {
         match self {
             UnrolledTracingDataHost::Memory(trace) => trace.into_allocators(),
@@ -98,6 +114,13 @@ pub(crate) enum TracingDataHost<A: GoodAllocator> {
 }
 
 impl<A: GoodAllocator> TracingDataHost<A> {
+    pub fn get_allocators_count(&self) -> usize {
+        match self {
+            TracingDataHost::Delegation(trace) => trace.get_allocators_count(),
+            TracingDataHost::Unrolled(trace) => trace.get_allocators_count(),
+        }
+    }
+
     pub fn into_allocators(self) -> Vec<A> {
         match self {
             TracingDataHost::Delegation(trace) => trace.into_allocators(),
