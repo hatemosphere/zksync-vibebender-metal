@@ -7,8 +7,10 @@ pub type ReceiveTraceFn =
     extern "sysv64" fn(*mut (), &mut TraceChunk, &MachineState) -> *mut TraceChunk;
 pub type ReceiveFinalStateFn = extern "sysv64" fn(*mut (), &mut TraceChunk, &MachineState);
 
-pub struct JittedCode<N: NonDeterminismCSRSource> {
-    code: todo!();
+pub struct JittedCode<I: ContextImpl> {
+    code: dynasmrt::ExecutableBuffer,
+    start: dynasmrt::AssemblyOffset,
+    _marker: core::marker::PhantomData<I>,
 }
 
 // Register use and mapping
@@ -155,7 +157,7 @@ macro_rules! before_call {
     }
 }
 
-// This macro saves registers into MachineState structure in RDX, and RISC-V PC in r9
+// This macro saves registers into MachineState structure in RDX
 macro_rules! save_machine_state {
     ($ops:ident) => {
         dynasm!($ops
@@ -198,7 +200,7 @@ macro_rules! after_call {
     }
 }
 
-// Restored registers from MachineState pointer in RDX. R9 is ignored
+// Restored registers from MachineState pointer in RDX
 macro_rules! update_machine_state_post_call {
     ($ops:ident) => {
         dynasm!($ops
@@ -509,1156 +511,1182 @@ macro_rules! emit_early_exit {
     };
 }
 
-pub fn run_alternative_simulator<'a, N: NonDeterminismCSRSource>(
-    program: &[u32],
-    non_determinism_source: &'a mut N,
-    initial_memory: &[u32],
-    cycles_bound: Option<u32>,
-) -> (MachineState, Box<MemoryHolder>) {
-    assert!(initial_memory.len() <= common_constants::rom::ROM_WORD_SIZE);
-    let mut ops = x64::Assembler::new().unwrap();
-    let start = ops.offset();
+impl<I: ContextImpl> JittedCode<I> {
+    pub fn preprocess_bytecode(program: &[u32], cycles_bound: Option<u32>) -> Self {
+        let mut ops = x64::Assembler::new().unwrap();
+        let start = ops.offset();
 
-    // view_rv32_assembly(&program[..100], 0);
-
-    dynasm!(ops
-        ; ->start:
-        ;; prologue!(ops)
-        ; vzeroall
-        ; xor rbx, rbx
-        ; xor r10, r10
-        ; xor r11, r11
-        ; xor r12, r12
-        ; xor r13, r13
-        ; xor r14, r14
-        ; xor r15, r15
-
-        // set initial timestamp and snapshot counter
-        ; mov r8, INITIAL_TIMESTAMP as _
-        ; xor r9, r9
-    );
-
-    // allocate stack space for Machine state
-    dynasm!(ops
-        ; sub rsp, (MachineState::SIZE as i32)
-    );
-    for i in 0..MachineState::SIZE_IN_QWORDS {
-        dynasm!(ops
-            ; mov QWORD [rsp + 8 * i as i32], 0
-        );
-    }
-
-    // we expect trace chunk in RDI, and memory in RSI, and context pointer in RDX,
-    // so we need to copy context pointer into our structure
-    dynasm!(ops
-        ; mov [rsp + (MachineState::CONTEXT_PTR_OFFSET as i32)], rdx
-    );
-
-    // Static jump targets for JAL and branch instructions - we may NOT use some of them, but it is ok
-    let instruction_labels = (0..program.len())
-        .map(|_| ops.new_dynamic_label())
-        .collect::<Vec<_>>();
-
-    // Jump target array for Jalr - we will create them upfront, but track which are meaningful
-    // Records the position of each RISC-V instruction relative to the start
-    let mut jump_offsets = vec![0; program.len()];
-    let mut initialized_jump_offsets = HashSet::new();
-    let mut final_pc = None;
-
-    // println!("Will preprocess {} opcodes", program.len());
-
-    if let Some(cycles_bound) = cycles_bound {
-        let ts_bound = (cycles_bound as u64) * TIMESTAMP_STEP + INITIAL_TIMESTAMP;
-        println!("Timestamp limit is 0x{:x}", ts_bound);
-    }
-
-    let mut i = 0;
-    while i < program.len() {
-        let raw_instruction = program[i];
-        let pc = i as u32 * 4;
+        // view_rv32_assembly(&program[..100], 0);
 
         dynasm!(ops
-            ; => instruction_labels[i]
-        );
-        jump_offsets[i] = ops.offset().0;
-        initialized_jump_offsets.insert(i);
+            ; ->start:
+            ;; prologue!(ops)
+            ; vzeroall
+            ; xor rbx, rbx
+            ; xor r10, r10
+            ; xor r11, r11
+            ; xor r12, r12
+            ; xor r13, r13
+            ; xor r14, r14
+            ; xor r15, r15
 
-        let Ok(instruction) = riscv_decode::decode(raw_instruction) else {
-            panic!(
-                "Unknown instruction 0x{:08x} at PC = 0x{:08x}",
-                raw_instruction, pc
+            // set initial timestamp and snapshot counter
+            ; mov r8, INITIAL_TIMESTAMP as _
+            ; xor r9, r9
+        );
+
+        // allocate stack space for Machine state
+        dynasm!(ops
+            ; sub rsp, (MachineState::SIZE as i32)
+        );
+        for i in 0..MachineState::SIZE_IN_QWORDS {
+            dynasm!(ops
+                ; mov QWORD [rsp + 8 * i as i32], 0
             );
-            emit_runtime_error!(ops);
-            continue;
-        };
+        }
+
+        // we expect trace chunk in RDI, and memory in RSI, and context pointer in RDX,
+        // so we need to copy context pointer into our structure
+        dynasm!(ops
+            ; mov [rsp + (MachineState::CONTEXT_PTR_OFFSET as i32)], rdx
+        );
+
+        // Static jump targets for JAL and branch instructions - we may NOT use some of them, but it is ok
+        let instruction_labels = (0..program.len())
+            .map(|_| ops.new_dynamic_label())
+            .collect::<Vec<_>>();
+
+        // Jump target array for Jalr - we will create them upfront, but track which are meaningful
+        // Records the position of each RISC-V instruction relative to the start
+        let mut jump_offsets = vec![0; program.len()];
+        let mut initialized_jump_offsets = HashSet::new();
+        let mut final_pc = None;
+
+        // println!("Will preprocess {} opcodes", program.len());
 
         if let Some(cycles_bound) = cycles_bound {
             let ts_bound = (cycles_bound as u64) * TIMESTAMP_STEP + INITIAL_TIMESTAMP;
-            emit_early_exit!(ops, pc, ts_bound);
+            println!("Timestamp limit is 0x{:x}", ts_bound);
         }
 
-        // print_registers!(ops, pc, raw_instruction);
+        let mut i = 0;
+        while i < program.len() {
+            let raw_instruction = program[i];
+            let pc = i as u32 * 4;
 
-        let mut instruction_emitted = false;
+            dynasm!(ops
+                ; => instruction_labels[i]
+            );
+            jump_offsets[i] = ops.offset().0;
+            initialized_jump_offsets.insert(i);
 
-        // Pure instructions
-        if matches!(
-            instruction,
-            Instruction::Addi(_)
-                | Instruction::Andi(_)
-                | Instruction::Ori(_)
-                | Instruction::Xori(_)
-                | Instruction::Slti(_)
-                | Instruction::Sltiu(_)
-                | Instruction::Slli(_)
-                | Instruction::Srli(_)
-                | Instruction::Srai(_)
-                | Instruction::Lui(_)
-                | Instruction::Auipc(_)
-                | Instruction::Add(_)
-                | Instruction::Sub(_)
-                | Instruction::Slt(_)
-                | Instruction::Sltu(_)
-                | Instruction::And(_)
-                | Instruction::Or(_)
-                | Instruction::Xor(_)
-                | Instruction::Sll(_)
-                | Instruction::Srl(_)
-                | Instruction::Sra(_)
-                | Instruction::Lb(_)
-                | Instruction::Lbu(_)
-                | Instruction::Lh(_)
-                | Instruction::Lhu(_)
-                | Instruction::Lw(_)
-                | Instruction::Mul(_)
-                | Instruction::Mulh(_)
-                | Instruction::Mulhu(_)
-                | Instruction::Mulhsu(_)
-                | Instruction::Div(_)
-                | Instruction::Divu(_)
-                | Instruction::Rem(_)
-                | Instruction::Remu(_)
-        ) {
-            let rd = (raw_instruction >> 7) & 0x1F;
-            let out = destination_gpr(rd);
-            // Instructions that just compute a result are NOPs if they write to x0, and formally touch x0 twice on read
-            if rd == 0 {
-                println!(
-                    "Skipping instuction {:?} (0x{:08x}) at PC = 0x{:08x}",
-                    instruction, raw_instruction, pc
+            let Ok(instruction) = riscv_decode::decode(raw_instruction) else {
+                panic!(
+                    "Unknown instruction 0x{:08x} at PC = 0x{:08x}",
+                    raw_instruction, pc
                 );
-                pre_bump_timestamp_and_touch!(ops, 2, 0);
-                bump_timestamp!(ops, 2);
+                emit_runtime_error!(ops);
+                continue;
+            };
+
+            if let Some(cycles_bound) = cycles_bound {
+                let ts_bound = (cycles_bound as u64) * TIMESTAMP_STEP + INITIAL_TIMESTAMP;
+                emit_early_exit!(ops, pc, ts_bound);
+            }
+
+            // print_registers!(ops, pc, raw_instruction);
+
+            let mut instruction_emitted = false;
+
+            // Pure instructions
+            if matches!(
+                instruction,
+                Instruction::Addi(_)
+                    | Instruction::Andi(_)
+                    | Instruction::Ori(_)
+                    | Instruction::Xori(_)
+                    | Instruction::Slti(_)
+                    | Instruction::Sltiu(_)
+                    | Instruction::Slli(_)
+                    | Instruction::Srli(_)
+                    | Instruction::Srai(_)
+                    | Instruction::Lui(_)
+                    | Instruction::Auipc(_)
+                    | Instruction::Add(_)
+                    | Instruction::Sub(_)
+                    | Instruction::Slt(_)
+                    | Instruction::Sltu(_)
+                    | Instruction::And(_)
+                    | Instruction::Or(_)
+                    | Instruction::Xor(_)
+                    | Instruction::Sll(_)
+                    | Instruction::Srl(_)
+                    | Instruction::Sra(_)
+                    | Instruction::Lb(_)
+                    | Instruction::Lbu(_)
+                    | Instruction::Lh(_)
+                    | Instruction::Lhu(_)
+                    | Instruction::Lw(_)
+                    | Instruction::Mul(_)
+                    | Instruction::Mulh(_)
+                    | Instruction::Mulhu(_)
+                    | Instruction::Mulhsu(_)
+                    | Instruction::Div(_)
+                    | Instruction::Divu(_)
+                    | Instruction::Rem(_)
+                    | Instruction::Remu(_)
+            ) {
+                let rd = (raw_instruction >> 7) & 0x1F;
+                let out = destination_gpr(rd);
+                // Instructions that just compute a result are NOPs if they write to x0, and formally touch x0 twice on read
+                if rd == 0 {
+                    println!(
+                        "Skipping instuction {:?} (0x{:08x}) at PC = 0x{:08x}",
+                        instruction, raw_instruction, pc
+                    );
+                    pre_bump_timestamp_and_touch!(ops, 2, 0);
+                    bump_timestamp!(ops, 2);
+                    continue;
+                }
+
+                let mut issue_snapshot = false;
+
+                match instruction {
+                    // Arithmetic
+                    Instruction::Addi(parts) => {
+                        let source = load(&mut ops, parts.rs1());
+                        touch_register_and_increment_timestamp!(ops, parts.rs1());
+                        touch_register_and_increment_timestamp!(ops, 0);
+                        dynasm!(ops
+                            ; lea Rd(out), [Rd(source) + sign_extend::<12>(parts.imm())]
+                        );
+                        record_circuit_type(&mut ops, CounterType::AddSubLui, 1);
+                    }
+                    Instruction::Andi(parts) => {
+                        load_into(&mut ops, parts.rs1(), out);
+                        touch_register_and_increment_timestamp!(ops, parts.rs1());
+                        touch_register_and_increment_timestamp!(ops, 0);
+                        dynasm!(ops
+                            ; and Rd(out), sign_extend::<12>(parts.imm())
+                        );
+                        record_circuit_type(&mut ops, CounterType::ShiftBinaryCsr, 1);
+                    }
+                    Instruction::Ori(parts) => {
+                        load_into(&mut ops, parts.rs1(), out);
+                        touch_register_and_increment_timestamp!(ops, parts.rs1());
+                        touch_register_and_increment_timestamp!(ops, 0);
+                        dynasm!(ops
+                            ; or Rd(out), sign_extend::<12>(parts.imm())
+                        );
+                        record_circuit_type(&mut ops, CounterType::ShiftBinaryCsr, 1);
+                    }
+                    Instruction::Xori(parts) => {
+                        load_into(&mut ops, parts.rs1(), out);
+                        touch_register_and_increment_timestamp!(ops, parts.rs1());
+                        touch_register_and_increment_timestamp!(ops, 0);
+                        dynasm!(ops
+                            ; xor Rd(out), sign_extend::<12>(parts.imm())
+                        );
+                        record_circuit_type(&mut ops, CounterType::ShiftBinaryCsr, 1);
+                    }
+                    Instruction::Slti(parts) => {
+                        let source = load(&mut ops, parts.rs1());
+                        touch_register_and_increment_timestamp!(ops, parts.rs1());
+                        touch_register_and_increment_timestamp!(ops, 0);
+                        dynasm!(ops
+                            ; cmp Rd(source), sign_extend::<12>(parts.imm())
+                            ; setl Rb(out)
+                            ; movzx Rd(out), Rb(out)
+                        );
+                        record_circuit_type(&mut ops, CounterType::BranchSlt, 1);
+                    }
+                    Instruction::Sltiu(parts) => {
+                        let source = load(&mut ops, parts.rs1());
+                        touch_register_and_increment_timestamp!(ops, parts.rs1());
+                        touch_register_and_increment_timestamp!(ops, 0);
+                        dynasm!(ops
+                            ; cmp Rd(source), sign_extend::<12>(parts.imm())
+                            ; setb Rb(out)
+                            ; movzx Rd(out), Rb(out)
+                        );
+                        record_circuit_type(&mut ops, CounterType::BranchSlt, 1);
+                    }
+                    Instruction::Slli(parts) => {
+                        load_into(&mut ops, parts.rs1(), out);
+                        touch_register_and_increment_timestamp!(ops, parts.rs1());
+                        touch_register_and_increment_timestamp!(ops, 0);
+                        dynasm!(ops
+                            ; shl Rd(out), parts.shamt() as i8
+                        );
+                        record_circuit_type(&mut ops, CounterType::ShiftBinaryCsr, 1);
+                    }
+                    Instruction::Srli(parts) => {
+                        load_into(&mut ops, parts.rs1(), out);
+                        touch_register_and_increment_timestamp!(ops, parts.rs1());
+                        touch_register_and_increment_timestamp!(ops, 0);
+                        dynasm!(ops
+                            ; shr Rd(out), parts.shamt() as i8
+                        );
+                        record_circuit_type(&mut ops, CounterType::ShiftBinaryCsr, 1);
+                    }
+                    Instruction::Srai(parts) => {
+                        load_into(&mut ops, parts.rs1(), out);
+                        touch_register_and_increment_timestamp!(ops, parts.rs1());
+                        touch_register_and_increment_timestamp!(ops, 0);
+                        dynasm!(ops
+                            ; sar Rd(out), parts.shamt() as i8
+                        );
+                        record_circuit_type(&mut ops, CounterType::ShiftBinaryCsr, 1);
+                    }
+                    Instruction::Lui(parts) => {
+                        pre_bump_timestamp_and_touch!(ops, 2, 0);
+                        dynasm!(ops
+                            ; mov Rd(out), parts.imm() as i32
+                        );
+                        record_circuit_type(&mut ops, CounterType::AddSubLui, 1);
+                    }
+                    Instruction::Auipc(parts) => {
+                        pre_bump_timestamp_and_touch!(ops, 2, 0);
+                        // NOTE: result is wrapping
+                        dynasm!(ops
+                            ; mov Rd(out), (pc.wrapping_add(parts.imm())) as i32
+                        );
+                        record_circuit_type(&mut ops, CounterType::AddSubLui, 1);
+                    }
+                    Instruction::Add(parts) => {
+                        touch_register_and_increment_timestamp!(ops, parts.rs1());
+                        touch_register_and_increment_timestamp!(ops, parts.rs2());
+                        let other = load_abelian(&mut ops, parts.rs1(), parts.rs2(), out);
+                        dynasm!(ops
+                            ; add Rd(out), Rd(other)
+                        );
+                        record_circuit_type(&mut ops, CounterType::AddSubLui, 1);
+                    }
+                    Instruction::Sub(parts) => {
+                        touch_register_and_increment_timestamp!(ops, parts.rs1());
+                        touch_register_and_increment_timestamp!(ops, parts.rs2());
+                        load_into(&mut ops, parts.rs2(), SCRATCH_REGISTER);
+                        load_into(&mut ops, parts.rs1(), out);
+                        dynasm!(ops
+                            ; sub Rd(out), Rd(SCRATCH_REGISTER)
+                        );
+                        record_circuit_type(&mut ops, CounterType::AddSubLui, 1);
+                    }
+                    Instruction::Slt(parts) => {
+                        touch_register_and_increment_timestamp!(ops, parts.rs1());
+                        touch_register_and_increment_timestamp!(ops, parts.rs2());
+                        load_into(&mut ops, parts.rs2(), SCRATCH_REGISTER);
+                        load_into(&mut ops, parts.rs1(), out);
+                        dynasm!(ops
+                            ; cmp Rd(out), Rd(SCRATCH_REGISTER)
+                            ; setl Rb(out)
+                            ; movzx Rd(out), Rb(out)
+                        );
+                        record_circuit_type(&mut ops, CounterType::BranchSlt, 1);
+                    }
+                    Instruction::Sltu(parts) => {
+                        touch_register_and_increment_timestamp!(ops, parts.rs1());
+                        touch_register_and_increment_timestamp!(ops, parts.rs2());
+                        load_into(&mut ops, parts.rs2(), SCRATCH_REGISTER);
+                        load_into(&mut ops, parts.rs1(), out);
+                        dynasm!(ops
+                            ; cmp Rd(out), Rd(SCRATCH_REGISTER)
+                            ; setb Rb(out)
+                            ; movzx Rd(out), Rb(out)
+                        );
+                        record_circuit_type(&mut ops, CounterType::BranchSlt, 1);
+                    }
+                    Instruction::And(parts) => {
+                        touch_register_and_increment_timestamp!(ops, parts.rs1());
+                        touch_register_and_increment_timestamp!(ops, parts.rs2());
+                        let other = load_abelian(&mut ops, parts.rs1(), parts.rs2(), out);
+                        dynasm!(ops
+                            ; and Rd(out), Rd(other)
+                        );
+                        record_circuit_type(&mut ops, CounterType::ShiftBinaryCsr, 1);
+                    }
+                    Instruction::Or(parts) => {
+                        touch_register_and_increment_timestamp!(ops, parts.rs1());
+                        touch_register_and_increment_timestamp!(ops, parts.rs2());
+                        let other = load_abelian(&mut ops, parts.rs1(), parts.rs2(), out);
+                        dynasm!(ops
+                            ; or Rd(out), Rd(other)
+                        );
+                        record_circuit_type(&mut ops, CounterType::ShiftBinaryCsr, 1);
+                    }
+                    Instruction::Xor(parts) => {
+                        touch_register_and_increment_timestamp!(ops, parts.rs1());
+                        touch_register_and_increment_timestamp!(ops, parts.rs2());
+                        let other = load_abelian(&mut ops, parts.rs1(), parts.rs2(), out);
+                        dynasm!(ops
+                            ; xor Rd(out), Rd(other)
+                        );
+                        record_circuit_type(&mut ops, CounterType::ShiftBinaryCsr, 1);
+                    }
+                    Instruction::Sll(parts) => {
+                        touch_register_and_increment_timestamp!(ops, parts.rs1());
+                        touch_register_and_increment_timestamp!(ops, parts.rs2());
+                        load_into(&mut ops, parts.rs2(), x64::Rq::RCX as u8);
+                        load_into(&mut ops, parts.rs1(), out);
+                        dynasm!(ops
+                            ; and rcx, 0x1f
+                            ; shl Rd(out), cl
+                        );
+                        record_circuit_type(&mut ops, CounterType::ShiftBinaryCsr, 1);
+                    }
+                    Instruction::Srl(parts) => {
+                        touch_register_and_increment_timestamp!(ops, parts.rs1());
+                        touch_register_and_increment_timestamp!(ops, parts.rs2());
+                        load_into(&mut ops, parts.rs2(), x64::Rq::RCX as u8);
+                        load_into(&mut ops, parts.rs1(), out);
+                        dynasm!(ops
+                            ; and rcx, 0x1f
+                            ; shr Rd(out), cl
+                        );
+                        record_circuit_type(&mut ops, CounterType::ShiftBinaryCsr, 1);
+                    }
+                    Instruction::Sra(parts) => {
+                        touch_register_and_increment_timestamp!(ops, parts.rs1());
+                        touch_register_and_increment_timestamp!(ops, parts.rs2());
+                        load_into(&mut ops, parts.rs2(), x64::Rq::RCX as u8);
+                        load_into(&mut ops, parts.rs1(), out);
+                        dynasm!(ops
+                            ; and rcx, 0x1f
+                            ; sar Rd(out), cl
+                        );
+                        record_circuit_type(&mut ops, CounterType::ShiftBinaryCsr, 1);
+                    }
+
+                    // for subword loads we need an extra register to store word index. We have RDX "empty"
+                    // after loading the address. And we need one more register to store timestamp - for that we will push RBP
+
+                    // Loads
+                    Instruction::Lb(parts) => {
+                        let address = load(&mut ops, parts.rs1());
+                        dynasm!(ops
+                            ; lea Rd(SCRATCH_REGISTER), [Rd(address) + sign_extend::<12>(parts.imm())]
+                            // ; movsx Rq(SCRATCH_REGISTER), Rd(address)
+                            // ; add Rq(SCRATCH_REGISTER), sign_extend::<12>(parts.imm()) // compute address, as we will need it a lot
+                            ; mov rdx, Rq(SCRATCH_REGISTER) // put word(!) index in to RDX
+                            ; shr rdx, 2
+                        );
+                        touch_register_and_increment_timestamp!(ops, parts.rs1());
+                        dynasm!(ops
+                            ; movsx Rd(out), BYTE [rsi + Rq(SCRATCH_REGISTER)] // load value into destination, sign-extend
+                            ; mov Rd(SCRATCH_REGISTER), DWORD [rsi + 4 * rdx] // load old word(!) value into scratch
+                            ; push rbp
+                            ; mov rbp, [rsi + (MemoryHolder::TIMESTAMPS_OFFSET as i32) + 8 * rdx] // read timestamp
+                            ; mov [rsi + (MemoryHolder::TIMESTAMPS_OFFSET as i32) + 8 * rdx], r8 // update timestamp
+                            ; mov [rdi + r9 * 4], Rd(SCRATCH_REGISTER) // write value into trace
+                            ; mov [rdi + r9 * 8 + (TraceChunk::TIMESTAMPS_OFFSET as i32)], rbp // write old value into trace
+                            ; pop rbp
+                        );
+                        bump_timestamp!(ops, 1);
+                        record_circuit_type(&mut ops, CounterType::MemSubword, 1);
+                        issue_snapshot = true;
+                    }
+                    Instruction::Lbu(parts) => {
+                        let address = load(&mut ops, parts.rs1());
+                        dynasm!(ops
+                            ; lea Rd(SCRATCH_REGISTER), [Rd(address) + sign_extend::<12>(parts.imm())]
+                            // ; movsx Rq(SCRATCH_REGISTER), Rd(address)
+                            // ; add Rq(SCRATCH_REGISTER), sign_extend::<12>(parts.imm()) // compute address, as we will need it a lot
+                            ; mov rdx, Rq(SCRATCH_REGISTER) // put word(!) index in to RDX
+                            ; shr rdx, 2
+                        );
+                        touch_register_and_increment_timestamp!(ops, parts.rs1());
+                        dynasm!(ops
+                            ; movzx Rd(out), BYTE [rsi + Rq(SCRATCH_REGISTER)] // load value into destination, zero-extend
+                            ; mov Rd(SCRATCH_REGISTER), DWORD [rsi + 4 * rdx] // load old word(!) value into scratch
+                            ; push rbp
+                            ; mov rbp, [rsi + (MemoryHolder::TIMESTAMPS_OFFSET as i32) + 8 * rdx] // for read timestamp
+                            ; mov [rsi + (MemoryHolder::TIMESTAMPS_OFFSET as i32) + 8 * rdx], r8 // update timestamp
+                            ; mov [rdi + r9 * 4], Rd(SCRATCH_REGISTER) // write value into trace
+                            ; mov [rdi + r9 * 8 + (TraceChunk::TIMESTAMPS_OFFSET as i32)], rbp // write old value into trace
+                            ; pop rbp
+                        );
+                        bump_timestamp!(ops, 1);
+                        record_circuit_type(&mut ops, CounterType::MemSubword, 1);
+                        issue_snapshot = true;
+                    }
+                    Instruction::Lh(parts) => {
+                        // TODO: exception on misalignment
+                        let address = load(&mut ops, parts.rs1());
+                        dynasm!(ops
+                            ; lea Rd(SCRATCH_REGISTER), [Rd(address) + sign_extend::<12>(parts.imm())]
+                            // ; movsx Rq(SCRATCH_REGISTER), Rd(address)
+                            // ; add Rq(SCRATCH_REGISTER), sign_extend::<12>(parts.imm()) // compute address, as we will need it a lot
+                            ; mov rdx, Rq(SCRATCH_REGISTER) // put word(!) index in to RDX
+                            ; shr rdx, 2
+                        );
+                        touch_register_and_increment_timestamp!(ops, parts.rs1());
+                        dynasm!(ops
+                            ; movsx Rd(out), WORD [rsi + Rq(SCRATCH_REGISTER)] // load value into destination, sign-extend
+                            ; mov Rd(SCRATCH_REGISTER), DWORD [rsi + 4 * rdx] // load old word(!) value into scratch
+                            ; push rbp
+                            ; mov rbp, [rsi + (MemoryHolder::TIMESTAMPS_OFFSET as i32) + 8 * rdx] // for read timestamp
+                            ; mov [rsi + (MemoryHolder::TIMESTAMPS_OFFSET as i32) + 8 * rdx], r8 // update timestamp
+                            ; mov [rdi + r9 * 4], Rd(SCRATCH_REGISTER) // write value into trace
+                            ; mov [rdi + r9 * 8 + (TraceChunk::TIMESTAMPS_OFFSET as i32)], rbp // write old value into trace
+                            ; pop rbp
+                        );
+                        bump_timestamp!(ops, 1);
+                        record_circuit_type(&mut ops, CounterType::MemSubword, 1);
+                        issue_snapshot = true;
+                    }
+                    Instruction::Lhu(parts) => {
+                        // TODO: exception on misalignment
+                        let address = load(&mut ops, parts.rs1());
+                        dynasm!(ops
+                            ; lea Rd(SCRATCH_REGISTER), [Rd(address) + sign_extend::<12>(parts.imm())]
+                            // ; movsx Rq(SCRATCH_REGISTER), Rd(address)
+                            // ; add Rq(SCRATCH_REGISTER), sign_extend::<12>(parts.imm()) // compute address, as we will need it a lot
+                            ; mov rdx, Rq(SCRATCH_REGISTER) // put word(!) index in to RDX
+                            ; shr rdx, 2
+                        );
+                        touch_register_and_increment_timestamp!(ops, parts.rs1());
+                        dynasm!(ops
+                            ; movzx Rd(out), WORD [rsi + Rq(SCRATCH_REGISTER)] // load value into destination, zero-extend
+                            ; mov Rd(SCRATCH_REGISTER), DWORD [rsi + 4 * rdx] // load old word(!) value into scratch
+                            ; push rbp
+                            ; mov rbp, [rsi + (MemoryHolder::TIMESTAMPS_OFFSET as i32) + 8 * rdx] // for read timestamp
+                            ; mov [rsi + (MemoryHolder::TIMESTAMPS_OFFSET as i32) + 8 * rdx], r8 // update timestamp
+                            ; mov [rdi + r9 * 4], Rd(SCRATCH_REGISTER) // write value into trace
+                            ; mov [rdi + r9 * 8 + (TraceChunk::TIMESTAMPS_OFFSET as i32)], rbp // write old value into trace
+                            ; pop rbp
+                        );
+                        bump_timestamp!(ops, 1);
+                        record_circuit_type(&mut ops, CounterType::MemSubword, 1);
+                        issue_snapshot = true;
+                    }
+                    Instruction::Lw(parts) => {
+                        // NOTE: here address is exactly couting in 4 bytes, so we do not need extra word counter and
+                        // use RDX for bookkeeping
+                        // TODO: exception on misalignment
+                        let address = load(&mut ops, parts.rs1());
+                        dynasm!(ops
+                            ; lea Rd(SCRATCH_REGISTER), [Rd(address) + sign_extend::<12>(parts.imm())]
+                            // ; movsx Rq(SCRATCH_REGISTER), Rd(address)
+                            // ; add Rq(SCRATCH_REGISTER), sign_extend::<12>(parts.imm()) // compute address, as we will need it a lot
+                        );
+                        touch_register_and_increment_timestamp!(ops, parts.rs1());
+                        dynasm!(ops
+                            ; mov Rd(out), DWORD [rsi + Rq(SCRATCH_REGISTER)] // load old value into destination
+                            ; mov rdx, [rsi + (MemoryHolder::TIMESTAMPS_OFFSET as i32) + 2 * Rq(SCRATCH_REGISTER)] // reuse RDX for read timestamp
+                            ; mov [rsi + (MemoryHolder::TIMESTAMPS_OFFSET as i32) + 2 * Rq(SCRATCH_REGISTER)], r8 // update timestamp
+                            ; mov [rdi + r9 * 4], Rd(out) // write value into trace
+                            ; mov [rdi + r9 * 8 + (TraceChunk::TIMESTAMPS_OFFSET as i32)], rdx // write old value into trace
+                        );
+                        bump_timestamp!(ops, 1);
+                        record_circuit_type(&mut ops, CounterType::MemWord, 1);
+                        issue_snapshot = true;
+                    }
+
+                    // Multiplication
+                    Instruction::Mul(parts) => {
+                        touch_register_and_increment_timestamp!(ops, parts.rs1());
+                        touch_register_and_increment_timestamp!(ops, parts.rs2());
+                        let other = load_abelian(&mut ops, parts.rs1(), parts.rs2(), out);
+                        dynasm!(ops
+                            ; imul Rd(out), Rd(other)
+                        );
+                        record_circuit_type(&mut ops, CounterType::MulDiv, 1);
+                    }
+                    Instruction::Mulh(parts) => {
+                        unimplemented!("unsupported by default");
+                        // touch_register_and_increment_timestamp!(ops, parts.rs1());
+                        // touch_register_and_increment_timestamp!(ops, parts.rs2());
+                        // load_into(&mut ops, parts.rs1(), x64::Rq::RAX as u8);
+                        // let other = load(&mut ops, parts.rs2());
+                        // dynasm!(ops
+                        //     ; imul Rd(other)
+                        // );
+                        // if out != x64::Rq::RDX as u8 {
+                        //     dynasm!(ops
+                        //         ; mov Rd(out), edx
+                        //     );
+                        // }
+                        // record_circuit_type(&mut ops, CounterType::MulDiv, 1);
+                    }
+                    Instruction::Mulhu(parts) => {
+                        touch_register_and_increment_timestamp!(ops, parts.rs1());
+                        touch_register_and_increment_timestamp!(ops, parts.rs2());
+                        load_into(&mut ops, parts.rs1(), x64::Rq::RAX as u8);
+                        let other = load(&mut ops, parts.rs2());
+                        dynasm!(ops
+                            ; mul Rd(other)
+                        );
+                        if out != x64::Rq::RDX as u8 {
+                            dynasm!(ops
+                                ; mov Rd(out), edx
+                            );
+                        }
+                        record_circuit_type(&mut ops, CounterType::MulDiv, 1);
+                    }
+                    Instruction::Mulhsu(parts) => {
+                        unimplemented!("unsupported by default");
+                        // touch_register_and_increment_timestamp!(ops, parts.rs1());
+                        // touch_register_and_increment_timestamp!(ops, parts.rs2());
+                        // load_into(&mut ops, parts.rs2(), SCRATCH_REGISTER);
+                        // load_into(&mut ops, parts.rs1(), out);
+                        // dynasm!(ops
+                        //     ; movsx Rq(out), Rd(out)
+                        //     ; imul Rq(out), Rq(SCRATCH_REGISTER)
+                        //     ; shr Rq(out), 32
+                        // );
+                        // record_circuit_type(&mut ops, CounterType::MulDiv, 1);
+                    }
+                    Instruction::Div(parts) => {
+                        unimplemented!("unsupported by default");
+                    }
+                    Instruction::Divu(parts) => {
+                        // TODO: handle exception cases
+                        touch_register_and_increment_timestamp!(ops, parts.rs1());
+                        touch_register_and_increment_timestamp!(ops, parts.rs2());
+                        load_into(&mut ops, parts.rs1(), x64::Rq::RAX as u8);
+                        load_into(&mut ops, parts.rs2(), SCRATCH_REGISTER);
+                        dynasm!(ops
+                            ; xor rdx, rdx
+                            ; div Rd(SCRATCH_REGISTER)
+                        );
+                        // quotient is in RAX
+                        if out != x64::Rq::RAX as u8 {
+                            dynasm!(ops
+                                ; mov Rd(out), eax
+                            );
+                        }
+                        record_circuit_type(&mut ops, CounterType::MulDiv, 1);
+                    }
+                    Instruction::Rem(parts) => {
+                        unimplemented!("unsupported by default");
+                    }
+                    Instruction::Remu(parts) => {
+                        // TODO: handle exception cases
+                        touch_register_and_increment_timestamp!(ops, parts.rs1());
+                        touch_register_and_increment_timestamp!(ops, parts.rs2());
+                        load_into(&mut ops, parts.rs1(), x64::Rq::RAX as u8);
+                        load_into(&mut ops, parts.rs2(), SCRATCH_REGISTER);
+                        dynasm!(ops
+                            ; xor rdx, rdx
+                            ; div Rd(SCRATCH_REGISTER)
+                        );
+                        // remainder is in RDX
+                        if out != x64::Rq::RDX as u8 {
+                            dynasm!(ops
+                                ; mov Rd(out), edx
+                            );
+                        }
+                        record_circuit_type(&mut ops, CounterType::MulDiv, 1);
+                    }
+                    a @ _ => {
+                        panic!("Opcode {:?} is not supported", a);
+                    }
+                }
+
+                touch_register_and_bump_timestamp!(ops, rd, 2);
+                store_result(&mut ops, rd);
+
+                // NOTE: ONLY issue snapshotting after store!
+                if issue_snapshot {
+                    increment_trace!(ops, pc);
+                }
+
+                i += 1;
                 continue;
             }
 
             let mut issue_snapshot = false;
 
             match instruction {
-                // Arithmetic
-                Instruction::Addi(parts) => {
-                    let source = load(&mut ops, parts.rs1());
-                    touch_register_and_increment_timestamp!(ops, parts.rs1());
-                    touch_register_and_increment_timestamp!(ops, 0);
-                    dynasm!(ops
-                        ; lea Rd(out), [Rd(source) + sign_extend::<12>(parts.imm())]
-                    );
-                    record_circuit_type(&mut ops, CounterType::AddSubLui, 1);
-                }
-                Instruction::Andi(parts) => {
-                    load_into(&mut ops, parts.rs1(), out);
-                    touch_register_and_increment_timestamp!(ops, parts.rs1());
-                    touch_register_and_increment_timestamp!(ops, 0);
-                    dynasm!(ops
-                        ; and Rd(out), sign_extend::<12>(parts.imm())
-                    );
-                    record_circuit_type(&mut ops, CounterType::ShiftBinaryCsr, 1);
-                }
-                Instruction::Ori(parts) => {
-                    load_into(&mut ops, parts.rs1(), out);
-                    touch_register_and_increment_timestamp!(ops, parts.rs1());
-                    touch_register_and_increment_timestamp!(ops, 0);
-                    dynasm!(ops
-                        ; or Rd(out), sign_extend::<12>(parts.imm())
-                    );
-                    record_circuit_type(&mut ops, CounterType::ShiftBinaryCsr, 1);
-                }
-                Instruction::Xori(parts) => {
-                    load_into(&mut ops, parts.rs1(), out);
-                    touch_register_and_increment_timestamp!(ops, parts.rs1());
-                    touch_register_and_increment_timestamp!(ops, 0);
-                    dynasm!(ops
-                        ; xor Rd(out), sign_extend::<12>(parts.imm())
-                    );
-                    record_circuit_type(&mut ops, CounterType::ShiftBinaryCsr, 1);
-                }
-                Instruction::Slti(parts) => {
-                    let source = load(&mut ops, parts.rs1());
-                    touch_register_and_increment_timestamp!(ops, parts.rs1());
-                    touch_register_and_increment_timestamp!(ops, 0);
-                    dynasm!(ops
-                        ; cmp Rd(source), sign_extend::<12>(parts.imm())
-                        ; setl Rb(out)
-                        ; movzx Rd(out), Rb(out)
-                    );
-                    record_circuit_type(&mut ops, CounterType::BranchSlt, 1);
-                }
-                Instruction::Sltiu(parts) => {
-                    let source = load(&mut ops, parts.rs1());
-                    touch_register_and_increment_timestamp!(ops, parts.rs1());
-                    touch_register_and_increment_timestamp!(ops, 0);
-                    dynasm!(ops
-                        ; cmp Rd(source), sign_extend::<12>(parts.imm())
-                        ; setb Rb(out)
-                        ; movzx Rd(out), Rb(out)
-                    );
-                    record_circuit_type(&mut ops, CounterType::BranchSlt, 1);
-                }
-                Instruction::Slli(parts) => {
-                    load_into(&mut ops, parts.rs1(), out);
-                    touch_register_and_increment_timestamp!(ops, parts.rs1());
-                    touch_register_and_increment_timestamp!(ops, 0);
-                    dynasm!(ops
-                        ; shl Rd(out), parts.shamt() as i8
-                    );
-                    record_circuit_type(&mut ops, CounterType::ShiftBinaryCsr, 1);
-                }
-                Instruction::Srli(parts) => {
-                    load_into(&mut ops, parts.rs1(), out);
-                    touch_register_and_increment_timestamp!(ops, parts.rs1());
-                    touch_register_and_increment_timestamp!(ops, 0);
-                    dynasm!(ops
-                        ; shr Rd(out), parts.shamt() as i8
-                    );
-                    record_circuit_type(&mut ops, CounterType::ShiftBinaryCsr, 1);
-                }
-                Instruction::Srai(parts) => {
-                    load_into(&mut ops, parts.rs1(), out);
-                    touch_register_and_increment_timestamp!(ops, parts.rs1());
-                    touch_register_and_increment_timestamp!(ops, 0);
-                    dynasm!(ops
-                        ; sar Rd(out), parts.shamt() as i8
-                    );
-                    record_circuit_type(&mut ops, CounterType::ShiftBinaryCsr, 1);
-                }
-                Instruction::Lui(parts) => {
-                    pre_bump_timestamp_and_touch!(ops, 2, 0);
-                    dynasm!(ops
-                        ; mov Rd(out), parts.imm() as i32
-                    );
-                    record_circuit_type(&mut ops, CounterType::AddSubLui, 1);
-                }
-                Instruction::Auipc(parts) => {
-                    pre_bump_timestamp_and_touch!(ops, 2, 0);
-                    // NOTE: result is wrapping
-                    dynasm!(ops
-                        ; mov Rd(out), (pc.wrapping_add(parts.imm())) as i32
-                    );
-                    record_circuit_type(&mut ops, CounterType::AddSubLui, 1);
-                }
-                Instruction::Add(parts) => {
-                    touch_register_and_increment_timestamp!(ops, parts.rs1());
-                    touch_register_and_increment_timestamp!(ops, parts.rs2());
-                    let other = load_abelian(&mut ops, parts.rs1(), parts.rs2(), out);
-                    dynasm!(ops
-                        ; add Rd(out), Rd(other)
-                    );
-                    record_circuit_type(&mut ops, CounterType::AddSubLui, 1);
-                }
-                Instruction::Sub(parts) => {
-                    touch_register_and_increment_timestamp!(ops, parts.rs1());
-                    touch_register_and_increment_timestamp!(ops, parts.rs2());
-                    load_into(&mut ops, parts.rs2(), SCRATCH_REGISTER);
-                    load_into(&mut ops, parts.rs1(), out);
-                    dynasm!(ops
-                        ; sub Rd(out), Rd(SCRATCH_REGISTER)
-                    );
-                    record_circuit_type(&mut ops, CounterType::AddSubLui, 1);
-                }
-                Instruction::Slt(parts) => {
-                    touch_register_and_increment_timestamp!(ops, parts.rs1());
-                    touch_register_and_increment_timestamp!(ops, parts.rs2());
-                    load_into(&mut ops, parts.rs2(), SCRATCH_REGISTER);
-                    load_into(&mut ops, parts.rs1(), out);
-                    dynasm!(ops
-                        ; cmp Rd(out), Rd(SCRATCH_REGISTER)
-                        ; setl Rb(out)
-                        ; movzx Rd(out), Rb(out)
-                    );
-                    record_circuit_type(&mut ops, CounterType::BranchSlt, 1);
-                }
-                Instruction::Sltu(parts) => {
-                    touch_register_and_increment_timestamp!(ops, parts.rs1());
-                    touch_register_and_increment_timestamp!(ops, parts.rs2());
-                    load_into(&mut ops, parts.rs2(), SCRATCH_REGISTER);
-                    load_into(&mut ops, parts.rs1(), out);
-                    dynasm!(ops
-                        ; cmp Rd(out), Rd(SCRATCH_REGISTER)
-                        ; setb Rb(out)
-                        ; movzx Rd(out), Rb(out)
-                    );
-                    record_circuit_type(&mut ops, CounterType::BranchSlt, 1);
-                }
-                Instruction::And(parts) => {
-                    touch_register_and_increment_timestamp!(ops, parts.rs1());
-                    touch_register_and_increment_timestamp!(ops, parts.rs2());
-                    let other = load_abelian(&mut ops, parts.rs1(), parts.rs2(), out);
-                    dynasm!(ops
-                        ; and Rd(out), Rd(other)
-                    );
-                    record_circuit_type(&mut ops, CounterType::ShiftBinaryCsr, 1);
-                }
-                Instruction::Or(parts) => {
-                    touch_register_and_increment_timestamp!(ops, parts.rs1());
-                    touch_register_and_increment_timestamp!(ops, parts.rs2());
-                    let other = load_abelian(&mut ops, parts.rs1(), parts.rs2(), out);
-                    dynasm!(ops
-                        ; or Rd(out), Rd(other)
-                    );
-                    record_circuit_type(&mut ops, CounterType::ShiftBinaryCsr, 1);
-                }
-                Instruction::Xor(parts) => {
-                    touch_register_and_increment_timestamp!(ops, parts.rs1());
-                    touch_register_and_increment_timestamp!(ops, parts.rs2());
-                    let other = load_abelian(&mut ops, parts.rs1(), parts.rs2(), out);
-                    dynasm!(ops
-                        ; xor Rd(out), Rd(other)
-                    );
-                    record_circuit_type(&mut ops, CounterType::ShiftBinaryCsr, 1);
-                }
-                Instruction::Sll(parts) => {
-                    touch_register_and_increment_timestamp!(ops, parts.rs1());
-                    touch_register_and_increment_timestamp!(ops, parts.rs2());
-                    load_into(&mut ops, parts.rs2(), x64::Rq::RCX as u8);
-                    load_into(&mut ops, parts.rs1(), out);
-                    dynasm!(ops
-                        ; and rcx, 0x1f
-                        ; shl Rd(out), cl
-                    );
-                    record_circuit_type(&mut ops, CounterType::ShiftBinaryCsr, 1);
-                }
-                Instruction::Srl(parts) => {
-                    touch_register_and_increment_timestamp!(ops, parts.rs1());
-                    touch_register_and_increment_timestamp!(ops, parts.rs2());
-                    load_into(&mut ops, parts.rs2(), x64::Rq::RCX as u8);
-                    load_into(&mut ops, parts.rs1(), out);
-                    dynasm!(ops
-                        ; and rcx, 0x1f
-                        ; shr Rd(out), cl
-                    );
-                    record_circuit_type(&mut ops, CounterType::ShiftBinaryCsr, 1);
-                }
-                Instruction::Sra(parts) => {
-                    touch_register_and_increment_timestamp!(ops, parts.rs1());
-                    touch_register_and_increment_timestamp!(ops, parts.rs2());
-                    load_into(&mut ops, parts.rs2(), x64::Rq::RCX as u8);
-                    load_into(&mut ops, parts.rs1(), out);
-                    dynasm!(ops
-                        ; and rcx, 0x1f
-                        ; sar Rd(out), cl
-                    );
-                    record_circuit_type(&mut ops, CounterType::ShiftBinaryCsr, 1);
-                }
-
-                // for subword loads we need an extra register to store word index. We have RDX "empty"
-                // after loading the address. And we need one more register to store timestamp - for that we will push RBP
-
-                // Loads
-                Instruction::Lb(parts) => {
-                    let address = load(&mut ops, parts.rs1());
-                    dynasm!(ops
-                        ; lea Rd(SCRATCH_REGISTER), [Rd(address) + sign_extend::<12>(parts.imm())]
-                        // ; movsx Rq(SCRATCH_REGISTER), Rd(address)
-                        // ; add Rq(SCRATCH_REGISTER), sign_extend::<12>(parts.imm()) // compute address, as we will need it a lot
-                        ; mov rdx, Rq(SCRATCH_REGISTER) // put word(!) index in to RDX
-                        ; shr rdx, 2
-                    );
-                    touch_register_and_increment_timestamp!(ops, parts.rs1());
-                    dynasm!(ops
-                        ; movsx Rd(out), BYTE [rsi + Rq(SCRATCH_REGISTER)] // load value into destination, sign-extend
-                        ; mov Rd(SCRATCH_REGISTER), DWORD [rsi + 4 * rdx] // load old word(!) value into scratch
-                        ; push rbp
-                        ; mov rbp, [rsi + (MemoryHolder::TIMESTAMPS_OFFSET as i32) + 8 * rdx] // read timestamp
-                        ; mov [rsi + (MemoryHolder::TIMESTAMPS_OFFSET as i32) + 8 * rdx], r8 // update timestamp
-                        ; mov [rdi + r9 * 4], Rd(SCRATCH_REGISTER) // write value into trace
-                        ; mov [rdi + r9 * 8 + (TraceChunk::TIMESTAMPS_OFFSET as i32)], rbp // write old value into trace
-                        ; pop rbp
-                    );
-                    bump_timestamp!(ops, 1);
-                    record_circuit_type(&mut ops, CounterType::MemSubword, 1);
-                    issue_snapshot = true;
-                }
-                Instruction::Lbu(parts) => {
-                    let address = load(&mut ops, parts.rs1());
-                    dynasm!(ops
-                        ; lea Rd(SCRATCH_REGISTER), [Rd(address) + sign_extend::<12>(parts.imm())]
-                        // ; movsx Rq(SCRATCH_REGISTER), Rd(address)
-                        // ; add Rq(SCRATCH_REGISTER), sign_extend::<12>(parts.imm()) // compute address, as we will need it a lot
-                        ; mov rdx, Rq(SCRATCH_REGISTER) // put word(!) index in to RDX
-                        ; shr rdx, 2
-                    );
-                    touch_register_and_increment_timestamp!(ops, parts.rs1());
-                    dynasm!(ops
-                        ; movzx Rd(out), BYTE [rsi + Rq(SCRATCH_REGISTER)] // load value into destination, zero-extend
-                        ; mov Rd(SCRATCH_REGISTER), DWORD [rsi + 4 * rdx] // load old word(!) value into scratch
-                        ; push rbp
-                        ; mov rbp, [rsi + (MemoryHolder::TIMESTAMPS_OFFSET as i32) + 8 * rdx] // for read timestamp
-                        ; mov [rsi + (MemoryHolder::TIMESTAMPS_OFFSET as i32) + 8 * rdx], r8 // update timestamp
-                        ; mov [rdi + r9 * 4], Rd(SCRATCH_REGISTER) // write value into trace
-                        ; mov [rdi + r9 * 8 + (TraceChunk::TIMESTAMPS_OFFSET as i32)], rbp // write old value into trace
-                        ; pop rbp
-                    );
-                    bump_timestamp!(ops, 1);
-                    record_circuit_type(&mut ops, CounterType::MemSubword, 1);
-                    issue_snapshot = true;
-                }
-                Instruction::Lh(parts) => {
-                    // TODO: exception on misalignment
-                    let address = load(&mut ops, parts.rs1());
-                    dynasm!(ops
-                        ; lea Rd(SCRATCH_REGISTER), [Rd(address) + sign_extend::<12>(parts.imm())]
-                        // ; movsx Rq(SCRATCH_REGISTER), Rd(address)
-                        // ; add Rq(SCRATCH_REGISTER), sign_extend::<12>(parts.imm()) // compute address, as we will need it a lot
-                        ; mov rdx, Rq(SCRATCH_REGISTER) // put word(!) index in to RDX
-                        ; shr rdx, 2
-                    );
-                    touch_register_and_increment_timestamp!(ops, parts.rs1());
-                    dynasm!(ops
-                        ; movsx Rd(out), WORD [rsi + Rq(SCRATCH_REGISTER)] // load value into destination, sign-extend
-                        ; mov Rd(SCRATCH_REGISTER), DWORD [rsi + 4 * rdx] // load old word(!) value into scratch
-                        ; push rbp
-                        ; mov rbp, [rsi + (MemoryHolder::TIMESTAMPS_OFFSET as i32) + 8 * rdx] // for read timestamp
-                        ; mov [rsi + (MemoryHolder::TIMESTAMPS_OFFSET as i32) + 8 * rdx], r8 // update timestamp
-                        ; mov [rdi + r9 * 4], Rd(SCRATCH_REGISTER) // write value into trace
-                        ; mov [rdi + r9 * 8 + (TraceChunk::TIMESTAMPS_OFFSET as i32)], rbp // write old value into trace
-                        ; pop rbp
-                    );
-                    bump_timestamp!(ops, 1);
-                    record_circuit_type(&mut ops, CounterType::MemSubword, 1);
-                    issue_snapshot = true;
-                }
-                Instruction::Lhu(parts) => {
-                    // TODO: exception on misalignment
-                    let address = load(&mut ops, parts.rs1());
-                    dynasm!(ops
-                        ; lea Rd(SCRATCH_REGISTER), [Rd(address) + sign_extend::<12>(parts.imm())]
-                        // ; movsx Rq(SCRATCH_REGISTER), Rd(address)
-                        // ; add Rq(SCRATCH_REGISTER), sign_extend::<12>(parts.imm()) // compute address, as we will need it a lot
-                        ; mov rdx, Rq(SCRATCH_REGISTER) // put word(!) index in to RDX
-                        ; shr rdx, 2
-                    );
-                    touch_register_and_increment_timestamp!(ops, parts.rs1());
-                    dynasm!(ops
-                        ; movzx Rd(out), WORD [rsi + Rq(SCRATCH_REGISTER)] // load value into destination, zero-extend
-                        ; mov Rd(SCRATCH_REGISTER), DWORD [rsi + 4 * rdx] // load old word(!) value into scratch
-                        ; push rbp
-                        ; mov rbp, [rsi + (MemoryHolder::TIMESTAMPS_OFFSET as i32) + 8 * rdx] // for read timestamp
-                        ; mov [rsi + (MemoryHolder::TIMESTAMPS_OFFSET as i32) + 8 * rdx], r8 // update timestamp
-                        ; mov [rdi + r9 * 4], Rd(SCRATCH_REGISTER) // write value into trace
-                        ; mov [rdi + r9 * 8 + (TraceChunk::TIMESTAMPS_OFFSET as i32)], rbp // write old value into trace
-                        ; pop rbp
-                    );
-                    bump_timestamp!(ops, 1);
-                    record_circuit_type(&mut ops, CounterType::MemSubword, 1);
-                    issue_snapshot = true;
-                }
-                Instruction::Lw(parts) => {
-                    // NOTE: here address is exactly couting in 4 bytes, so we do not need extra word counter and
-                    // use RDX for bookkeeping
-                    // TODO: exception on misalignment
-                    let address = load(&mut ops, parts.rs1());
-                    dynasm!(ops
-                        ; lea Rd(SCRATCH_REGISTER), [Rd(address) + sign_extend::<12>(parts.imm())]
-                        // ; movsx Rq(SCRATCH_REGISTER), Rd(address)
-                        // ; add Rq(SCRATCH_REGISTER), sign_extend::<12>(parts.imm()) // compute address, as we will need it a lot
-                    );
-                    touch_register_and_increment_timestamp!(ops, parts.rs1());
-                    dynasm!(ops
-                        ; mov Rd(out), DWORD [rsi + Rq(SCRATCH_REGISTER)] // load old value into destination
-                        ; mov rdx, [rsi + (MemoryHolder::TIMESTAMPS_OFFSET as i32) + 2 * Rq(SCRATCH_REGISTER)] // reuse RDX for read timestamp
-                        ; mov [rsi + (MemoryHolder::TIMESTAMPS_OFFSET as i32) + 2 * Rq(SCRATCH_REGISTER)], r8 // update timestamp
-                        ; mov [rdi + r9 * 4], Rd(out) // write value into trace
-                        ; mov [rdi + r9 * 8 + (TraceChunk::TIMESTAMPS_OFFSET as i32)], rdx // write old value into trace
-                    );
-                    bump_timestamp!(ops, 1);
-                    record_circuit_type(&mut ops, CounterType::MemWord, 1);
-                    issue_snapshot = true;
-                }
-
-                // Multiplication
-                Instruction::Mul(parts) => {
-                    touch_register_and_increment_timestamp!(ops, parts.rs1());
-                    touch_register_and_increment_timestamp!(ops, parts.rs2());
-                    let other = load_abelian(&mut ops, parts.rs1(), parts.rs2(), out);
-                    dynasm!(ops
-                        ; imul Rd(out), Rd(other)
-                    );
-                    record_circuit_type(&mut ops, CounterType::MulDiv, 1);
-                }
-                Instruction::Mulh(parts) => {
-                    unimplemented!("unsupported by default");
-                    // touch_register_and_increment_timestamp!(ops, parts.rs1());
-                    // touch_register_and_increment_timestamp!(ops, parts.rs2());
-                    // load_into(&mut ops, parts.rs1(), x64::Rq::RAX as u8);
-                    // let other = load(&mut ops, parts.rs2());
-                    // dynasm!(ops
-                    //     ; imul Rd(other)
-                    // );
-                    // if out != x64::Rq::RDX as u8 {
-                    //     dynasm!(ops
-                    //         ; mov Rd(out), edx
-                    //     );
-                    // }
-                    // record_circuit_type(&mut ops, CounterType::MulDiv, 1);
-                }
-                Instruction::Mulhu(parts) => {
-                    touch_register_and_increment_timestamp!(ops, parts.rs1());
-                    touch_register_and_increment_timestamp!(ops, parts.rs2());
-                    load_into(&mut ops, parts.rs1(), x64::Rq::RAX as u8);
-                    let other = load(&mut ops, parts.rs2());
-                    dynasm!(ops
-                        ; mul Rd(other)
-                    );
-                    if out != x64::Rq::RDX as u8 {
+                // Control transfer instructions
+                Instruction::Jal(parts) => {
+                    let rd = (raw_instruction >> 7) & 0x1F;
+                    let out = destination_gpr(rd);
+                    // No reads (so read x0 twice)
+                    if rd != 0 {
+                        pre_bump_timestamp_and_touch!(ops, 1, 0);
                         dynasm!(ops
-                            ; mov Rd(out), edx
+                            ; mov Rd(out), (pc + 4) as i32
                         );
-                    }
-                    record_circuit_type(&mut ops, CounterType::MulDiv, 1);
-                }
-                Instruction::Mulhsu(parts) => {
-                    unimplemented!("unsupported by default");
-                    // touch_register_and_increment_timestamp!(ops, parts.rs1());
-                    // touch_register_and_increment_timestamp!(ops, parts.rs2());
-                    // load_into(&mut ops, parts.rs2(), SCRATCH_REGISTER);
-                    // load_into(&mut ops, parts.rs1(), out);
-                    // dynasm!(ops
-                    //     ; movsx Rq(out), Rd(out)
-                    //     ; imul Rq(out), Rq(SCRATCH_REGISTER)
-                    //     ; shr Rq(out), 32
-                    // );
-                    // record_circuit_type(&mut ops, CounterType::MulDiv, 1);
-                }
-                Instruction::Div(parts) => {
-                    unimplemented!("unsupported by default");
-                }
-                Instruction::Divu(parts) => {
-                    // TODO: handle exception cases
-                    touch_register_and_increment_timestamp!(ops, parts.rs1());
-                    touch_register_and_increment_timestamp!(ops, parts.rs2());
-                    load_into(&mut ops, parts.rs1(), x64::Rq::RAX as u8);
-                    load_into(&mut ops, parts.rs2(), SCRATCH_REGISTER);
-                    dynasm!(ops
-                        ; xor rdx, rdx
-                        ; div Rd(SCRATCH_REGISTER)
-                    );
-                    // quotient is in RAX
-                    if out != x64::Rq::RAX as u8 {
-                        dynasm!(ops
-                            ; mov Rd(out), eax
-                        );
-                    }
-                    record_circuit_type(&mut ops, CounterType::MulDiv, 1);
-                }
-                Instruction::Rem(parts) => {
-                    unimplemented!("unsupported by default");
-                }
-                Instruction::Remu(parts) => {
-                    // TODO: handle exception cases
-                    touch_register_and_increment_timestamp!(ops, parts.rs1());
-                    touch_register_and_increment_timestamp!(ops, parts.rs2());
-                    load_into(&mut ops, parts.rs1(), x64::Rq::RAX as u8);
-                    load_into(&mut ops, parts.rs2(), SCRATCH_REGISTER);
-                    dynasm!(ops
-                        ; xor rdx, rdx
-                        ; div Rd(SCRATCH_REGISTER)
-                    );
-                    // remainder is in RDX
-                    if out != x64::Rq::RDX as u8 {
-                        dynasm!(ops
-                            ; mov Rd(out), edx
-                        );
-                    }
-                    record_circuit_type(&mut ops, CounterType::MulDiv, 1);
-                }
-                a @ _ => {
-                    panic!("Opcode {:?} is not supported", a);
-                }
-            }
-
-            touch_register_and_bump_timestamp!(ops, rd, 2);
-            store_result(&mut ops, rd);
-
-            // NOTE: ONLY issue snapshotting after store!
-            if issue_snapshot {
-                increment_trace!(ops, pc);
-            }
-
-            i += 1;
-            continue;
-        }
-
-        let mut issue_snapshot = false;
-
-        match instruction {
-            // Control transfer instructions
-            Instruction::Jal(parts) => {
-                let rd = (raw_instruction >> 7) & 0x1F;
-                let out = destination_gpr(rd);
-                // No reads (so read x0 twice)
-                if rd != 0 {
-                    pre_bump_timestamp_and_touch!(ops, 1, 0);
-                    dynasm!(ops
-                        ; mov Rd(out), (pc + 4) as i32
-                    );
-                    store_result(&mut ops, rd);
-                    pre_bump_timestamp_and_touch!(ops, 1, rd);
-                } else {
-                    pre_bump_timestamp_and_touch!(ops, 2, 0);
-                }
-
-                bump_timestamp!(ops, 2);
-                record_circuit_type(&mut ops, CounterType::BranchSlt, 1);
-
-                // NOTE: we finished with all register touches as it'll jump out of our normal control flow
-
-                let offset = sign_extend::<21>(parts.imm());
-                let jump_target = pc as i32 + offset;
-                if offset == 0 {
-                    assert!(final_pc.is_none());
-                    final_pc = Some(pc);
-                    // An infinite loop is used to signal end of execution
-                    dynasm!(ops
-                        ; jmp ->quit
-                    );
-                } else if jump_target % 4 != 0 {
-                    panic!("Unaligned jump destination");
-                    // emit_runtime_error!(ops)
-                } else {
-                    if let Some(&label) = instruction_labels.get((jump_target / 4) as usize) {
-                        dynasm!(ops
-                            ; jmp => label
-                        );
+                        store_result(&mut ops, rd);
+                        pre_bump_timestamp_and_touch!(ops, 1, rd);
                     } else {
-                        panic!("Unknown jump destination");
-                        // emit_runtime_error!(ops)
+                        pre_bump_timestamp_and_touch!(ops, 2, 0);
                     }
-                }
-                i += 1;
-            }
-            Instruction::Jalr(parts) => {
-                let rd = (raw_instruction >> 7) & 0x1F;
-                let out = destination_gpr(rd);
-                let offset = sign_extend::<12>(parts.imm());
-                touch_register_and_increment_timestamp!(ops, parts.rs1());
-                load_into(&mut ops, parts.rs1(), SCRATCH_REGISTER);
-                dynasm!(ops
-                    ; add Rd(SCRATCH_REGISTER), offset
-                    // Must be aligned to an instruction but no need to test the least significant bit,
-                    // as it is set to zero according to the specification
-                    ; test Rd(SCRATCH_REGISTER), 2
-                    ; jnz >misaligned
-                    ; shr Rd(SCRATCH_REGISTER), 2
-                    ; lea rdx, [->jump_offsets]
-                    ; mov rax, [rdx + Rq(SCRATCH_REGISTER) * 8]
-                    ; lea rdx, [->start]
-                    ; add rdx, rax
-                );
 
-                // Return address may not be written into register before jump target is computed,
-                // otherwise it could affect the jump target.
-                if rd != 0 {
-                    touch_register_and_increment_timestamp!(ops, 0);
-                    dynasm!(ops
-                        ; mov Rd(out), (pc + 4) as i32
-                    );
-                    touch_register_and_bump_timestamp!(ops, rd, 2);
-                    store_result(&mut ops, rd);
-                } else {
-                    pre_bump_timestamp_and_touch!(ops, 1, 0);
                     bump_timestamp!(ops, 2);
-                }
-                record_circuit_type(&mut ops, CounterType::BranchSlt, 1);
-
-                dynasm!(ops
-                    ; jmp rdx
-                    ; misaligned:
-                    ; mov esi, Rd(SCRATCH_REGISTER)
-                    ;; emit_misaligned_runtime_error!(ops)
-                    // ;; emit_runtime_error!(ops)
-                );
-                i += 1;
-            }
-            Instruction::Beq(parts)
-            | Instruction::Bne(parts)
-            | Instruction::Blt(parts)
-            | Instruction::Bltu(parts)
-            | Instruction::Bge(parts)
-            | Instruction::Bgeu(parts) => {
-                let jump_target = pc as i32 + sign_extend::<13>(parts.imm());
-                if jump_target % 4 != 0 {
-                    panic!("Unaligned jump destination");
-                    // emit_runtime_error!(ops);
-                } else {
-                    let a = load(&mut ops, parts.rs1());
-                    load_into(&mut ops, parts.rs2(), SCRATCH_REGISTER);
-
-                    touch_register_and_increment_timestamp!(ops, parts.rs1());
-                    touch_register_and_increment_timestamp!(ops, parts.rs2());
-
-                    touch_register_and_bump_timestamp!(ops, 0, 2);
                     record_circuit_type(&mut ops, CounterType::BranchSlt, 1);
 
-                    if let Some(&label) = instruction_labels.get((jump_target / 4) as usize) {
+                    // NOTE: we finished with all register touches as it'll jump out of our normal control flow
+
+                    let offset = sign_extend::<21>(parts.imm());
+                    let jump_target = pc as i32 + offset;
+                    if offset == 0 {
+                        assert!(final_pc.is_none());
+                        final_pc = Some(pc);
+                        // An infinite loop is used to signal end of execution
                         dynasm!(ops
-                            ; cmp Rd(a), Rd(SCRATCH_REGISTER)
+                            ; jmp ->quit
                         );
-                        match instruction {
-                            Instruction::Beq(_) => {
-                                dynasm!(ops
-                                    ; je =>label
-                                );
-                            }
-                            Instruction::Bne(_) => {
-                                dynasm!(ops
-                                    ; jne =>label
-                                );
-                            }
-                            Instruction::Blt(_) => {
-                                dynasm!(ops
-                                    ; jl =>label
-                                );
-                            }
-                            Instruction::Bltu(_) => {
-                                dynasm!(ops
-                                    ; jb =>label
-                                );
-                            }
-                            Instruction::Bge(_) => {
-                                dynasm!(ops
-                                    ; jge =>label
-                                );
-                            }
-                            Instruction::Bgeu(_) => {
-                                dynasm!(ops
-                                    ; jae =>label
-                                );
-                            }
-                            _ => unreachable!(),
-                        }
-                    } else {
-                        panic!("Unknown jump destination");
+                    } else if jump_target % 4 != 0 {
+                        panic!("Unaligned jump destination");
                         // emit_runtime_error!(ops)
+                    } else {
+                        if let Some(&label) = instruction_labels.get((jump_target / 4) as usize) {
+                            dynasm!(ops
+                                ; jmp => label
+                            );
+                        } else {
+                            panic!("Unknown jump destination");
+                            // emit_runtime_error!(ops)
+                        }
                     }
                     i += 1;
                 }
-            }
+                Instruction::Jalr(parts) => {
+                    let rd = (raw_instruction >> 7) & 0x1F;
+                    let out = destination_gpr(rd);
+                    let offset = sign_extend::<12>(parts.imm());
+                    touch_register_and_increment_timestamp!(ops, parts.rs1());
+                    load_into(&mut ops, parts.rs1(), SCRATCH_REGISTER);
+                    dynasm!(ops
+                        ; add Rd(SCRATCH_REGISTER), offset
+                        // Must be aligned to an instruction but no need to test the least significant bit,
+                        // as it is set to zero according to the specification
+                        ; test Rd(SCRATCH_REGISTER), 2
+                        ; jnz >misaligned
+                        ; shr Rd(SCRATCH_REGISTER), 2
+                        ; lea rdx, [->jump_offsets]
+                        ; mov rax, [rdx + Rq(SCRATCH_REGISTER) * 8]
+                        ; lea rdx, [->start]
+                        ; add rdx, rax
+                    );
 
-            // NOTE: we will need one extra register for bookkeeping, so we will use RBP
+                    // Return address may not be written into register before jump target is computed,
+                    // otherwise it could affect the jump target.
+                    if rd != 0 {
+                        touch_register_and_increment_timestamp!(ops, 0);
+                        dynasm!(ops
+                            ; mov Rd(out), (pc + 4) as i32
+                        );
+                        touch_register_and_bump_timestamp!(ops, rd, 2);
+                        store_result(&mut ops, rd);
+                    } else {
+                        pre_bump_timestamp_and_touch!(ops, 1, 0);
+                        bump_timestamp!(ops, 2);
+                    }
+                    record_circuit_type(&mut ops, CounterType::BranchSlt, 1);
 
-            // Stores
-            Instruction::Sb(parts) => {
-                let address = load(&mut ops, parts.rs1());
-                dynasm!(ops
-                    ; lea Rd(SCRATCH_REGISTER), [Rd(address) + sign_extend::<12>(parts.imm())]
-                    // ; movsx Rq(SCRATCH_REGISTER), Rd(address)
-                    // ; add Rq(SCRATCH_REGISTER), sign_extend::<12>(parts.imm()) // compute address, as we will need it a lot
-                    ; mov rax, Rq(SCRATCH_REGISTER) // put word(!) index in to RAX
-                    ; shr rax, 2
-                );
-                let value = load(&mut ops, parts.rs2());
-                // RDX is potentially taken by value, so can not use it
-                touch_register_and_increment_timestamp!(ops, parts.rs1());
-                touch_register_and_increment_timestamp!(ops, parts.rs2());
-                dynasm!(ops
-                    // this sequence of operations is: read old value and timestamp, save it, write new value and timestamp
-                    ; push rbp
-                    ; mov ebp, DWORD [rsi + 4 * rax] // load old word(!) value into RAX
-                    ; mov BYTE [rsi + Rq(SCRATCH_REGISTER)], Rb(value) // store new value - just enough bytes
-                    ; push rdx
-                    ; mov rdx, [rsi + (MemoryHolder::TIMESTAMPS_OFFSET as i32) + 8 * rax] // read timestamp
-                    ; mov [rsi + (MemoryHolder::TIMESTAMPS_OFFSET as i32) + 8 * rax], r8 // update timestamp
-                    ; mov [rdi + r9 * 4], ebp // write old value into trace
-                    ; mov [rdi + r9 * 8 + (TraceChunk::TIMESTAMPS_OFFSET as i32)], rdx // write timestamp value into trace
-                    ; pop rdx
-                    ; pop rbp
-                );
-                bump_timestamp!(ops, 2);
-                record_circuit_type(&mut ops, CounterType::MemSubword, 1);
-                issue_snapshot = true;
-                i += 1;
-            }
-            Instruction::Sh(parts) => {
-                // TODO: exception on misalignment
-                let address = load(&mut ops, parts.rs1());
-                dynasm!(ops
-                    ; lea Rd(SCRATCH_REGISTER), [Rd(address) + sign_extend::<12>(parts.imm())]
-                    // ; movsx Rq(SCRATCH_REGISTER), Rd(address)
-                    // ; add Rq(SCRATCH_REGISTER), sign_extend::<12>(parts.imm()) // compute address, as we will need it a lot
-                    ; mov rax, Rq(SCRATCH_REGISTER) // put word(!) index in to RAX
-                    ; shr rax, 2
-                );
-                let value = load(&mut ops, parts.rs2());
-                // RDX is potentially taken by value, so can not use it
-                touch_register_and_increment_timestamp!(ops, parts.rs1());
-                touch_register_and_increment_timestamp!(ops, parts.rs2());
-                dynasm!(ops
-                    // this sequence of operations is: read old value and timestamp, save it, write new value and timestamp
-                    ; push rbp
-                    ; mov ebp, DWORD [rsi + 4 * rax] // load old word(!) value into RAX
-                    ; mov WORD [rsi + Rq(SCRATCH_REGISTER)], Rw(value) // store new value - just enough bytes
-                    ; push rdx
-                    ; mov rdx, [rsi + (MemoryHolder::TIMESTAMPS_OFFSET as i32) + 8 * rax] // read timestamp
-                    ; mov [rsi + (MemoryHolder::TIMESTAMPS_OFFSET as i32) + 8 * rax], r8 // update timestamp
-                    ; mov [rdi + r9 * 4], ebp // write old value into trace
-                    ; mov [rdi + r9 * 8 + (TraceChunk::TIMESTAMPS_OFFSET as i32)], rdx // write timestamp value into trace
-                    ; pop rdx
-                    ; pop rbp
-                );
-                bump_timestamp!(ops, 2);
-                record_circuit_type(&mut ops, CounterType::MemSubword, 1);
-                issue_snapshot = true;
-                i += 1;
-            }
-            Instruction::Sw(parts) => {
-                // TODO: exception on misalignment
-                let address = load(&mut ops, parts.rs1());
-                dynasm!(ops
-                    ; lea Rd(SCRATCH_REGISTER), [Rd(address) + sign_extend::<12>(parts.imm())]
-                    // ; movsx Rq(SCRATCH_REGISTER), Rd(address)
-                    // ; add Rq(SCRATCH_REGISTER), sign_extend::<12>(parts.imm()) // compute address, as we will need it a lot
-                );
-                let value = load(&mut ops, parts.rs2());
-                // RDX is potentially taken by value, so can not use it. But RAX is available
-                touch_register_and_increment_timestamp!(ops, parts.rs1());
-                touch_register_and_increment_timestamp!(ops, parts.rs2());
-                dynasm!(ops
-                    // this sequence of operations is: read old value and timestamp, save it, write new value and timestamp
-                    ; mov eax, DWORD [rsi + Rq(SCRATCH_REGISTER)] // load old value into RAX
-                    ; mov DWORD [rsi + Rq(SCRATCH_REGISTER)], Rd(value) // store new value
-                    ; push rdx
-                    ; mov rdx, [rsi + (MemoryHolder::TIMESTAMPS_OFFSET as i32) + 2 * Rq(SCRATCH_REGISTER)] // read timestamp
-                    ; mov [rsi + (MemoryHolder::TIMESTAMPS_OFFSET as i32) + 2 * Rq(SCRATCH_REGISTER)], r8 // update timestamp
-                    ; mov [rdi + r9 * 4], eax // write old value into trace
-                    ; mov [rdi + r9 * 8 + (TraceChunk::TIMESTAMPS_OFFSET as i32)], rdx // write timestamp value into trace
-                    ; pop rdx
-                );
-                bump_timestamp!(ops, 2);
-                record_circuit_type(&mut ops, CounterType::MemWord, 1);
-                issue_snapshot = true;
-                i += 1;
-            }
-            Instruction::Csrrw(parts) => {
-                assert!(parts.rs1() == 0 || parts.rd() == 0);
-                match parts.csr() {
-                    NON_DETERMINISM_CSR => {
-                        if parts.rd() != 0 {
-                            let rd = (raw_instruction >> 7) & 0x1F;
-                            let out = destination_gpr(rd);
-                            // We want to read non-determinism value into RD
-                            assert!(parts.rs1() == 0);
-                            // as usual, we will stash our machine state into stack, and call external implementation
-                            pre_bump_timestamp_and_touch!(ops, 1, 0);
+                    dynasm!(ops
+                        ; jmp rdx
+                        ; misaligned:
+                        ; mov esi, Rd(SCRATCH_REGISTER)
+                        ;; emit_misaligned_runtime_error!(ops)
+                        // ;; emit_runtime_error!(ops)
+                    );
+                    i += 1;
+                }
+                Instruction::Beq(parts)
+                | Instruction::Bne(parts)
+                | Instruction::Blt(parts)
+                | Instruction::Bltu(parts)
+                | Instruction::Bge(parts)
+                | Instruction::Bgeu(parts) => {
+                    let jump_target = pc as i32 + sign_extend::<13>(parts.imm());
+                    if jump_target % 4 != 0 {
+                        panic!("Unaligned jump destination");
+                        // emit_runtime_error!(ops);
+                    } else {
+                        let a = load(&mut ops, parts.rs1());
+                        load_into(&mut ops, parts.rs2(), SCRATCH_REGISTER);
+
+                        touch_register_and_increment_timestamp!(ops, parts.rs1());
+                        touch_register_and_increment_timestamp!(ops, parts.rs2());
+
+                        touch_register_and_bump_timestamp!(ops, 0, 2);
+                        record_circuit_type(&mut ops, CounterType::BranchSlt, 1);
+
+                        if let Some(&label) = instruction_labels.get((jump_target / 4) as usize) {
                             dynasm!(ops
-                                ; mov rdx, rsp
-                                ;; before_call!(ops)
-                                ; push rdx
-                                ; push r9
-                                ; mov rax, QWORD Context::<N>::read_nondeterminism as _
-                                ; mov rdi, [rdx + (MachineState::CONTEXT_PTR_OFFSET as i32)]
-                                ; call rax
-                                ; pop r9
-                                ; pop rdx
-                                ;; after_call!(ops)
-                                ; mov Rd(out), eax
-                                ; mov [rdi + r9 * 4], eax // use common trace for non-determinism reads
-                                ; mov QWORD [rdi + r9 * 8 + (TraceChunk::TIMESTAMPS_OFFSET as i32)], 0 // use 0 for timestamp
+                                ; cmp Rd(a), Rd(SCRATCH_REGISTER)
                             );
-                            store_result(&mut ops, rd);
-                            pre_bump_timestamp_and_touch!(ops, 1, rd);
-                            bump_timestamp!(ops, 2);
-                            record_circuit_type(&mut ops, CounterType::ShiftBinaryCsr, 1);
-                            issue_snapshot = true;
-                        } else if parts.rs1() != 0 {
-                            let rd = (raw_instruction >> 7) & 0x1F;
-                            assert_eq!(rd, 0);
-
-                            // in practice we do NOT care, so just touch enough times
-
-                            touch_register_and_increment_timestamp!(ops, parts.rs1());
-                            pre_bump_timestamp_and_touch!(ops, 1, 0);
-                            bump_timestamp!(ops, 2);
-                            record_circuit_type(&mut ops, CounterType::ShiftBinaryCsr, 1);
-
-                            // load_into(&mut ops, parts.rs1(), SCRATCH_REGISTER);
-                            // touch_register_and_increment_timestamp!(ops, parts.rs1());
-                            // dynasm!(ops
-                            //     ; mov rdx, rsp
-                            //     ;; before_call!(ops)
-                            //     ; push rdx
-                            //     ; push r9
-                            //     ; mov rax, QWORD Context::<N>::write_nondeterminism as _
-                            //     ; mov rdi, [rdx + (MachineState::CONTEXT_PTR_OFFSET as i32)]
-                            //     ; mov rdx, rsi
-                            //     ; mov esi, Rd(SCRATCH_REGISTER)
-                            //     ; call rax
-                            //     ; pop r9
-                            //     ; pop rdx
-                            //     ;; after_call!(ops)
-                            // );
-                            // pre_bump_timestamp_and_touch!(ops, 1, 0);
-                            // bump_timestamp!(ops, 2);
-                            // record_circuit_type(&mut ops, CounterType::ShiftBinaryCsr, 1);
+                            match instruction {
+                                Instruction::Beq(_) => {
+                                    dynasm!(ops
+                                        ; je =>label
+                                    );
+                                }
+                                Instruction::Bne(_) => {
+                                    dynasm!(ops
+                                        ; jne =>label
+                                    );
+                                }
+                                Instruction::Blt(_) => {
+                                    dynasm!(ops
+                                        ; jl =>label
+                                    );
+                                }
+                                Instruction::Bltu(_) => {
+                                    dynasm!(ops
+                                        ; jb =>label
+                                    );
+                                }
+                                Instruction::Bge(_) => {
+                                    dynasm!(ops
+                                        ; jge =>label
+                                    );
+                                }
+                                Instruction::Bgeu(_) => {
+                                    dynasm!(ops
+                                        ; jae =>label
+                                    );
+                                }
+                                _ => unreachable!(),
+                            }
                         } else {
-                            panic!("CSRRW with non-determinism CSR and invalid rs1/rd combination");
+                            panic!("Unknown jump destination");
+                            // emit_runtime_error!(ops)
                         }
                         i += 1;
                     }
-                    csr => {
-                        let mut cycles_taken = 0;
-                        // NOTE: all the increment below happen before moving RSP
-                        let function: *const () = match csr {
-                            BLAKE2S_DELEGATION_CSR_REGISTER => {
-                                // we should expect 7 or 10 calls
-                                let mut num_calls = 0;
-                                for j in 1..=10 {
-                                    if program[i + j] == raw_instruction {
-                                        continue;
-                                    } else {
-                                        num_calls = j;
-                                        break;
-                                    }
-                                }
-                                assert!(num_calls == 7 || num_calls == 10);
-                                i += num_calls;
-                                cycles_taken = num_calls;
-                                record_circuit_type(
-                                    &mut ops,
-                                    CounterType::BlakeDelegation,
-                                    num_calls as u16,
+                }
+
+                // NOTE: we will need one extra register for bookkeeping, so we will use RBP
+
+                // Stores
+                Instruction::Sb(parts) => {
+                    let address = load(&mut ops, parts.rs1());
+                    dynasm!(ops
+                        ; lea Rd(SCRATCH_REGISTER), [Rd(address) + sign_extend::<12>(parts.imm())]
+                        // ; movsx Rq(SCRATCH_REGISTER), Rd(address)
+                        // ; add Rq(SCRATCH_REGISTER), sign_extend::<12>(parts.imm()) // compute address, as we will need it a lot
+                        ; mov rax, Rq(SCRATCH_REGISTER) // put word(!) index in to RAX
+                        ; shr rax, 2
+                    );
+                    let value = load(&mut ops, parts.rs2());
+                    // RDX is potentially taken by value, so can not use it
+                    touch_register_and_increment_timestamp!(ops, parts.rs1());
+                    touch_register_and_increment_timestamp!(ops, parts.rs2());
+                    dynasm!(ops
+                        // this sequence of operations is: read old value and timestamp, save it, write new value and timestamp
+                        ; push rbp
+                        ; mov ebp, DWORD [rsi + 4 * rax] // load old word(!) value into RAX
+                        ; mov BYTE [rsi + Rq(SCRATCH_REGISTER)], Rb(value) // store new value - just enough bytes
+                        ; push rdx
+                        ; mov rdx, [rsi + (MemoryHolder::TIMESTAMPS_OFFSET as i32) + 8 * rax] // read timestamp
+                        ; mov [rsi + (MemoryHolder::TIMESTAMPS_OFFSET as i32) + 8 * rax], r8 // update timestamp
+                        ; mov [rdi + r9 * 4], ebp // write old value into trace
+                        ; mov [rdi + r9 * 8 + (TraceChunk::TIMESTAMPS_OFFSET as i32)], rdx // write timestamp value into trace
+                        ; pop rdx
+                        ; pop rbp
+                    );
+                    bump_timestamp!(ops, 2);
+                    record_circuit_type(&mut ops, CounterType::MemSubword, 1);
+                    issue_snapshot = true;
+                    i += 1;
+                }
+                Instruction::Sh(parts) => {
+                    // TODO: exception on misalignment
+                    let address = load(&mut ops, parts.rs1());
+                    dynasm!(ops
+                        ; lea Rd(SCRATCH_REGISTER), [Rd(address) + sign_extend::<12>(parts.imm())]
+                        // ; movsx Rq(SCRATCH_REGISTER), Rd(address)
+                        // ; add Rq(SCRATCH_REGISTER), sign_extend::<12>(parts.imm()) // compute address, as we will need it a lot
+                        ; mov rax, Rq(SCRATCH_REGISTER) // put word(!) index in to RAX
+                        ; shr rax, 2
+                    );
+                    let value = load(&mut ops, parts.rs2());
+                    // RDX is potentially taken by value, so can not use it
+                    touch_register_and_increment_timestamp!(ops, parts.rs1());
+                    touch_register_and_increment_timestamp!(ops, parts.rs2());
+                    dynasm!(ops
+                        // this sequence of operations is: read old value and timestamp, save it, write new value and timestamp
+                        ; push rbp
+                        ; mov ebp, DWORD [rsi + 4 * rax] // load old word(!) value into RAX
+                        ; mov WORD [rsi + Rq(SCRATCH_REGISTER)], Rw(value) // store new value - just enough bytes
+                        ; push rdx
+                        ; mov rdx, [rsi + (MemoryHolder::TIMESTAMPS_OFFSET as i32) + 8 * rax] // read timestamp
+                        ; mov [rsi + (MemoryHolder::TIMESTAMPS_OFFSET as i32) + 8 * rax], r8 // update timestamp
+                        ; mov [rdi + r9 * 4], ebp // write old value into trace
+                        ; mov [rdi + r9 * 8 + (TraceChunk::TIMESTAMPS_OFFSET as i32)], rdx // write timestamp value into trace
+                        ; pop rdx
+                        ; pop rbp
+                    );
+                    bump_timestamp!(ops, 2);
+                    record_circuit_type(&mut ops, CounterType::MemSubword, 1);
+                    issue_snapshot = true;
+                    i += 1;
+                }
+                Instruction::Sw(parts) => {
+                    // TODO: exception on misalignment
+                    let address = load(&mut ops, parts.rs1());
+                    dynasm!(ops
+                        ; lea Rd(SCRATCH_REGISTER), [Rd(address) + sign_extend::<12>(parts.imm())]
+                        // ; movsx Rq(SCRATCH_REGISTER), Rd(address)
+                        // ; add Rq(SCRATCH_REGISTER), sign_extend::<12>(parts.imm()) // compute address, as we will need it a lot
+                    );
+                    let value = load(&mut ops, parts.rs2());
+                    // RDX is potentially taken by value, so can not use it. But RAX is available
+                    touch_register_and_increment_timestamp!(ops, parts.rs1());
+                    touch_register_and_increment_timestamp!(ops, parts.rs2());
+                    dynasm!(ops
+                        // this sequence of operations is: read old value and timestamp, save it, write new value and timestamp
+                        ; mov eax, DWORD [rsi + Rq(SCRATCH_REGISTER)] // load old value into RAX
+                        ; mov DWORD [rsi + Rq(SCRATCH_REGISTER)], Rd(value) // store new value
+                        ; push rdx
+                        ; mov rdx, [rsi + (MemoryHolder::TIMESTAMPS_OFFSET as i32) + 2 * Rq(SCRATCH_REGISTER)] // read timestamp
+                        ; mov [rsi + (MemoryHolder::TIMESTAMPS_OFFSET as i32) + 2 * Rq(SCRATCH_REGISTER)], r8 // update timestamp
+                        ; mov [rdi + r9 * 4], eax // write old value into trace
+                        ; mov [rdi + r9 * 8 + (TraceChunk::TIMESTAMPS_OFFSET as i32)], rdx // write timestamp value into trace
+                        ; pop rdx
+                    );
+                    bump_timestamp!(ops, 2);
+                    record_circuit_type(&mut ops, CounterType::MemWord, 1);
+                    issue_snapshot = true;
+                    i += 1;
+                }
+                Instruction::Csrrw(parts) => {
+                    assert!(parts.rs1() == 0 || parts.rd() == 0);
+                    match parts.csr() {
+                        NON_DETERMINISM_CSR => {
+                            if parts.rd() != 0 {
+                                let rd = (raw_instruction >> 7) & 0x1F;
+                                let out = destination_gpr(rd);
+                                // We want to read non-determinism value into RD
+                                assert!(parts.rs1() == 0);
+                                // as usual, we will stash our machine state into stack, and call external implementation
+                                pre_bump_timestamp_and_touch!(ops, 1, 0);
+                                dynasm!(ops
+                                    ; mov rdx, rsp
+                                    ;; before_call!(ops)
+                                    ; push rdx
+                                    ; push r9
+                                    ; mov rax, QWORD Context::<I>::read_nondeterminism as _
+                                    ; mov rdi, [rdx + (MachineState::CONTEXT_PTR_OFFSET as i32)]
+                                    ; call rax
+                                    ; pop r9
+                                    ; pop rdx
+                                    ;; after_call!(ops)
+                                    ; mov Rd(out), eax
+                                    ; mov [rdi + r9 * 4], eax // use common trace for non-determinism reads
+                                    ; mov QWORD [rdi + r9 * 8 + (TraceChunk::TIMESTAMPS_OFFSET as i32)], 0 // use 0 for timestamp
                                 );
-                                process_csr::<BLAKE2S_DELEGATION_CSR_REGISTER> as _
-                            }
-                            BIGINT_OPS_WITH_CONTROL_CSR_REGISTER => {
-                                record_circuit_type(&mut ops, CounterType::BigintDelegation, 1);
-                                i += 1;
-                                cycles_taken = 1;
-                                process_csr::<BIGINT_OPS_WITH_CONTROL_CSR_REGISTER> as _
-                            }
-                            KECCAK_SPECIAL5_CSR_REGISTER => {
-                                // we expect exactly 649 calls for single keccak_f1600
-                                let mut num_calls = 0;
-                                for j in 1..=NUM_DELEGATION_CALLS_FOR_KECCAK_F1600 {
-                                    if program[i + j] == raw_instruction {
-                                        continue;
-                                    } else {
-                                        num_calls = j;
-                                        break;
-                                    }
-                                }
-                                assert_eq!(num_calls, NUM_DELEGATION_CALLS_FOR_KECCAK_F1600);
-                                i += num_calls;
-                                cycles_taken = num_calls;
-                                record_circuit_type(
-                                    &mut ops,
-                                    CounterType::KeccakDelegation,
-                                    num_calls as u16,
+                                store_result(&mut ops, rd);
+                                pre_bump_timestamp_and_touch!(ops, 1, rd);
+                                bump_timestamp!(ops, 2);
+                                record_circuit_type(&mut ops, CounterType::ShiftBinaryCsr, 1);
+                                issue_snapshot = true;
+                            } else if parts.rs1() != 0 {
+                                let rd = (raw_instruction >> 7) & 0x1F;
+                                assert_eq!(rd, 0);
+
+                                // // in practice we do NOT care, so just touch enough times
+                                // {
+                                //     touch_register_and_increment_timestamp!(ops, parts.rs1());
+                                //     pre_bump_timestamp_and_touch!(ops, 1, 0);
+                                //     bump_timestamp!(ops, 2);
+                                //     record_circuit_type(&mut ops, CounterType::ShiftBinaryCsr, 1);
+                                // }
+
+                                load_into(&mut ops, parts.rs1(), SCRATCH_REGISTER);
+                                touch_register_and_increment_timestamp!(ops, parts.rs1());
+                                dynasm!(ops
+                                    ; mov rdx, rsp
+                                    ;; before_call!(ops)
+                                    ; push rdx
+                                    ; push r9
+                                    ; mov rax, QWORD Context::<I>::write_nondeterminism as _
+                                    ; mov rdi, [rdx + (MachineState::CONTEXT_PTR_OFFSET as i32)]
+                                    ; mov rdx, rsi
+                                    ; mov esi, Rd(SCRATCH_REGISTER)
+                                    ; call rax
+                                    ; pop r9
+                                    ; pop rdx
+                                    ;; after_call!(ops)
                                 );
-                                process_csr::<KECCAK_SPECIAL5_CSR_REGISTER> as _
+                                pre_bump_timestamp_and_touch!(ops, 1, 0);
+                                bump_timestamp!(ops, 2);
+                                record_circuit_type(&mut ops, CounterType::ShiftBinaryCsr, 1);
+                            } else {
+                                panic!(
+                                    "CSRRW with non-determinism CSR and invalid rs1/rd combination"
+                                );
                             }
-                            3072 => {
-                                assert_eq!(raw_instruction, 0xc0001073);
-                                // csrrw x0, cycle, x0 is a canonical panic
-                                emit_execution_panic!(ops, pc);
-                                i += 1;
-                                continue;
-                            }
-                            other_csrs @ _ => {
-                                panic!("Unknown CSR {}", other_csrs);
-                            }
-                        };
-                        assert!(i <= program.len());
+                            i += 1;
+                        }
+                        csr => {
+                            let mut cycles_taken = 0;
+                            // NOTE: all the increment below happen before moving RSP
+                            let function: *const () = match csr {
+                                BLAKE2S_DELEGATION_CSR_REGISTER => {
+                                    // we should expect 7 or 10 calls
+                                    let mut num_calls = 0;
+                                    for j in 1..=10 {
+                                        if program[i + j] == raw_instruction {
+                                            continue;
+                                        } else {
+                                            num_calls = j;
+                                            break;
+                                        }
+                                    }
+                                    assert!(num_calls == 7 || num_calls == 10);
+                                    i += num_calls;
+                                    cycles_taken = num_calls;
+                                    record_circuit_type(
+                                        &mut ops,
+                                        CounterType::BlakeDelegation,
+                                        num_calls as u16,
+                                    );
+                                    process_csr::<BLAKE2S_DELEGATION_CSR_REGISTER> as _
+                                }
+                                BIGINT_OPS_WITH_CONTROL_CSR_REGISTER => {
+                                    record_circuit_type(&mut ops, CounterType::BigintDelegation, 1);
+                                    i += 1;
+                                    cycles_taken = 1;
+                                    process_csr::<BIGINT_OPS_WITH_CONTROL_CSR_REGISTER> as _
+                                }
+                                KECCAK_SPECIAL5_CSR_REGISTER => {
+                                    // we expect exactly 649 calls for single keccak_f1600
+                                    let mut num_calls = 0;
+                                    for j in 1..=NUM_DELEGATION_CALLS_FOR_KECCAK_F1600 {
+                                        if program[i + j] == raw_instruction {
+                                            continue;
+                                        } else {
+                                            num_calls = j;
+                                            break;
+                                        }
+                                    }
+                                    assert_eq!(num_calls, NUM_DELEGATION_CALLS_FOR_KECCAK_F1600);
+                                    i += num_calls;
+                                    cycles_taken = num_calls;
+                                    record_circuit_type(
+                                        &mut ops,
+                                        CounterType::KeccakDelegation,
+                                        num_calls as u16,
+                                    );
+                                    process_csr::<KECCAK_SPECIAL5_CSR_REGISTER> as _
+                                }
+                                3072 => {
+                                    assert_eq!(raw_instruction, 0xc0001073);
+                                    // csrrw x0, cycle, x0 is a canonical panic
+                                    emit_execution_panic!(ops, pc);
+                                    i += 1;
+                                    continue;
+                                }
+                                other_csrs @ _ => {
+                                    panic!("Unknown CSR {}", other_csrs);
+                                }
+                            };
+                            assert!(i <= program.len());
 
-                        // Those are markers in nature
-                        assert_eq!(parts.rs1(), 0);
-                        assert_eq!(parts.rd(), 0);
-                        pre_bump_timestamp_and_touch!(ops, 2, 0); // touch x0 at 0/1/2 formally
-                        bump_timestamp!(ops, 1); // 3 mod 4
+                            // Those are markers in nature
+                            assert_eq!(parts.rs1(), 0);
+                            assert_eq!(parts.rd(), 0);
+                            pre_bump_timestamp_and_touch!(ops, 2, 0); // touch x0 at 0/1/2 formally
+                            bump_timestamp!(ops, 1); // 3 mod 4
 
-                        dynasm!(ops
-                            ; mov rdx, rsp
-                            ;; before_call!(ops) // will save rsi and rdi
-                            ; push rdx
-                            // NOTE: we do not save and restore r9, as number of snapshots updated by the delegtion
-                            ; sub rsp, 8
-                            ; mov rax, QWORD function as _
-                            // we already have trace chunk in RDI, memory in RSI, and MachineState in RDX
-                            ; call rax
-                            ; add rsp, 8
-                            ; pop rdx
-                            ;; after_call!(ops) // restore rsi and rdi
-                            // otherwise just read it back into register
-                            ; mov r9, [rdi + (TraceChunk::LEN_OFFSET as i32)]
-                            // and check if we should save
-                            ;; check_to_save_trace!(ops, pc)
-                        );
+                            dynasm!(ops
+                                ; mov rdx, rsp
+                                ;; before_call!(ops) // will save rsi and rdi
+                                ; push rdx
+                                // NOTE: we do not save and restore r9, as number of snapshots updated by the delegtion
+                                ; sub rsp, 8
+                                ; mov rax, QWORD function as _
+                                // we already have trace chunk in RDI, memory in RSI, and MachineState in RDX
+                                ; call rax
+                                ; add rsp, 8
+                                ; pop rdx
+                                ;; after_call!(ops) // restore rsi and rdi
+                                // otherwise just read it back into register
+                                ; mov r9, [rdi + (TraceChunk::LEN_OFFSET as i32)]
+                                // and check if we should save
+                                ;; check_to_save_trace!(ops, pc)
+                            );
 
-                        // delegation implementations are themselves responsible to call trace finalizers
-                        bump_timestamp!(ops, 1); // 0 mod 4
+                            // delegation implementations are themselves responsible to call trace finalizers
+                            bump_timestamp!(ops, 1); // 0 mod 4
 
-                        record_circuit_type(&mut ops, CounterType::ShiftBinaryCsr, cycles_taken);
-                        // NOTE: no other snapshot check is required - we do the check above
+                            assert!(cycles_taken <= u16::MAX as usize);
+
+                            record_circuit_type(
+                                &mut ops,
+                                CounterType::ShiftBinaryCsr,
+                                cycles_taken as u16,
+                            );
+                            // NOTE: no other snapshot check is required - we do the check above
+                        }
                     }
                 }
+                opcode @ _ => {
+                    panic!("Unknown opcode {:?}", opcode);
+                    // emit_runtime_error!(ops);
+                    // i += 1;
+                }
             }
-            opcode @ _ => {
-                panic!("Unknown opcode {:?}", opcode);
-                // emit_runtime_error!(ops);
-                // i += 1;
+
+            // NOTE: again, all snapshotting should only happen after stores (mainly due to CSSRW for non-determinism)
+            if issue_snapshot {
+                increment_trace!(ops, pc);
+            }
+        }
+        assert_eq!(i, program.len());
+
+        // if we even come here without exit condition - it's an error
+        emit_runtime_error!(ops);
+
+        dynasm!(ops
+            // in r9 we expect PC
+            ; ->exit_with_execuction_panic:
+            // update state
+            ; mov rdx, rsp
+            ;; save_machine_state!(ops)
+            ; mov rax, QWORD print_runtime_panic as _
+            ; mov rdi, r8
+            ; mov rsi, rdx
+            ; call rax
+        );
+
+        dynasm!(ops
+            ; ->exit_on_misaligned:
+            ; mov rax, QWORD print_misaligned as _
+            ; mov rdi, r8
+            ; call rax
+        );
+
+        let exit_with_error_offset = ops.offset().0;
+        dynasm!(ops
+            ; ->exit_with_error:
+            ; mov rax, QWORD print_complaint as _
+            ; mov rdi, r8
+            ; call rax
+        );
+
+        // map jump offsets that were no initialized to point into error
+        for (i, offset) in jump_offsets.iter_mut().enumerate() {
+            if initialized_jump_offsets.contains(&i) == false {
+                assert_eq!(*offset, 0);
+                *offset = exit_with_error_offset;
             }
         }
 
-        // NOTE: again, all snapshotting should only happen after stores (mainly due to CSSRW for non-determinism)
-        if issue_snapshot {
-            increment_trace!(ops, pc);
+        // record all jump offsets
+        dynasm!(ops
+            ; ->jump_offsets:
+            ; .bytes jump_offsets.into_iter().flat_map(|x| x.to_le_bytes())
+        );
+
+        let receive_trace_fn = Context::<I>::receive_trace;
+        receive_trace!(ops, receive_trace_fn);
+
+        let final_pc = final_pc.expect("Must find exit PC");
+
+        let quit_trace_fn = Context::<I>::receive_final_trace_piece;
+        quit!(ops, quit_trace_fn, final_pc);
+
+        let code = ops.finalize().unwrap();
+
+        // let assembly = unsafe {
+        //     core::slice::from_raw_parts(code.ptr(start), code.len())
+        // };
+        // view_assembly(&assembly[..100], start.0);
+
+        Self {
+            code,
+            start,
+            _marker: core::marker::PhantomData,
         }
     }
-    assert_eq!(i, program.len());
 
-    // if we even come here without exit condition - it's an error
-    emit_runtime_error!(ops);
+    pub fn run(
+        &self,
+        context: &mut Context<I>,
+        memory: &mut MemoryHolder,
+        initial_trace_chunk: &mut TraceChunk,
+        initial_memory: &[u32],
+    ) {
+        assert!(initial_memory.len() <= common_constants::rom::ROM_WORD_SIZE);
+        assert!(context.final_state_ref().is_none());
 
-    dynasm!(ops
-        // in r9 we expect PC
-        ; ->exit_with_execuction_panic:
-        // update state
-        ; mov rdx, rsp
-        ;; save_machine_state!(ops)
-        ; mov rax, QWORD print_runtime_panic as _
-        ; mov rdi, r8
-        ; mov rsi, rdx
-        ; call rax
-    );
+        memory.memory[..initial_memory.len()].copy_from_slice(initial_memory);
 
-    dynasm!(ops
-        ; ->exit_on_misaligned:
-        ; mov rax, QWORD print_misaligned as _
-        ; mov rdi, r8
-        ; call rax
-    );
+        let run_program: extern "sysv64" fn(&mut TraceChunk, &mut MemoryHolder, &mut Context<I>) =
+            unsafe { std::mem::transmute(self.code.ptr(self.start)) };
 
-    let exit_with_error_offset = ops.offset().0;
-    dynasm!(ops
-        ; ->exit_with_error:
-        ; mov rax, QWORD print_complaint as _
-        ; mov rdi, r8
-        ; call rax
-    );
+        let before = std::time::Instant::now();
+        run_program(initial_trace_chunk, memory, context);
+        let elapsed = before.elapsed();
 
-    // map jump offsets that were no initialized to point into error
-    for (i, offset) in jump_offsets.iter_mut().enumerate() {
-        if initialized_jump_offsets.contains(&i) == false {
-            assert_eq!(*offset, 0);
-            *offset = exit_with_error_offset;
-        }
-    }
-
-    // record all jump offsets
-    dynasm!(ops
-        ; ->jump_offsets:
-        ; .bytes jump_offsets.into_iter().flat_map(|x| x.to_le_bytes())
-    );
-
-    let receive_trace_fn = Context::<N>::receive_trace;
-    receive_trace!(ops, receive_trace_fn);
-
-    let final_pc = final_pc.expect("Must find exit PC");
-
-    let quit_trace_fn = Context::<N>::receive_final_trace_piece;
-    quit!(ops, quit_trace_fn, final_pc);
-
-    let code = ops.finalize().unwrap();
-
-    // let assembly = unsafe {
-    //     core::slice::from_raw_parts(code.ptr(start), code.len())
-    // };
-    // view_assembly(&assembly[..100], start.0);
-
-    let mut context = Context {
-        non_determinism_source,
-        trace_len: 0,
-        final_state: None,
-    };
-
-    let mut memory: Box<MemoryHolder> = unsafe {
-        // let mut memory: Box<MemoryHolder> = Box::new_uninit().assume_init();
-        let mut memory: Box<MemoryHolder> = Box::new_zeroed().assume_init();
-        // let mut memory: Box<MemoryHolder> = Box::new(MemoryHolder::empty());
-        for i in 0..initial_memory.len() {
-            core::ptr::write(
-                addr_of_mut!(memory.memory).cast::<u32>().add(i),
-                initial_memory[i],
+        if let Some(final_state) = context.final_state_ref() {
+            let final_timestamp = final_state.timestamp;
+            assert_eq!(final_timestamp % TIMESTAMP_STEP, 0);
+            let num_instructions = (final_timestamp - INITIAL_TIMESTAMP) / TIMESTAMP_STEP;
+            println!(
+                "Frequency is {} MHz over {} instructions (0x{:x} ns run time)",
+                (num_instructions as f64) * 1000f64 / (elapsed.as_nanos() as f64),
+                num_instructions,
+                elapsed.as_nanos()
             );
         }
-        // for i in initial_memory.len()..NUM_RAM_WORDS {
-        //     core::ptr::write(addr_of_mut!(memory.memory).cast::<u32>().add(i), 0);
-        // }
-        // for i in 0..NUM_RAM_WORDS {
-        //     core::ptr::write(addr_of_mut!(memory.timestamps).cast::<u64>().add(i), 0);
-        // }
+    }
+}
 
-        memory
-    };
+impl<N: NonDeterminismCSRSource> JittedCode<DefaultContextImpl<'_, N>> {
+    pub fn run_alternative_simulator(
+        program: &[u32],
+        non_determinism_source: &mut N,
+        initial_memory: &[u32],
+        cycles_bound: Option<u32>,
+    ) -> (MachineState, Box<MemoryHolder>) {
+        let mut context = Context::<DefaultContextImpl<'_, N>> {
+            implementation: DefaultContextImpl {
+                non_determinism_source,
+                trace_len: 0,
+                final_state: None,
+            },
+        };
 
-    // println!(
-    //     "Memory chunk address = 0x{:x}",
-    //     (&*memory as *const MemoryHolder).addr()
-    // );
+        let mut memory: Box<MemoryHolder> = unsafe {
+            // let mut memory: Box<MemoryHolder> = Box::new_uninit().assume_init();
+            let mut memory: Box<MemoryHolder> = Box::new_zeroed().assume_init();
 
-    let mut trace: Box<TraceChunk> = unsafe {
-        // let trace = Box::new_uninit().assume_init();
-        let trace: Box<TraceChunk> = Box::new_zeroed().assume_init();
-        // let trace: Box<TraceChunk> = Box::new(TraceChunk::empty());
+            memory
+        };
 
-        trace
-    };
+        // println!(
+        //     "Memory chunk address = 0x{:x}",
+        //     (&*memory as *const MemoryHolder).addr()
+        // );
 
-    // println!(
-    //     "Initial trace chunk address = 0x{:x}",
-    //     (&*trace as *const TraceChunk).addr()
-    // );
+        let mut trace: Box<TraceChunk> = unsafe {
+            // let trace = Box::new_uninit().assume_init();
+            let trace: Box<TraceChunk> = Box::new_zeroed().assume_init();
 
-    // unsafe {
-    //     view_assembly(
-    //         core::slice::from_raw_parts(code.ptr(start), code.len()),
-    //         start.0,
-    //     );
-    // };
+            trace
+        };
 
-    let context_ref_mut = &mut context;
+        // println!(
+        //     "Initial trace chunk address = 0x{:x}",
+        //     (&*trace as *const TraceChunk).addr()
+        // );
 
-    let run_program: extern "sysv64" fn(&mut TraceChunk, &mut MemoryHolder, &mut Context<N>) =
-        unsafe { std::mem::transmute(code.ptr(start)) };
+        let context_ref_mut = &mut context;
 
-    // println!("Running JITed result");
+        let runner = Self::preprocess_bytecode(program, cycles_bound);
 
-    let before = std::time::Instant::now();
-    run_program(trace.as_mut(), memory.as_mut(), context_ref_mut);
-    let elapsed = before.elapsed();
+        runner.run(
+            &mut context,
+            memory.as_mut(),
+            trace.as_mut(),
+            initial_memory,
+        );
 
-    let final_state = context.final_state.expect("must finish execution");
+        let final_state = context
+            .implementation
+            .take_final_state()
+            .expect("must finish execution");
 
-    let final_timestamp = final_state.timestamp;
-    assert_eq!(final_timestamp % TIMESTAMP_STEP, 0);
-    let num_instructions = (final_timestamp - INITIAL_TIMESTAMP) / TIMESTAMP_STEP;
-    println!(
-        "Frequency is {} MHz over {} instructions (0x{:x} ns run time)",
-        (num_instructions as f64) * 1000f64 / (elapsed.as_nanos() as f64),
-        num_instructions,
-        elapsed.as_nanos()
-    );
-
-    (final_state, memory)
+        (final_state, memory)
+    }
 }
 
 extern "sysv64" fn process_csr<const CSR_NUMBER: u32>(
@@ -1685,20 +1713,17 @@ extern "sysv64" fn process_csr<const CSR_NUMBER: u32>(
 }
 
 #[repr(C)]
-pub struct Context<'a, N: NonDeterminismCSRSource> {
-    non_determinism_source: &'a mut N,
-    trace_len: usize,
-    final_state: Option<MachineState>,
+pub struct Context<I: ContextImpl> {
+    pub implementation: I,
 }
 
-impl<'a, N: NonDeterminismCSRSource> Context<'a, N> {
+impl<I: ContextImpl> Context<I> {
     extern "sysv64" fn read_nondeterminism(&mut self) -> u32 {
-        self.non_determinism_source.read()
+        self.implementation.read_nondeterminism()
     }
 
     extern "sysv64" fn write_nondeterminism(&mut self, value: u32, memory: &[u32; RAM_SIZE]) {
-        self.non_determinism_source
-            .write_with_memory_access(memory, value);
+        self.implementation.write_nondeterminism(value, memory)
     }
 
     extern "sysv64" fn receive_trace(
@@ -1706,44 +1731,8 @@ impl<'a, N: NonDeterminismCSRSource> Context<'a, N> {
         trace_piece: &mut TraceChunk,
         machine_state: &MachineState,
     ) -> *mut TraceChunk {
-        // println!("Self-address = 0x{:x}", (self as *const Self).addr());
-        // println!("Trace chunk address = 0x{:x}", (trace_piece as *const TraceChunk).addr());
-        // println!("Machine state address = 0x{:x}", (machine_state as *const MachineState).addr());
-        debug_assert!((machine_state as *const MachineState)
-            .is_aligned_to(core::mem::align_of::<MachineState>()));
-        debug_assert!(
-            (trace_piece as *const TraceChunk).is_aligned_to(core::mem::align_of::<TraceChunk>())
-        );
-        assert!((trace_piece.len as usize) >= TRACE_CHUNK_LEN);
-        assert!((trace_piece.len as usize) <= MAX_TRACE_CHUNK_LEN);
-        // println!(
-        //     "Received snapshot of length {} after {} cycles",
-        //     trace_piece.len,
-        //     (machine_state.timestamp - INITIAL_TIMESTAMP) / TIMESTAMP_STEP
-        // );
-        self.trace_len += trace_piece.len as usize;
-
-        #[cfg(debug_assertions)]
-        {
-            for i in (trace_piece.len as usize)..MAX_TRACE_CHUNK_LEN {
-                assert_eq!(
-                    trace_piece.values[i], 0,
-                    "invalid canary value at slot {}",
-                    i
-                );
-                assert_eq!(
-                    trace_piece.timestamps[i], 0,
-                    "invalid canary timestamp at slot {}",
-                    i
-                );
-            }
-
-            trace_piece.values.fill(0);
-            trace_piece.timestamps.fill(0);
-        }
-
-        trace_piece.len = 0;
-        trace_piece as *mut TraceChunk
+        self.implementation
+            .receive_trace(trace_piece, machine_state)
     }
 
     extern "sysv64" fn receive_final_trace_piece(
@@ -1751,20 +1740,16 @@ impl<'a, N: NonDeterminismCSRSource> Context<'a, N> {
         trace_piece: &mut TraceChunk,
         machine_state: &MachineState,
     ) {
-        println!("Execution completed");
-        debug_assert!((machine_state as *const MachineState)
-            .is_aligned_to(core::mem::align_of::<MachineState>()));
-        debug_assert!(
-            (trace_piece as *const TraceChunk).is_aligned_to(core::mem::align_of::<TraceChunk>())
-        );
-        // println!(
-        //     "In total {} cycles passed",
-        //     (machine_state.timestamp - INITIAL_TIMESTAMP) / TIMESTAMP_STEP
-        // );
-        // println!("Final trace chunk len = {}", trace_piece.len);
-        // println!("Final PC = 0x{:08x}", machine_state.pc);
-        self.trace_len += trace_piece.len as usize;
-        self.final_state = Some(*machine_state);
+        self.implementation
+            .receive_final_trace_piece(trace_piece, machine_state);
+    }
+
+    pub fn take_final_state(&mut self) -> Option<MachineState> {
+        self.implementation.take_final_state()
+    }
+
+    pub fn final_state_ref(&'_ self) -> Option<&'_ MachineState> {
+        self.implementation.final_state_ref()
     }
 }
 

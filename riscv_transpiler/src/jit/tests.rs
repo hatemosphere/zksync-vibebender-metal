@@ -18,7 +18,7 @@ fn test_jit_simple_fibonacci() {
     let (_, binary) = read_binary(&Path::new("examples/keccak_f1600/app.bin"));
     let (_, text) = read_binary(&Path::new("examples/keccak_f1600/app.text"));
 
-    run_alternative_simulator(&text, &mut (), &binary, None);
+    JittedCode::<_>::run_alternative_simulator(&text, &mut (), &binary, None);
 }
 
 #[test]
@@ -55,7 +55,7 @@ fn test_few_instr() {
     }
     text.push(0x0000006f);
 
-    run_alternative_simulator(&text, &mut (), &[], None);
+    JittedCode::<_>::run_alternative_simulator(&text, &mut (), &[], None);
 }
 
 #[test]
@@ -76,7 +76,7 @@ fn test_jit_full_block() {
         .collect();
     let mut source = QuasiUARTSource::new_with_reads(witness);
 
-    let (state, _) = run_alternative_simulator(&text, &mut source, &binary, None);
+    let (state, _) = JittedCode::<_>::run_alternative_simulator(&text, &mut source, &binary, None);
 
     println!("PC = 0x{:08x}", state.pc);
     dbg!(state.registers);
@@ -88,15 +88,13 @@ fn run_reference_for_num_cycles(
     mut source: impl NonDeterminismCSRSource,
     bound: u32,
 ) -> (
-    State<DelegationsCounters>,
+    State<DelegationsAndFamiliesCounters>,
     RamWithRomRegion<{ common_constants::rom::ROM_SECOND_WORD_BITS }>,
 ) {
     use crate::ir::*;
 
-    let instructions: Vec<Instruction> = text
-        .into_iter()
-        .map(|el| decode::<FullUnsignedMachineDecoderConfig>(*el))
-        .collect();
+    let instructions: Vec<Instruction> =
+        preprocess_bytecode::<FullUnsignedMachineDecoderConfig>(text);
     let tape = SimpleTape::new(&instructions);
     let mut ram =
         RamWithRomRegion::<{ common_constants::rom::ROM_SECOND_WORD_BITS }>::from_rom_content(
@@ -104,21 +102,16 @@ fn run_reference_for_num_cycles(
             1 << 30,
         );
 
-    let period = bound as usize;
-    let num_snapshots = 1;
-    let cycles_bound = period * num_snapshots;
-
-    let mut state = State::initial_with_counters(DelegationsCounters::default());
+    let mut state = State::initial_with_counters(DelegationsAndFamiliesCounters::default());
     // let mut snapshotter = SimpleSnapshotter::new_with_cycle_limit(1 << 31, period, state);
 
-    VM::<DelegationsCounters>::run_basic_unrolled::<_, _, _>(
+    VM::run_basic_unrolled::<_, _, _>(
         &mut state,
-        num_snapshots,
         &mut ram,
         // &mut snapshotter,
         &mut (),
         &tape,
-        period,
+        bound as usize,
         &mut source,
     );
 
@@ -142,10 +135,8 @@ fn test_reference_block_exec() {
         .collect();
     let mut source = QuasiUARTSource::new_with_reads(witness);
 
-    let instructions: Vec<Instruction> = text
-        .into_iter()
-        .map(|el| decode::<FullUnsignedMachineDecoderConfig>(el))
-        .collect();
+    let instructions: Vec<Instruction> =
+        preprocess_bytecode::<FullUnsignedMachineDecoderConfig>(&text);
     let tape = SimpleTape::new(&instructions);
     let mut ram =
         RamWithRomRegion::<{ common_constants::rom::ROM_SECOND_WORD_BITS }>::from_rom_content(
@@ -153,25 +144,18 @@ fn test_reference_block_exec() {
             1 << 30,
         );
 
-    let period = 1 << 20;
-    let num_snapshots = 1000;
-    let cycles_bound = period * num_snapshots;
+    let cycles_bound = 1 << 31;
 
-    let mut state = State::initial_with_counters(DelegationsCounters::default());
-    let mut snapshotter = SimpleSnapshotter::new_with_cycle_limit(cycles_bound, period, state);
+    let mut state = State::initial_with_counters(DelegationsAndFamiliesCounters::default());
+    let mut snapshotter = SimpleSnapshotter::<_, { common_constants::rom::ROM_SECOND_WORD_BITS }>::new_with_cycle_limit(cycles_bound, state);
 
     let now = std::time::Instant::now();
-    VM::<DelegationsCounters>::run_basic_unrolled::<
-        SimpleSnapshotter<DelegationsCounters, { common_constants::rom::ROM_SECOND_WORD_BITS }>,
-        _,
-        _,
-    >(
+    VM::run_basic_unrolled::<_, _, _>(
         &mut state,
-        num_snapshots,
         &mut ram,
         &mut snapshotter,
         &tape,
-        period,
+        cycles_bound,
         &mut source,
     );
     let elapsed = now.elapsed();
@@ -195,14 +179,18 @@ fn run_and_compare() {
         .collect();
     let mut source = QuasiUARTSource::new_with_reads(witness);
 
-    let step = 1 << 12;
-    let initial_step = 617938944;
+    let step = 1 << 22;
+    let initial_step = step;
     let upper_bound = (1 << 30) - 8;
 
     let mut num_steps = initial_step;
     while num_steps < upper_bound {
-        let (jit_state, jit_memory) =
-            run_alternative_simulator(&text, &mut source.clone(), &binary, Some(num_steps));
+        let (jit_state, jit_memory) = JittedCode::run_alternative_simulator(
+            &text,
+            &mut source.clone(),
+            &binary,
+            Some(num_steps),
+        );
 
         // NOTE: as JITted simulator skips many cycles in case of precompiles, we need to make it more precise for reference one
         let reference_cycles = (jit_state.timestamp - INITIAL_TIMESTAMP) / TIMESTAMP_STEP;
@@ -213,19 +201,57 @@ fn run_and_compare() {
         );
 
         let (reference_state, reference_rom) =
-            run_reference_for_num_cycles(&binary, &text, source.clone(), reference_cycles as u32);
+            run_reference_for_num_cycles(&binary, &text, source.clone(), num_steps as u32);
 
-        // assert_eq!(
-        //     reference_state.timestamp, jit_state.timestamp,
-        //     "TIMESTAMP diverged after {} steps",
-        //     num_steps
-        // );
+        assert_eq!(
+            reference_state.timestamp, jit_state.timestamp,
+            "TIMESTAMP diverged after {} steps",
+            num_steps
+        );
         if reference_state.pc != jit_state.pc {
             panic!(
                 "PC diverged after {} steps: expected 0x{:08x}, got 0x{:08x}",
                 num_steps, reference_state.pc, jit_state.pc,
             );
         }
+
+        assert_eq!(
+            reference_state.counters.add_sub_family as u32,
+            jit_state.counters[CounterType::AddSubLui as u8 as usize]
+        );
+        assert_eq!(
+            reference_state.counters.slt_branch_family as u32,
+            jit_state.counters[CounterType::BranchSlt as u8 as usize]
+        );
+        assert_eq!(
+            reference_state.counters.binary_shift_csr_family as u32,
+            jit_state.counters[CounterType::ShiftBinaryCsr as u8 as usize]
+        );
+        assert_eq!(
+            reference_state.counters.mul_div_family as u32,
+            jit_state.counters[CounterType::MulDiv as u8 as usize]
+        );
+        assert_eq!(
+            reference_state.counters.word_size_mem_family as u32,
+            jit_state.counters[CounterType::MemWord as u8 as usize]
+        );
+        assert_eq!(
+            reference_state.counters.subword_size_mem_family as u32,
+            jit_state.counters[CounterType::MemSubword as u8 as usize]
+        );
+        assert_eq!(
+            reference_state.counters.blake_calls as u32,
+            jit_state.counters[CounterType::BlakeDelegation as u8 as usize]
+        );
+        assert_eq!(
+            reference_state.counters.bigint_calls as u32,
+            jit_state.counters[CounterType::BigintDelegation as u8 as usize]
+        );
+        assert_eq!(
+            reference_state.counters.keccak_calls as u32,
+            jit_state.counters[CounterType::KeccakDelegation as u8 as usize]
+        );
+
         let mut equal_state = true;
         for (reg_idx, ((reference, jit_value), jit_ts)) in reference_state
             .registers
@@ -241,13 +267,13 @@ fn run_and_compare() {
                 );
                 equal_state = false;
             }
-            // if reference.timestamp != *jit_ts {
-            //     println!(
-            //         "TIMESTAMP diverged for x{} after {} steps:\nreference\n{}\njitted\n{}",
-            //         reg_idx, num_steps, reference.timestamp, jit_ts
-            //     );
-            //     equal_state = false;
-            // }
+            if reference.timestamp != *jit_ts {
+                println!(
+                    "TIMESTAMP diverged for x{} after {} steps:\nreference\n{}\njitted\n{}",
+                    reg_idx, num_steps, reference.timestamp, jit_ts
+                );
+                equal_state = false;
+            }
         }
 
         assert_eq!(reference_rom.backing.len(), jit_memory.memory.len());
@@ -263,11 +289,11 @@ fn run_and_compare() {
                 "VALUE diverged for word {} after {} steps",
                 word_idx, num_steps
             );
-            // assert_eq!(
-            //     reference_value.timestamp, *jit_ts,
-            //     "TIMESTAMP diverged for word {} after {} steps",
-            //     word_idx, num_steps
-            // );
+            assert_eq!(
+                reference_value.timestamp, *jit_ts,
+                "TIMESTAMP diverged for word {} after {} steps",
+                word_idx, num_steps
+            );
         }
 
         if equal_state == false {

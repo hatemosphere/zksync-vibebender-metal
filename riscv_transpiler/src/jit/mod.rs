@@ -185,7 +185,7 @@ impl MemoryHolder {
                         if *ts != 0 {
                             let mut word_value = unsafe { *values.get_unchecked(idx) };
                             // we mask ROM region to be zero-valued
-                            if address < (1 << common_constants::rom::ROM_BYTE_SIZE) {
+                            if address < common_constants::rom::ROM_BYTE_SIZE {
                                 word_value = 0;
                             }
                             let last_timestamp: TimestampScalar = *ts;
@@ -294,5 +294,108 @@ impl<'a> RAM for ReplayerMemChunks<'a> {
                 self.chunks = core::mem::transmute(self.chunks.get_unchecked_mut(1..));
             }
         }
+    }
+}
+
+pub trait ContextImpl {
+    fn read_nondeterminism(&mut self) -> u32;
+
+    fn write_nondeterminism(&mut self, value: u32, memory: &[u32; RAM_SIZE]);
+
+    fn receive_trace(
+        &mut self,
+        trace_piece: &mut TraceChunk,
+        machine_state: &MachineState,
+    ) -> *mut TraceChunk;
+
+    fn receive_final_trace_piece(
+        &mut self,
+        trace_piece: &mut TraceChunk,
+        machine_state: &MachineState,
+    );
+
+    fn take_final_state(&mut self) -> Option<MachineState>;
+    fn final_state_ref(&'_ self) -> Option<&'_ MachineState>;
+}
+
+pub struct DefaultContextImpl<'a, N: NonDeterminismCSRSource> {
+    non_determinism_source: &'a mut N,
+    trace_len: usize,
+    final_state: Option<MachineState>,
+}
+
+impl<'a, N: NonDeterminismCSRSource> ContextImpl for DefaultContextImpl<'a, N> {
+    fn read_nondeterminism(&mut self) -> u32 {
+        self.non_determinism_source.read()
+    }
+
+    fn write_nondeterminism(&mut self, value: u32, memory: &[u32; RAM_SIZE]) {
+        self.non_determinism_source
+            .write_with_memory_access(memory, value);
+    }
+
+    fn receive_trace(
+        &mut self,
+        trace_piece: &mut TraceChunk,
+        machine_state: &MachineState,
+    ) -> *mut TraceChunk {
+        assert!((trace_piece.len as usize) >= TRACE_CHUNK_LEN);
+        assert!((trace_piece.len as usize) <= MAX_TRACE_CHUNK_LEN);
+        // println!(
+        //     "Received snapshot of length {} after {} cycles",
+        //     trace_piece.len,
+        //     (machine_state.timestamp - INITIAL_TIMESTAMP) / TIMESTAMP_STEP
+        // );
+        self.trace_len += trace_piece.len as usize;
+
+        #[cfg(debug_assertions)]
+        {
+            for i in (trace_piece.len as usize)..MAX_TRACE_CHUNK_LEN {
+                assert_eq!(
+                    trace_piece.values[i], 0,
+                    "invalid canary value at slot {}",
+                    i
+                );
+                assert_eq!(
+                    trace_piece.timestamps[i], 0,
+                    "invalid canary timestamp at slot {}",
+                    i
+                );
+            }
+
+            trace_piece.values.fill(0);
+            trace_piece.timestamps.fill(0);
+        }
+
+        trace_piece.len = 0;
+        trace_piece as *mut TraceChunk
+    }
+
+    fn receive_final_trace_piece(
+        &mut self,
+        trace_piece: &mut TraceChunk,
+        machine_state: &MachineState,
+    ) {
+        println!("Execution completed");
+        debug_assert!((machine_state as *const MachineState)
+            .is_aligned_to(core::mem::align_of::<MachineState>()));
+        debug_assert!(
+            (trace_piece as *const TraceChunk).is_aligned_to(core::mem::align_of::<TraceChunk>())
+        );
+        // println!(
+        //     "In total {} cycles passed",
+        //     (machine_state.timestamp - INITIAL_TIMESTAMP) / TIMESTAMP_STEP
+        // );
+        // println!("Final trace chunk len = {}", trace_piece.len);
+        // println!("Final PC = 0x{:08x}", machine_state.pc);
+        self.trace_len += trace_piece.len as usize;
+        self.final_state = Some(*machine_state);
+    }
+
+    fn take_final_state(&mut self) -> Option<MachineState> {
+        self.final_state.take()
+    }
+    fn final_state_ref(&'_ self) -> Option<&'_ MachineState> {
+        self.final_state.as_ref()
     }
 }
