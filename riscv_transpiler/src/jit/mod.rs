@@ -63,6 +63,11 @@ impl TraceChunk {
         }
     }
 
+    #[inline(always)]
+    pub fn append_arbitrary_value(&mut self, value: u32) {
+        self.add_element(value, 0);
+    }
+
     pub fn data(&'_ self) -> (&'_ [u32], &'_ [TimestampScalar]) {
         unsafe {
             let values =
@@ -194,5 +199,100 @@ impl MemoryHolder {
         });
 
         chunks
+    }
+}
+
+#[derive(Debug)]
+pub struct ReplayerMemChunks<'a> {
+    pub chunks: &'a mut [(&'a [u32], &'a [TimestampScalar])],
+}
+
+impl<'a> RamPeek for ReplayerMemChunks<'a> {
+    #[inline(always)]
+    fn peek_word(&self, address: u32) -> u32 {
+        unreachable!("not supported");
+    }
+}
+
+impl<'a> RAM for ReplayerMemChunks<'a> {
+    const REPLAY_NON_DETERMINISM_VIA_RAM_STUB: bool = true;
+
+    #[track_caller]
+    #[inline(always)]
+    fn read_word(&mut self, address: u32, timestamp: TimestampScalar) -> (TimestampScalar, u32) {
+        debug_assert_eq!(address % 4, 0);
+        debug_assert!(self.chunks.len() > 0);
+        unsafe {
+            let src = self.chunks.get_unchecked_mut(0);
+            let value = *src.0.get_unchecked(0);
+            let read_timestamp = *src.1.get_unchecked(0);
+            let next_values = src.0.get_unchecked(1..);
+            let next_timestamps = src.1.get_unchecked(1..);
+            if next_values.len() > 0 {
+                *src = (next_values, next_timestamps);
+            } else {
+                self.chunks = core::mem::transmute(self.chunks.get_unchecked_mut(1..));
+            }
+
+            debug_assert!(read_timestamp < timestamp, "trying to read replay log at address 0x{:08x} with timestamp {}, but read timestamp is {}", address, timestamp, read_timestamp);
+
+            // println!("Read at address 0x{:08x} at timestamp {} into value {} and read timestamp {}", address, timestamp, value, read_timestamp);
+            (read_timestamp, value)
+        }
+    }
+
+    #[inline(always)]
+    fn mask_read_for_witness(&self, address: &mut u32, value: &mut u32) {
+        debug_assert_eq!(*address % 4, 0);
+        if (*address as usize) < common_constants::rom::ROM_BYTE_SIZE {
+            // NOTE: we no longer mask an address, just a value as it's only initialized to
+            // 0 via inits, and can not be writen over by circuits
+            // *address = 0u32;
+            *value = 0u32;
+        }
+    }
+
+    #[inline(always)]
+    fn write_word(
+        &mut self,
+        address: u32,
+        _word: u32,
+        timestamp: TimestampScalar,
+    ) -> (TimestampScalar, u32) {
+        debug_assert_eq!(address % 4, 0);
+        debug_assert!(self.chunks.len() > 0);
+        unsafe {
+            let src = self.chunks.get_unchecked_mut(0);
+            let value = *src.0.get_unchecked(0);
+            let read_timestamp = *src.1.get_unchecked(0);
+            let next_values = src.0.get_unchecked(1..);
+            let next_timestamps = src.1.get_unchecked(1..);
+            if next_values.len() > 0 {
+                *src = (next_values, next_timestamps);
+            } else {
+                self.chunks = core::mem::transmute(self.chunks.get_unchecked_mut(1..));
+            }
+
+            debug_assert!(read_timestamp < timestamp, "trying to read replay log at address 0x{:08x} with timestamp {}, but read timestamp is {}", address, timestamp, read_timestamp);
+
+            // println!("Read at address 0x{:08x} at timestamp {} into value {} and read timestamp {}", address, timestamp, value, read_timestamp);
+            (read_timestamp, value)
+        }
+    }
+
+    #[inline(always)]
+    fn skip_if_replaying(&mut self, num_snapshots: usize) {
+        unsafe {
+            let src = self.chunks.get_unchecked_mut(0);
+            debug_assert!(src.0.len() >= num_snapshots);
+            debug_assert!(src.1.len() >= num_snapshots);
+            let next_values = src.0.get_unchecked(num_snapshots..);
+            let next_timestamps = src.1.get_unchecked(num_snapshots..);
+            if next_values.len() > 0 {
+                *src = (next_values, next_timestamps);
+            } else {
+                self.chunks = core::mem::transmute(self.chunks.get_unchecked_mut(1..));
+            }
+        }
     }
 }

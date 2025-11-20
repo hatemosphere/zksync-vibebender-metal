@@ -101,6 +101,7 @@ pub fn bigint_implementation(
     };
 
     let (result, of) = bigint_impl(a, b, x12);
+    trace_piece.append_arbitrary_value(of as u32);
 
     // write back - values only
     unsafe {

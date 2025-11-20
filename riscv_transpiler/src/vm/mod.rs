@@ -129,11 +129,13 @@ pub trait RAM: RamPeek {
     fn skip_if_replaying(&mut self, num_snapshots: usize);
 }
 
-// TODO
-pub trait ReplayableRam: RamPeek {
+// TODO: make separate replayer RAM as NOT peekable, and that can only read and
+pub trait ReplayableRam {
     fn mask_read_for_witness(&self, address: &mut u32, value: &mut u32);
     fn read_arbitrary_value(&self) -> u32;
     fn skip(&mut self, num_snapshots: usize);
+    fn next(&mut self) -> (TimestampScalar, u32);
+    fn next_extended(&mut self, address: u32, write_ts: TimestampScalar) -> (TimestampScalar, u32);
 }
 
 pub trait InstructionTape: Send + Sync {

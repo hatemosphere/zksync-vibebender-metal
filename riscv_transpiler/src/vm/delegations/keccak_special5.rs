@@ -386,7 +386,7 @@ pub(crate) fn keccak_special5_impl_compute_outputs(
     }
 }
 
-pub const KECCAK_FINAL_TIMESTAMP_OFFSETS: [u64; 31] = const {
+pub(crate) const KECCAK_FINAL_TIMESTAMP_OFFSETS: [u64; 31] = const {
     let mut result = [0u64; 31];
 
     let mut control = common_constants::INITIAL_KECCAK_F1600_CONTROL_VALUE;
@@ -456,7 +456,7 @@ const RC: [u64; 24] = [
     0x8000000080008008,
 ];
 
-fn keccak_f1600_impl_ext(state: &mut [u64; 31]) {
+pub(crate) fn keccak_f1600_impl_ext(state: &mut [u64; 31]) {
     // Even using small precompile we have regular structure like
     // seq!(round in 0..24 {
     //     iota_theta_rho_nopi(&mut state.0, round);

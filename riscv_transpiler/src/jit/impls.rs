@@ -7,6 +7,10 @@ pub type ReceiveTraceFn =
     extern "sysv64" fn(*mut (), &mut TraceChunk, &MachineState) -> *mut TraceChunk;
 pub type ReceiveFinalStateFn = extern "sysv64" fn(*mut (), &mut TraceChunk, &MachineState);
 
+pub struct JittedCode<N: NonDeterminismCSRSource> {
+    code: todo!();
+}
+
 // Register use and mapping
 
 // - x10-x15 (RV) are stored in r10-r15 (X86)
@@ -1411,6 +1415,7 @@ pub fn run_alternative_simulator<'a, N: NonDeterminismCSRSource>(
                         i += 1;
                     }
                     csr => {
+                        let mut cycles_taken = 0;
                         // NOTE: all the increment below happen before moving RSP
                         let function: *const () = match csr {
                             BLAKE2S_DELEGATION_CSR_REGISTER => {
@@ -1426,6 +1431,7 @@ pub fn run_alternative_simulator<'a, N: NonDeterminismCSRSource>(
                                 }
                                 assert!(num_calls == 7 || num_calls == 10);
                                 i += num_calls;
+                                cycles_taken = num_calls;
                                 record_circuit_type(
                                     &mut ops,
                                     CounterType::BlakeDelegation,
@@ -1436,6 +1442,7 @@ pub fn run_alternative_simulator<'a, N: NonDeterminismCSRSource>(
                             BIGINT_OPS_WITH_CONTROL_CSR_REGISTER => {
                                 record_circuit_type(&mut ops, CounterType::BigintDelegation, 1);
                                 i += 1;
+                                cycles_taken = 1;
                                 process_csr::<BIGINT_OPS_WITH_CONTROL_CSR_REGISTER> as _
                             }
                             KECCAK_SPECIAL5_CSR_REGISTER => {
@@ -1451,6 +1458,7 @@ pub fn run_alternative_simulator<'a, N: NonDeterminismCSRSource>(
                                 }
                                 assert_eq!(num_calls, NUM_DELEGATION_CALLS_FOR_KECCAK_F1600);
                                 i += num_calls;
+                                cycles_taken = num_calls;
                                 record_circuit_type(
                                     &mut ops,
                                     CounterType::KeccakDelegation,
@@ -1497,7 +1505,8 @@ pub fn run_alternative_simulator<'a, N: NonDeterminismCSRSource>(
 
                         // delegation implementations are themselves responsible to call trace finalizers
                         bump_timestamp!(ops, 1); // 0 mod 4
-                        record_circuit_type(&mut ops, CounterType::ShiftBinaryCsr, 1);
+
+                        record_circuit_type(&mut ops, CounterType::ShiftBinaryCsr, cycles_taken);
                         // NOTE: no other snapshot check is required - we do the check above
                     }
                 }

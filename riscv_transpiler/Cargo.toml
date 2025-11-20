@@ -27,6 +27,7 @@ capstone = {version = "0.13", optional = true }
 
 [features]
 jit = ["dynasmrt", "riscv-decode", "capstone"]
+default = ["jit"]
 
 [dev-dependencies]
 lib-rv32-asm = {git = "https://github.com/shamatar/lib-rv32.git" }
