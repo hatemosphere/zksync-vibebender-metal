@@ -180,7 +180,7 @@ impl MemoryHolder {
                         if *ts != 0 {
                             let mut word_value = unsafe { *values.get_unchecked(idx) };
                             // we mask ROM region to be zero-valued
-                            if address < (1 << common_constants::rom::ROM_BYTE_SIZE) {
+                            if address < common_constants::rom::ROM_BYTE_SIZE {
                                 word_value = 0;
                             }
                             let last_timestamp: TimestampScalar = *ts;
