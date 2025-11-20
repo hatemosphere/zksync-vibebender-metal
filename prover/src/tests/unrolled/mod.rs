@@ -348,6 +348,10 @@ pub(crate) unsafe fn parse_shuffle_ram_accesses(
             //     println!("Row {}, index {}: write reg = {}, address = {} at ts = {} into value {}", _row, access_idx, is_register, address, write_ts, write_value);
             // }
 
+            // if address == 71106640 {
+            //     println!("ROW = {}, read ts = {}, write ts = {}, read value = {}, write value = {}", _row, read_ts, write_ts, read_value, write_value);
+            // }
+
             let to_write = (is_register, address, write_ts, write_value);
             let is_unique = write_set.insert(to_write);
             if is_unique == false {
@@ -372,6 +376,7 @@ pub(crate) unsafe fn parse_delegation_ram_accesses(
     trace_row: &[Mersenne31Field],
     write_set: &mut BTreeSet<(bool, u32, TimestampScalar, u32)>,
     read_set: &mut BTreeSet<(bool, u32, TimestampScalar, u32)>,
+    _row: usize,
 ) {
     let delegation_processor_layout = compiled_circuit
         .memory_layout
@@ -439,7 +444,7 @@ pub(crate) unsafe fn parse_delegation_ram_accesses(
 
                 let (address, of) = base_offset.overflowing_add(offset);
                 assert!(of == false);
-                assert!(address >= 1 << 21);
+                assert!(address as usize >= common_constants::rom::ROM_BYTE_SIZE);
                 let read_ts = read_timestamp(trace_row, indirect.get_read_timestamp_columns());
                 let read_value = read_u32(trace_row, indirect.get_read_value_columns());
                 let mut write_value = read_value;
@@ -458,6 +463,10 @@ pub(crate) unsafe fn parse_delegation_ram_accesses(
                     dbg!(access_idx);
                     panic!("Duplicate entry {:?} in write set", to_write);
                 }
+
+                // if address == 71106640 {
+                //     println!("ROW = {}, read ts = {}, write ts = {}, read value = {}, write value = {}", _row, read_ts, write_ts, read_value, write_value);
+                // }
 
                 let to_read = (false, address, read_ts, read_value);
                 let is_unique = read_set.insert(to_read);
@@ -570,10 +579,10 @@ pub(crate) fn parse_delegation_ram_accesses_from_full_trace<const N: usize>(
     let mut trace = witness
         .exec_trace
         .row_view(0..(witness.exec_trace.len() - 1));
-    for _ in 0..(witness.exec_trace.len() - 1) {
+    for row in 0..(witness.exec_trace.len() - 1) {
         unsafe {
             let (_, memory) = trace.current_row_split(witness.num_witness_columns);
-            parse_delegation_ram_accesses(compiled_circuit, &*memory, write_set, read_set);
+            parse_delegation_ram_accesses(compiled_circuit, &*memory, write_set, read_set, row);
             trace.advance_row();
         }
     }

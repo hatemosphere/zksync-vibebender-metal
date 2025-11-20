@@ -73,7 +73,9 @@ pub trait Snapshotter<C: Counters> {
 
 impl<C: Counters> Snapshotter<C> for () {
     #[inline(always)]
-    fn take_snapshot_if_needed(&mut self, _state: &State<C>) -> bool { false }
+    fn take_snapshot_if_needed(&mut self, _state: &State<C>) -> bool {
+        false
+    }
     #[inline(always)]
     fn take_final_snapshot(&mut self, state: &State<C>) {}
     #[inline(always)]

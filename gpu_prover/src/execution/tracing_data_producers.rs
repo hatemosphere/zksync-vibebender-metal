@@ -345,12 +345,11 @@ impl UnifiedTracingDataProducers {
             free_allocators.clone(),
             results.clone(),
         );
-        let cycles_producer =
-            TracingDataProducer::<UnifiedOpcodeTracingDataWithTimestamp>::new(
-                CircuitType::Unrolled(UnrolledCircuitType::Unified),
-                free_allocators.clone(),
-                results.clone(),
-            );
+        let cycles_producer = TracingDataProducer::<UnifiedOpcodeTracingDataWithTimestamp>::new(
+            CircuitType::Unrolled(UnrolledCircuitType::Unified),
+            free_allocators.clone(),
+            results.clone(),
+        );
         Self {
             blake_producer,
             bigint_producer,

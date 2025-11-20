@@ -93,10 +93,10 @@ mod tests {
         init_logger();
         let (binary, binary_u32) =
             read_and_pad_binary(Path::new("../examples/hashed_fibonacci/app.bin"));
-            // read_and_pad_binary(Path::new("../riscv_transpiler/examples/keccak_f1600/app.bin"));
+        // read_and_pad_binary(Path::new("../riscv_transpiler/examples/keccak_f1600/app.bin"));
         let (text, text_u32) =
             read_and_pad_binary(Path::new("../examples/hashed_fibonacci/app.text"));
-            // read_and_pad_binary(Path::new("../riscv_transpiler/examples/keccak_f1600/app.text"));
+        // read_and_pad_binary(Path::new("../riscv_transpiler/examples/keccak_f1600/app.text"));
         println!("Computing setup");
         let setup = execution_utils::unrolled::compute_setup_for_machine_configuration::<
             IMStandardIsaConfigWithUnsignedMulDiv,

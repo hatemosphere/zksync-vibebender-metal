@@ -359,7 +359,6 @@ impl<'a> GpuSharedState<'a> {
 //                             delegation_proofs,
 //                             final_register_values.into(),
 //                         )*/
-
 //                         todo!()
 //                     }
 //                     #[cfg(not(feature = "gpu"))]
@@ -472,7 +471,6 @@ impl<'a> GpuSharedState<'a> {
 //                             delegation_proofs,
 //                             final_register_values.into(),
 //                         )*/
-
 //                         todo!()
 //                     }
 //                     #[cfg(not(feature = "gpu"))]
@@ -896,13 +894,14 @@ impl UnrolledProver {
         }
     }
 
-    pub fn prove(&self, source: impl riscv_transpiler::vm::NonDeterminismCSRSource + Send + Sync + 'static) -> (UnrolledProgramProof, u64) {
+    pub fn prove(
+        &self,
+        source: impl riscv_transpiler::vm::NonDeterminismCSRSource + Send + Sync + 'static,
+    ) -> (UnrolledProgramProof, u64) {
         println!("Computing proof");
 
         let start_time = std::time::Instant::now();
-        let result = self
-            .prover
-            .commit_memory_and_prove(0, 0, 1 << 36, source);
+        let result = self.prover.commit_memory_and_prove(0, 0, 1 << 36, source);
         let base_proof = UnrolledProgramProof {
             final_pc: result.final_pc,
             final_timestamp: result.final_timestamp,
@@ -938,9 +937,7 @@ impl UnrolledProver {
                 true,
             );
             let source = QuasiUARTSource::new_with_reads(witness);
-            let result = self
-                .prover
-                .commit_memory_and_prove(0, 1, 1 << 36, source);
+            let result = self.prover.commit_memory_and_prove(0, 1, 1 << 36, source);
             let mut proof = UnrolledProgramProof {
                 final_pc: result.final_pc,
                 final_timestamp: result.final_timestamp,
@@ -982,9 +979,7 @@ impl UnrolledProver {
             );
 
             let source = QuasiUARTSource::new_with_reads(witness);
-            let result = self
-                .prover
-                .commit_memory_and_prove(0, 1, 1 << 36, source);
+            let result = self.prover.commit_memory_and_prove(0, 1, 1 << 36, source);
 
             let (hash_chain, preimage) = UnrolledProgramSetup::continue_recursion_chain(
                 &previous_setup.end_params,

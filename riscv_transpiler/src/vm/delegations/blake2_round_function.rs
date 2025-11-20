@@ -100,13 +100,18 @@ pub(crate) fn blake2_round_function_call<C: Counters, S: Snapshotter<C>, R: RAM>
         assert_eq!(permutation_index, 0);
     }
 
-    let final_permutation_bitmask = if reduced_rounds {
-        (1 << 7) & ((1 << BLAKE2S_MAX_ROUNDS) - 1)
-    } else {
-        (1 << 10) & ((1 << BLAKE2S_MAX_ROUNDS) - 1)
+    let final_x12 = {
+        let final_permutation_bitmask = if reduced_rounds {
+            (1 << 7) & ((1 << BLAKE2S_MAX_ROUNDS) - 1)
+        } else {
+            (1 << 10) & ((1 << BLAKE2S_MAX_ROUNDS) - 1)
+        };
+
+        let final_x12 =
+            (control_bitmask | (final_permutation_bitmask << BLAKE2S_NUM_CONTROL_BITS)) << 16;
+
+        final_x12
     };
-    let final_x12 =
-        (control_bitmask | (final_permutation_bitmask << BLAKE2S_NUM_CONTROL_BITS)) << 16;
 
     let num_rounds = if reduced_rounds { 7 } else { 10 };
 
@@ -232,9 +237,8 @@ pub(crate) fn blake2_round_function_call<C: Counters, S: Snapshotter<C>, R: RAM>
 
         let mut addr = x11;
         for i in 0..16 {
-            let value = input[i];
-
-            let (ts, old_value) = ram.write_word(addr, value, write_ts);
+            // input is unchanged
+            let (ts, old_value) = ram.read_word(addr, write_ts);
             snapshotter.append_memory_read(addr, old_value, ts, write_ts);
             addr += 4;
         }

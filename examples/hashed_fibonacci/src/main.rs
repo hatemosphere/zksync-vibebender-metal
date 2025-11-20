@@ -165,7 +165,7 @@ unsafe fn workload() -> ! {
         state.ext_state[14] = 0xffffffff ^ EXTENDED_IV[14];
 
         // Now we have to call the 'precompile' - blake requires us to actually call it 10 times.
-        let mut control_bitmask = (NORMAL_MODE_FULL_ROUNDS_CONTROL_REGISTER
+        let control_bitmask = (NORMAL_MODE_FULL_ROUNDS_CONTROL_REGISTER
                     | (1 << BLAKE2S_NUM_CONTROL_BITS))
                     << 16;
         // We are passing the pointer to the state, but the code inside is actually reading
@@ -178,6 +178,42 @@ unsafe fn workload() -> ! {
         );
 
         hashed_b = state.state[0];
+    }
+
+    {
+        // meaningless test of compression mode
+
+        let mut state = BlakeState {
+            _aligner: Aligner,
+            // The order here is extremely important - as it has to match
+            // the expected 'ABI' of the delegation circuit.
+            // When we later call the csr_trigger_delegation, it will look at all the fields
+            // below.
+            state: CONFIGURED_IV,
+            ext_state: EXTENDED_IV,
+            input_buffer: AlignedArray64{
+                _aligner: SmallAligner,
+                data: [0u32; 16],
+            },
+            round_bitmask: 0,
+            t: 0,
+        };
+
+        const COMPRESSION_MODE_FULL_ROUNDS_CONTROL_REGISTER: u32 = 0b100;
+        const BLAKE2S_NUM_CONTROL_BITS: u32 = 3;
+
+        let control_bitmask = (COMPRESSION_MODE_FULL_ROUNDS_CONTROL_REGISTER
+            | (1 << BLAKE2S_NUM_CONTROL_BITS))
+            << 16;
+        // We are passing the pointer to the state, but the code inside is actually reading
+        // other fields from the BlakeState too (including input_buffer and round bitmask).
+        // That's why we're in the 'unsafe' block.
+        common_constants::blake_csr_trigger_delegation_full_rounds(
+            ((&mut state) as *mut BlakeState).cast::<u32>(),
+            state.input_buffer.data.as_ptr(),
+            control_bitmask
+        );
+
     }
 
     // If you want to verify the blake correctness, you have to remember about little endianness here.

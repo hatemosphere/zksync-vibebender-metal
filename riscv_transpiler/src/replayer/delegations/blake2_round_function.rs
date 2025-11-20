@@ -100,13 +100,18 @@ pub(crate) fn blake2_round_function_call<C: Counters, R: RAM>(
         assert_eq!(permutation_index, 0);
     }
 
-    let final_shifter_permutation_bitmask = if reduced_rounds {
-        (1 << 7) & ((1 << BLAKE2S_MAX_ROUNDS) - 1)
-    } else {
-        (1 << 10) & ((1 << BLAKE2S_MAX_ROUNDS) - 1)
+    let final_x12 = {
+        let final_permutation_bitmask = if reduced_rounds {
+            (1 << 7) & ((1 << BLAKE2S_MAX_ROUNDS) - 1)
+        } else {
+            (1 << 10) & ((1 << BLAKE2S_MAX_ROUNDS) - 1)
+        };
+
+        let final_x12 =
+            (control_bitmask | (final_permutation_bitmask << BLAKE2S_NUM_CONTROL_BITS)) << 16;
+
+        final_x12
     };
-    let final_x12 =
-        (control_bitmask | (final_shifter_permutation_bitmask << BLAKE2S_NUM_CONTROL_BITS)) << 16;
 
     let num_rounds = if reduced_rounds { 7 } else { 10 };
 
@@ -198,7 +203,7 @@ pub(crate) fn blake2_round_function_call<C: Counters, R: RAM>(
                 blake_state_initial_timestamps[i].write(ts);
             }
             let mut blake_state_full = blake_state_full.map(|el| el.assume_init());
-            let mut blake_state_initial_timestamps =
+            let blake_state_initial_timestamps =
                 blake_state_initial_timestamps.map(|el| el.assume_init());
 
             // and input doesn't change across calls
@@ -229,30 +234,6 @@ pub(crate) fn blake2_round_function_call<C: Counters, R: RAM>(
                     .cast::<[u32; BLAKE2S_EXTENDED_STATE_WIDTH_IN_U32_WORDS]>()
                     .as_mut_unchecked();
 
-            // update the state if needed before rounds
-
-            if mode_compression {
-                // overwrite first 8 elements to the extended
-                for i in 0..8 {
-                    extended_state[i] = CONFIGURED_IV[i];
-                    extended_state[i + 8] = IV[i];
-                }
-                extended_state[12] ^= BLAKE2S_BLOCK_SIZE_BYTES as u32;
-                extended_state[14] ^= 0xffffffff;
-            } else {
-                // overwrite first 8 elements of the extended with current state
-                for i in 0..8 {
-                    extended_state[i] = blake_state[i];
-                }
-                // overwrite elements 8-11, 13, 15
-                extended_state[8] = IV[0];
-                extended_state[9] = IV[1];
-                extended_state[10] = IV[2];
-                extended_state[11] = IV[3];
-                extended_state[13] = IV[5];
-                extended_state[15] = IV[7];
-            }
-
             let mut control_flow_reg = x12;
             let mut x10_timestamp = state.registers[10].timestamp;
             let mut x11_timestamp = state.registers[11].timestamp;
@@ -263,14 +244,18 @@ pub(crate) fn blake2_round_function_call<C: Counters, R: RAM>(
             for call_round in 0..num_rounds {
                 let last_round = call_round == num_rounds - 1;
 
-                let permutation_bitmask = control_flow_reg >> (16 + BLAKE2S_NUM_CONTROL_BITS);
-                // update control register
-                let shifted_permutation_bitmask =
-                    (permutation_bitmask << 1) & ((1 << BLAKE2S_MAX_ROUNDS) - 1);
+                let updated_control_flow = {
+                    let permutation_bitmask = control_flow_reg >> (16 + BLAKE2S_NUM_CONTROL_BITS);
+                    // update control register
+                    let shifted_permutation_bitmask =
+                        (permutation_bitmask << 1) & ((1 << BLAKE2S_MAX_ROUNDS) - 1);
 
-                let updated_x12 = (control_bitmask
-                    | (shifted_permutation_bitmask << BLAKE2S_NUM_CONTROL_BITS))
-                    << 16;
+                    let updated_x12 = (control_bitmask
+                        | (shifted_permutation_bitmask << BLAKE2S_NUM_CONTROL_BITS))
+                        << 16;
+
+                    updated_x12
+                };
 
                 let mut witness = Blake2sRoundFunctionDelegationWitness::empty();
                 witness.write_timestamp = current_timestamp | 3;
@@ -287,7 +272,7 @@ pub(crate) fn blake2_round_function_call<C: Counters, R: RAM>(
                 };
                 witness.reg_accesses[2] = RegisterOrIndirectReadWriteData {
                     read_value: control_flow_reg,
-                    write_value: updated_x12,
+                    write_value: updated_control_flow,
                     timestamp: TimestampData::from_scalar(x12_timestamp),
                 };
 
@@ -296,6 +281,18 @@ pub(crate) fn blake2_round_function_call<C: Counters, R: RAM>(
                 x12_timestamp = current_timestamp | 3;
 
                 // fill read part
+                for i in 0..24 {
+                    witness.indirect_writes[i].read_value = blake_state_full[i];
+                    if call_round == 0 {
+                        witness.indirect_writes[i].timestamp =
+                            TimestampData::from_scalar(blake_state_initial_timestamps[i]);
+                    } else {
+                        // use timestamp of the previous round
+                        witness.indirect_writes[i].timestamp =
+                            TimestampData::from_scalar(previous_round_write_ts);
+                    }
+                }
+
                 for i in 0..16 {
                     witness.indirect_reads[i].read_value = input[i];
                     if call_round == 0 {
@@ -308,15 +305,28 @@ pub(crate) fn blake2_round_function_call<C: Counters, R: RAM>(
                     }
                 }
 
-                for i in 0..24 {
-                    witness.indirect_writes[i].read_value = blake_state_full[i];
-                    if call_round == 0 {
-                        witness.indirect_writes[i].timestamp =
-                            TimestampData::from_scalar(blake_state_initial_timestamps[i]);
+                // now in the first round we do some extra selects
+                if call_round == 0 {
+                    if mode_compression {
+                        // overwrite first 8 elements to the extended
+                        for i in 0..8 {
+                            extended_state[i] = CONFIGURED_IV[i];
+                            extended_state[i + 8] = IV[i];
+                        }
+                        extended_state[12] ^= BLAKE2S_BLOCK_SIZE_BYTES as u32;
+                        extended_state[14] ^= 0xffffffff;
                     } else {
-                        // use timestamp of the previous round
-                        witness.indirect_writes[i].timestamp =
-                            TimestampData::from_scalar(previous_round_write_ts);
+                        // overwrite first 8 elements of the extended with current state
+                        for i in 0..8 {
+                            extended_state[i] = blake_state[i];
+                        }
+                        // overwrite elements 8-11, 13, 15
+                        extended_state[8] = IV[0];
+                        extended_state[9] = IV[1];
+                        extended_state[10] = IV[2];
+                        extended_state[11] = IV[3];
+                        extended_state[13] = IV[5];
+                        extended_state[15] = IV[7];
                     }
                 }
 
@@ -358,7 +368,7 @@ pub(crate) fn blake2_round_function_call<C: Counters, R: RAM>(
                 }, _, _, _, _>(witness);
 
                 previous_round_write_ts = current_timestamp | 3;
-                control_flow_reg = updated_x12;
+                control_flow_reg = updated_control_flow;
                 current_timestamp += TIMESTAMP_STEP;
             }
         }
