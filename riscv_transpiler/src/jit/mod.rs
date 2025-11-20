@@ -1,5 +1,6 @@
 use crate::vm::*;
 use common_constants::*;
+use std::alloc::Allocator;
 use std::collections::HashSet;
 use std::{mem::offset_of, ptr::addr_of_mut};
 
@@ -75,6 +76,12 @@ impl TraceChunk {
         }
     }
 
+    pub fn reset(&mut self) {
+        self.values.fill(0);
+        self.timestamps.fill(0);
+        self.len = 0;
+    }
+
     const TIMESTAMPS_OFFSET: usize = offset_of!(Self, timestamps);
     const LEN_OFFSET: usize = offset_of!(Self, len);
 }
@@ -140,4 +147,52 @@ impl MemoryHolder {
     }
 
     const TIMESTAMPS_OFFSET: usize = offset_of!(Self, timestamps);
+
+    pub fn reset<A: Allocator>(this: &mut Box<Self, A>) {
+        this.memory.fill(0);
+        this.timestamps.fill(0);
+    }
+
+    pub fn collect_inits_and_teardowns<A: Allocator + Clone + Send + Sync>(
+        &self,
+        worker: &worker::Worker,
+        allocator: A,
+    ) -> Vec<Vec<(u32, (TimestampScalar, u32)), A>> {
+        // parallel collect
+        // first we will walk over access_bitmask and collect subparts
+        let mut chunks: Vec<Vec<(u32, (TimestampScalar, u32)), A>> =
+            vec![Vec::new_in(allocator).clone(); worker.get_num_cores()];
+        let mut dst = &mut chunks[..];
+        worker.scope(NUM_RAM_WORDS, |scope, geometry| {
+            for thread_idx in 0..geometry.len() {
+                let chunk_size = geometry.get_chunk_size(thread_idx);
+                let chunk_start = geometry.get_chunk_start_pos(thread_idx);
+                let range = chunk_start..(chunk_start + chunk_size);
+                let (el, rest) = dst.split_at_mut(1);
+                dst = rest;
+                let values = &self.memory[range.clone()];
+                let timestamps = &self.timestamps[range];
+
+                worker::Worker::smart_spawn(scope, thread_idx == geometry.len() - 1, move |_| {
+                    let el = &mut el[0];
+                    let mut address = chunk_start * core::mem::size_of::<u32>();
+                    for (idx, ts) in timestamps.iter().enumerate() {
+                        if *ts != 0 {
+                            let mut word_value = unsafe { *values.get_unchecked(idx) };
+                            // we mask ROM region to be zero-valued
+                            if address < (1 << common_constants::rom::ROM_BYTE_SIZE) {
+                                word_value = 0;
+                            }
+                            let last_timestamp: TimestampScalar = *ts;
+                            el.push((address as u32, (last_timestamp, word_value)));
+                        }
+
+                        address += core::mem::size_of::<u32>();
+                    }
+                });
+            }
+        });
+
+        chunks
+    }
 }
