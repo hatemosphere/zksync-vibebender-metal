@@ -210,7 +210,13 @@ pub struct ReplayerMemChunks<'a> {
 impl<'a> RamPeek for ReplayerMemChunks<'a> {
     #[inline(always)]
     fn peek_word(&self, address: u32) -> u32 {
-        unreachable!("not supported");
+        debug_assert_eq!(address % 4, 0);
+        debug_assert!(self.chunks.len() > 0);
+        unsafe {
+            let value = *self.chunks.get_unchecked(0).0.get_unchecked(0);
+
+            value
+        }
     }
 }
 
