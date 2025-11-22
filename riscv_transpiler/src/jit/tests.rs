@@ -1,8 +1,8 @@
 use risc_v_simulator::abstractions::non_determinism::QuasiUARTSource;
 
 use super::*;
-use crate::vm::test::*;
-use std::path::Path;
+use crate::{jit::minimal_tracer::PreallocatedSnapshots, vm::test::*};
+use std::{alloc::Global, path::Path};
 
 #[test]
 fn test_jit_simple_fibonacci() {
@@ -405,4 +405,40 @@ fn run_and_compare() {
 
         num_steps += step;
     }
+}
+
+#[test]
+fn test_perf_with_trace_keeping() {
+    let path = std::env::current_dir().unwrap();
+    println!("The current directory is {}", path.display());
+
+    let (_, binary) = read_binary(&Path::new("examples/zksync_os/app.bin"));
+    let (_, text) = read_binary(&Path::new("examples/zksync_os/app.text"));
+
+    let (witness, _) = read_binary(&Path::new("examples/zksync_os/23620012_witness"));
+    let witness = hex::decode(core::str::from_utf8(&witness).unwrap()).unwrap();
+    let witness: Vec<_> = witness
+        .as_chunks::<4>()
+        .0
+        .iter()
+        .map(|el| u32::from_be_bytes(*el))
+        .collect();
+    let mut source = QuasiUARTSource::new_with_reads(witness);
+
+    let simulator = JittedCode::<_>::preprocess_bytecode(&text, None);
+
+    let mut implementation = PreallocatedSnapshots::<1024, _>::new_in(Global, &mut source);
+    let initial_chunk = implementation.initial_snapshot();
+    let mut context = Context { implementation };
+    let mut memory: Box<MemoryHolder> = unsafe {
+        let mut memory: Box<MemoryHolder> = Box::new_zeroed().assume_init();
+
+        memory
+    };
+
+    println!("Running");
+    simulator.run(&mut context, &mut memory, initial_chunk, &binary);
+
+    // println!("PC = 0x{:08x}", state.pc);
+    // dbg!(state.registers);
 }

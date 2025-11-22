@@ -20,11 +20,6 @@ pub struct ReplayerRam<'a, const ROM_BOUND_SECOND_WORD_BITS: usize> {
     pub ram_log: &'a mut [&'a [(u32, (u32, u32))]],
 }
 
-#[derive(Debug)]
-pub struct ReplayerNonDeterminism<'a> {
-    pub non_determinism_reads_log: &'a mut [&'a [u32]],
-}
-
 impl<'a, const ROM_BOUND_SECOND_WORD_BITS: usize> RamPeek
     for ReplayerRam<'a, ROM_BOUND_SECOND_WORD_BITS>
 {
@@ -119,27 +114,6 @@ impl<'a, const ROM_BOUND_SECOND_WORD_BITS: usize> RAM
             }
         }
     }
-}
-
-impl<'a> NonDeterminismCSRSource for ReplayerNonDeterminism<'a> {
-    fn read(&mut self) -> u32 {
-        debug_assert!(self.non_determinism_reads_log.len() > 0);
-        unsafe {
-            let src = self.non_determinism_reads_log.get_unchecked_mut(0);
-            let value = *src.get_unchecked(0);
-            let next = src.get_unchecked(1..);
-            if next.len() > 0 {
-                *src = next;
-            } else {
-                self.non_determinism_reads_log =
-                    core::mem::transmute(self.non_determinism_reads_log.get_unchecked_mut(1..));
-            }
-
-            value
-        }
-    }
-    #[inline(always)]
-    fn write_with_memory_access<R: RamPeek + ?Sized>(&mut self, _ram: &R, _value: u32) {}
 }
 
 pub struct ReplayerVM<C: Counters> {

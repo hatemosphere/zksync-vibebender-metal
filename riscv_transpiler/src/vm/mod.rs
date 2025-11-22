@@ -149,7 +149,14 @@ pub trait NonDeterminismCSRSource {
     // we in general can allow CSR source to peek into memory (readonly)
     // to perform adhoc computations to prepare result. This will allow to save on
     // passing large structures
-    fn write_with_memory_access<R: RamPeek + ?Sized>(&mut self, ram: &R, value: u32);
+    fn write_with_memory_access<R: RamPeek + ?Sized>(&mut self, ram: &R, value: u32)
+    where
+        Self: Sized;
+
+    // we in general can allow CSR source to peek into memory (readonly)
+    // to perform adhoc computations to prepare result. This will allow to save on
+    // passing large structures
+    fn write_with_memory_access_dyn(&mut self, ram: &dyn RamPeek, value: u32);
 }
 
 impl NonDeterminismCSRSource for () {
@@ -157,6 +164,7 @@ impl NonDeterminismCSRSource for () {
         0u32
     }
     fn write_with_memory_access<R: RamPeek + ?Sized>(&mut self, _ram: &R, _value: u32) {}
+    fn write_with_memory_access_dyn(&mut self, ram: &dyn RamPeek, value: u32) {}
 }
 
 impl NonDeterminismCSRSource for risc_v_simulator::abstractions::non_determinism::QuasiUARTSource {
@@ -166,6 +174,9 @@ impl NonDeterminismCSRSource for risc_v_simulator::abstractions::non_determinism
     }
 
     fn write_with_memory_access<R: RamPeek + ?Sized>(&mut self, _ram: &R, value: u32) {
+        self.write_state.process_write(value);
+    }
+    fn write_with_memory_access_dyn(&mut self, _ram: &dyn RamPeek, value: u32) {
         self.write_state.process_write(value);
     }
 }

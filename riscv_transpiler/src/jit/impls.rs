@@ -1,3 +1,5 @@
+use std::ptr::NonNull;
+
 use super::*;
 
 use dynasmrt::{dynasm, x64, DynasmApi, DynasmLabelApi};
@@ -1518,7 +1520,6 @@ impl<I: ContextImpl> JittedCode<I> {
                             // delegation implementations are themselves responsible to call trace finalizers
                             bump_timestamp!(ops, 1); // 0 mod 4
 
-  
                             // NOTE: no other snapshot check is required - we do the check above
                         }
                     }
@@ -1607,7 +1608,7 @@ impl<I: ContextImpl> JittedCode<I> {
         &self,
         context: &mut Context<I>,
         memory: &mut MemoryHolder,
-        initial_trace_chunk: &mut TraceChunk,
+        initial_trace_chunk: NonNull<TraceChunk>,
         initial_memory: &[u32],
     ) {
         assert!(initial_memory.len() <= common_constants::rom::ROM_WORD_SIZE);
@@ -1615,8 +1616,11 @@ impl<I: ContextImpl> JittedCode<I> {
 
         memory.memory[..initial_memory.len()].copy_from_slice(initial_memory);
 
-        let run_program: extern "sysv64" fn(&mut TraceChunk, &mut MemoryHolder, &mut Context<I>) =
-            unsafe { std::mem::transmute(self.code.ptr(self.start)) };
+        let run_program: extern "sysv64" fn(
+            NonNull<TraceChunk>,
+            &mut MemoryHolder,
+            &mut Context<I>,
+        ) = unsafe { std::mem::transmute(self.code.ptr(self.start)) };
 
         let before = std::time::Instant::now();
         run_program(initial_trace_chunk, memory, context);
@@ -1682,7 +1686,7 @@ impl<N: NonDeterminismCSRSource> JittedCode<DefaultContextImpl<'_, N>> {
         runner.run(
             &mut context,
             memory.as_mut(),
-            trace.as_mut(),
+            unsafe { NonNull::new_unchecked(trace.as_mut() as *mut _) },
             initial_memory,
         );
 
@@ -1739,7 +1743,7 @@ impl<N: NonDeterminismCSRSource> JittedCode<DefaultContextImpl<'_, N>> {
         runner.run(
             &mut context,
             memory.as_mut(),
-            trace.as_mut(),
+            unsafe { NonNull::new_unchecked(trace.as_mut() as *mut _) },
             initial_memory,
         );
 
@@ -1791,16 +1795,16 @@ impl<I: ContextImpl> Context<I> {
 
     extern "sysv64" fn receive_trace(
         &mut self,
-        trace_piece: &mut TraceChunk,
+        trace_piece: NonNull<TraceChunk>,
         machine_state: &MachineState,
-    ) -> *mut TraceChunk {
+    ) -> NonNull<TraceChunk> {
         self.implementation
             .receive_trace(trace_piece, machine_state)
     }
 
     extern "sysv64" fn receive_final_trace_piece(
         &mut self,
-        trace_piece: &mut TraceChunk,
+        trace_piece: NonNull<TraceChunk>,
         machine_state: &MachineState,
     ) {
         self.implementation

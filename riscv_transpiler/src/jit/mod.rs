@@ -2,11 +2,14 @@ use crate::vm::*;
 use common_constants::*;
 use std::alloc::Allocator;
 use std::collections::HashSet;
+use std::ptr::NonNull;
 use std::{mem::offset_of, ptr::addr_of_mut};
 
 mod delegations;
 
 pub use self::delegations::*;
+
+pub mod minimal_tracer;
 
 #[cfg(all(target_arch = "x86_64", feature = "jit"))]
 mod impls;
@@ -135,6 +138,17 @@ impl MachineState {
     const PC_OFFSET: usize = offset_of!(Self, pc);
     const TIMESTAMP_OFFSET: usize = offset_of!(Self, timestamp);
     const CONTEXT_PTR_OFFSET: usize = offset_of!(Self, context_ptr);
+
+    pub fn initial() -> Self {
+        Self {
+            registers: [0; 32],
+            register_timestamps: [0; 32],
+            counters: [0; MAX_NUM_COUNTERS],
+            pc: 0,
+            timestamp: INITIAL_TIMESTAMP,
+            context_ptr: core::ptr::dangling_mut(),
+        }
+    }
 }
 
 #[repr(C, align(8))]
@@ -310,13 +324,13 @@ pub trait ContextImpl {
 
     fn receive_trace(
         &mut self,
-        trace_piece: &mut TraceChunk,
+        trace_piece: NonNull<TraceChunk>,
         machine_state: &MachineState,
-    ) -> *mut TraceChunk;
+    ) -> NonNull<TraceChunk>;
 
     fn receive_final_trace_piece(
         &mut self,
-        trace_piece: &mut TraceChunk,
+        trace_piece: NonNull<TraceChunk>,
         machine_state: &MachineState,
     );
 
@@ -342,9 +356,15 @@ impl<'a, N: NonDeterminismCSRSource> ContextImpl for DefaultContextImpl<'a, N> {
 
     fn receive_trace(
         &mut self,
-        trace_piece: &mut TraceChunk,
+        mut trace_chunk: NonNull<TraceChunk>,
         machine_state: &MachineState,
-    ) -> *mut TraceChunk {
+    ) -> NonNull<TraceChunk> {
+        debug_assert!((machine_state as *const MachineState)
+            .is_aligned_to(core::mem::align_of::<MachineState>()));
+        debug_assert!((trace_chunk.as_ptr() as *const TraceChunk)
+            .is_aligned_to(core::mem::align_of::<TraceChunk>()));
+
+        let trace_piece = unsafe { trace_chunk.as_mut() };
         assert!((trace_piece.len as usize) >= TRACE_CHUNK_LEN);
         assert!((trace_piece.len as usize) <= MAX_TRACE_CHUNK_LEN);
         // println!(
@@ -372,22 +392,22 @@ impl<'a, N: NonDeterminismCSRSource> ContextImpl for DefaultContextImpl<'a, N> {
             trace_piece.values.fill(0);
             trace_piece.timestamps.fill(0);
         }
-
         trace_piece.len = 0;
-        trace_piece as *mut TraceChunk
+
+        trace_chunk
     }
 
     fn receive_final_trace_piece(
         &mut self,
-        trace_piece: &mut TraceChunk,
+        mut trace_chunk: NonNull<TraceChunk>,
         machine_state: &MachineState,
     ) {
         println!("Execution completed");
         debug_assert!((machine_state as *const MachineState)
             .is_aligned_to(core::mem::align_of::<MachineState>()));
-        debug_assert!(
-            (trace_piece as *const TraceChunk).is_aligned_to(core::mem::align_of::<TraceChunk>())
-        );
+        debug_assert!((trace_chunk.as_ptr() as *const TraceChunk)
+            .is_aligned_to(core::mem::align_of::<TraceChunk>()));
+        let trace_piece = unsafe { trace_chunk.as_mut() };
         // println!(
         //     "In total {} cycles passed",
         //     (machine_state.timestamp - INITIAL_TIMESTAMP) / TIMESTAMP_STEP
