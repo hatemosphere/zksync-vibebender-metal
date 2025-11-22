@@ -1642,6 +1642,21 @@ impl<I: ContextImpl> JittedCode<I> {
             );
         }
     }
+
+    pub fn run_over_prepared_memory(
+        &self,
+        context: &mut Context<I>,
+        memory: &mut MemoryHolder,
+        initial_trace_chunk: NonNull<TraceChunk>,
+    ) {
+        let run_program: extern "sysv64" fn(
+            NonNull<TraceChunk>,
+            &mut MemoryHolder,
+            &mut Context<I>,
+        ) = unsafe { std::mem::transmute(self.code.ptr(self.start)) };
+
+        run_program(initial_trace_chunk, memory, context);
+    }
 }
 
 impl<N: NonDeterminismCSRSource> JittedCode<DefaultContextImpl<'_, N>> {
