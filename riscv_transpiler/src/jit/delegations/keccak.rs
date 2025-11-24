@@ -46,76 +46,41 @@ pub fn keccak_unrolled_implementation(
     // now we need to be careful with accessed state elements. We always access u64s only, and for replaying purposes we will need
     // to read 31 state elements (for snapshot), and then we will work over the
     unsafe {
-        // we are fine to NOT keep track on the initial timestamps, as we only need final write ones
-        let mut keccak_state: [MaybeUninit<u64>; 31] = [const { MaybeUninit::uninit() }; 31];
-
-        let mut mem_ptr = memory_holder
+        let offset = (state_ptr as usize) / core::mem::size_of::<u32>();
+        let keccak_state = memory_holder
             .memory
-            .as_ptr()
-            .add((state_ptr as usize) / core::mem::size_of::<u32>());
-        let mut ts_ptr = memory_holder
+            .as_mut_ptr()
+            .add(offset)
+            .cast::<[u64; 31]>()
+            .as_mut_unchecked();
+        let timestamps = memory_holder
             .timestamps
-            .as_ptr()
-            .add((state_ptr as usize) / core::mem::size_of::<u32>());
+            .as_mut_ptr()
+            .add(offset)
+            .cast::<[TimestampScalar; 31 * 2]>()
+            .as_mut_unchecked();
 
         // we read and push to snapshotter
 
         // TODO: unroll?
         for i in 0..31 {
             // low and high
-
-            let low_value = mem_ptr.read();
-            mem_ptr = mem_ptr.add(1);
-            let high_value = mem_ptr.read();
-            mem_ptr = mem_ptr.add(1);
-
-            let low_ts = ts_ptr.read();
-            ts_ptr = ts_ptr.add(1);
-            let high_ts = ts_ptr.read();
-            ts_ptr = ts_ptr.add(1);
-
-            trace_piece.add_element(low_value, low_ts);
-            trace_piece.add_element(high_value, high_ts);
-
-            keccak_state[i].write(((low_value as u64) | ((high_value as u64) << 32)));
-        }
-
-        let mut keccak_state = keccak_state.map(|el| el.assume_init());
-        keccak_f1600_impl_ext(&mut keccak_state);
-
-        // and write everything back
-
-        let mut mem_ptr = memory_holder
-            .memory
-            .as_mut_ptr()
-            .add((state_ptr as usize) / core::mem::size_of::<u32>());
-        let mut ts_ptr = memory_holder
-            .timestamps
-            .as_mut_ptr()
-            .add((state_ptr as usize) / core::mem::size_of::<u32>());
-
-        // TODO: unroll?
-        for i in 0..31 {
-            let value = keccak_state[i];
-
             let ts_offset = KECCAK_FINAL_TIMESTAMP_OFFSETS[i];
             let write_ts = initial_ts + ts_offset;
 
             debug_assert_eq!(write_ts % TIMESTAMP_STEP, 3);
 
+            let value = keccak_state[i];
             let low = value as u32;
             let high = (value >> 32) as u32;
 
-            mem_ptr.write(low);
-            mem_ptr = mem_ptr.add(1);
-            mem_ptr.write(high);
-            mem_ptr = mem_ptr.add(1);
-
-            ts_ptr.write(write_ts);
-            ts_ptr = ts_ptr.add(1);
-            ts_ptr.write(write_ts);
-            ts_ptr = ts_ptr.add(1);
+            trace_piece.add_element(low, timestamps[2 * i]);
+            timestamps[2 * i] = write_ts;
+            trace_piece.add_element(high, timestamps[2 * i + 1]);
+            timestamps[2 * i + 1] = write_ts;
         }
+
+        keccak_f1600_impl_ext(keccak_state);
     }
 
     assert!((trace_piece.len as usize) < MAX_TRACE_CHUNK_LEN);

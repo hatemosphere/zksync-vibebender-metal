@@ -33,99 +33,64 @@ pub fn bigint_implementation(
     // NOTE: read `b`` first, then `a` for snapshotting purposes
 
     let b = unsafe {
-        // we are fine to NOT keep track on the initial timestamps, as we only need final write ones
-        let mut b = U256::ZERO;
-        let mut mem_ptr = memory_holder
+        let offset = (b_ptr as usize) / core::mem::size_of::<u32>();
+        let integer = memory_holder
             .memory
             .as_ptr()
-            .add((b_ptr as usize) / core::mem::size_of::<u32>());
-        let mut ts_ptr = memory_holder
+            .add(offset)
+            .cast::<U256>()
+            .as_ref_unchecked();
+        let timestamps = memory_holder
             .timestamps
             .as_mut_ptr()
-            .add((b_ptr as usize) / core::mem::size_of::<u32>());
+            .cast::<[TimestampScalar; 8]>()
+            .as_mut_unchecked();
 
-        for dst in b.as_limbs_mut().iter_mut() {
-            // low and high
-
-            let low_value = mem_ptr.read();
-            mem_ptr = mem_ptr.add(1);
-            let high_value = mem_ptr.read();
-            mem_ptr = mem_ptr.add(1);
-
-            let low_ts = ts_ptr.read();
-            ts_ptr.write(write_ts);
-            ts_ptr = ts_ptr.add(1);
-            let high_ts = ts_ptr.read();
-            ts_ptr.write(write_ts);
-            ts_ptr = ts_ptr.add(1);
-
-            trace_piece.add_element(low_value, low_ts);
-            trace_piece.add_element(high_value, high_ts);
-
-            *dst = (low_value as u64) | ((high_value as u64) << 32);
+        for i in 0..4 {
+            let limb = integer.as_limbs()[i];
+            let low = limb as u32;
+            let high = (limb >> 32) as u32;
+            trace_piece.add_element(low, timestamps[2 * i]);
+            timestamps[2 * i] = write_ts;
+            trace_piece.add_element(high, timestamps[2 * i + 1]);
+            timestamps[2 * i + 1] = write_ts;
         }
 
-        b
+        integer
     };
 
     let a = unsafe {
-        // we are fine to NOT keep track on the initial timestamps, as we only need final write ones
-        let mut a = U256::ZERO;
-        let mut mem_ptr = memory_holder
+        let offset = (a_ptr as usize) / core::mem::size_of::<u32>();
+        let integer = memory_holder
             .memory
-            .as_ptr()
-            .add((a_ptr as usize) / core::mem::size_of::<u32>());
-        let mut ts_ptr = memory_holder
+            .as_mut_ptr()
+            .add(offset)
+            .cast::<U256>()
+            .as_mut_unchecked();
+        let timestamps = memory_holder
             .timestamps
             .as_mut_ptr()
-            .add((a_ptr as usize) / core::mem::size_of::<u32>());
+            .cast::<[TimestampScalar; 8]>()
+            .as_mut_unchecked();
 
-        for dst in a.as_limbs_mut().iter_mut() {
-            // low and high
-
-            let low_value = mem_ptr.read();
-            mem_ptr = mem_ptr.add(1);
-            let high_value = mem_ptr.read();
-            mem_ptr = mem_ptr.add(1);
-
-            let low_ts = ts_ptr.read();
-            ts_ptr.write(write_ts);
-            ts_ptr = ts_ptr.add(1);
-            let high_ts = ts_ptr.read();
-            ts_ptr.write(write_ts);
-            ts_ptr = ts_ptr.add(1);
-
-            trace_piece.add_element(low_value, low_ts);
-            trace_piece.add_element(high_value, high_ts);
-
-            *dst = (low_value as u64) | ((high_value as u64) << 32);
+        for i in 0..4 {
+            let limb = integer.as_limbs()[i];
+            let low = limb as u32;
+            let high = (limb >> 32) as u32;
+            trace_piece.add_element(low, timestamps[2 * i]);
+            timestamps[2 * i] = write_ts;
+            trace_piece.add_element(high, timestamps[2 * i + 1]);
+            timestamps[2 * i + 1] = write_ts;
         }
 
-        a
+        integer
     };
 
-    let (result, of) = bigint_impl(a, b, x12);
+    let (result, of) = bigint_impl(*a, *b, x12);
     trace_piece.append_arbitrary_value(of as u32);
 
-    // write back - values only
-    unsafe {
-        let mut mem_ptr = memory_holder
-            .memory
-            .as_mut_ptr()
-            .add((a_ptr as usize) / core::mem::size_of::<u32>());
-
-        for src in result.as_limbs().iter() {
-            // low and high
-
-            let low = *src as u32;
-            let high = (*src >> 32) as u32;
-
-            mem_ptr.write(low);
-            mem_ptr = mem_ptr.add(1);
-            mem_ptr.write(high);
-            mem_ptr = mem_ptr.add(1);
-        }
-    };
+    // write back the value
+    *a = result;
 
     machine_state.registers[12] = of as u32;
 
