@@ -20,6 +20,8 @@ pub fn bigint_implementation(
     assert_eq!(a_ptr % 32, 0, "`a` pointer is unaligned");
     assert_eq!(b_ptr % 32, 0, "`b` pointer is unaligned");
 
+    assert!(a_ptr != b_ptr);
+
     let write_ts = machine_state.timestamp;
 
     machine_state.register_timestamps[10] = write_ts;

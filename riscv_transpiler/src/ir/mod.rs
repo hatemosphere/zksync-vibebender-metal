@@ -1,7 +1,7 @@
 mod decode;
 mod encoding_types;
 mod instr_stream;
-mod instructions;
+pub(crate) mod instructions;
 
 use self::decode::*;
 use self::encoding_types::*;

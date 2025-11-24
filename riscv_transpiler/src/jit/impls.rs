@@ -121,7 +121,7 @@ macro_rules! quit {
             ; ->quit_impl:
             // we only call this function after executing the opcode in full,
             // so we do not care about rax (for stores), rdx (for loads) or rcx (scratch)
-
+            // ; int 3
             ; mov rdx, rsp // put MachineState into RDX
             ; mov [rdi + (TraceChunk::LEN_OFFSET as i32)], r9 // write length
             ;; before_call!($ops)
@@ -134,8 +134,8 @@ macro_rules! quit {
             ; call rax
             ; add rsp, 8
             ; pop rdx
-            ;; after_call!($ops) // structure is at RSP
-
+            ;; after_call!($ops)
+            // ; int 3
             // we return nothing, but should cleanup the stack
 
             // forget MachineState
@@ -327,12 +327,34 @@ fn load_abelian(ops: &mut x64::Assembler, x: u32, y: u32, destination: u8) -> u8
     let a = rv_to_gpr(x);
     let b = rv_to_gpr(y);
     if a == Some(destination) {
+        assert!(destination != x64::Rq::RAX as u8);
         load(ops, y)
     } else if b == Some(destination) {
+        assert!(destination != x64::Rq::RAX as u8);
         load(ops, x)
     } else {
+        // just overwrite the destination
         load_into(ops, x, destination);
         load(ops, y)
+    }
+}
+
+fn load_abelian_into(ops: &mut x64::Assembler, x: u32, y: u32, destination: u8, temporary: u8) {
+    // destination is either RV to GPR mapped register, or RAX
+    let a = rv_to_gpr(x);
+    let b = rv_to_gpr(y);
+    if a == Some(destination) {
+        // x is already in GPR
+        assert!(destination != x64::Rq::RAX as u8);
+        load_into(ops, y, temporary);
+    } else if b == Some(destination) {
+        // y is already in GPR
+        assert!(destination != x64::Rq::RAX as u8);
+        load_into(ops, x, temporary);
+    } else {
+        // just overwrite the destination
+        load_into(ops, x, destination);
+        load_into(ops, y, temporary);
     }
 }
 
@@ -476,7 +498,7 @@ macro_rules! emit_execution_panic {
     ($ops:ident, $pc:expr) => {
         dynasm!($ops
             ; mov r9, $pc as i32
-            ; jmp ->exit_with_execuction_panic
+            ; jmp ->exit_with_execution_panic
         )
     };
 }
@@ -496,14 +518,11 @@ macro_rules! emit_early_exit {
             ; cmp r8, 4
             ; jl -> exit_with_error
 
-            ; push rax
+            ; xor rax, rax
             ; mov eax, (($bound >> 32) as u32) as i32
             ; shl rax, 32
             ; add eax, ($bound as u32) as i32
             ; cmp r8, rax
-            ; pop rax
-
-            // ; cmp r8, $bound as u32 as i32
 
             ; jl >skip
             ;; machine_state_store_pc!($ops, rsp, $pc)
@@ -582,6 +601,194 @@ impl<I: ContextImpl> JittedCode<I> {
             jump_offsets[i] = ops.offset().0;
             initialized_jump_offsets.insert(i);
 
+            // NOTE: MOP instructions are not supported here, so we will have to handle them beforehand
+
+            if let Some(cycles_bound) = cycles_bound {
+                let ts_bound = (cycles_bound as u64) * TIMESTAMP_STEP + INITIAL_TIMESTAMP;
+                // Early exit uses RAX, but we are before any instruction, so we are ok
+                emit_early_exit!(ops, pc, ts_bound);
+            }
+
+            // print_registers!(ops, pc, raw_instruction);
+
+            {
+                use crate::ir::instructions::*;
+                use crate::ir::*;
+
+                const MOP_FUNCT7_TEST: u8 = 0b1000001u8;
+                const ZIMOP_FUNCT3: u8 = 0b100;
+
+                let rd = get_rd_bits(raw_instruction);
+                let formal_rs1 = get_formal_rs1_bits(raw_instruction);
+                let formal_rs2 = get_formal_rs2_bits(raw_instruction);
+                let op = get_opcode_bits(raw_instruction);
+                let funct3 = funct3_bits(raw_instruction);
+                let funct7 = funct7_bits(raw_instruction);
+                if op == OPCODE_SYSTEM {
+                    if funct3 == ZIMOP_FUNCT3 {
+                        if funct7 & MOP_FUNCT7_TEST == MOP_FUNCT7_TEST {
+                            let mop_number = ((funct7 & 0b110) >> 1) | ((funct7 & 0b100000) >> 5);
+                            assert!(rd != 0);
+                            assert!(formal_rs1 != 0);
+                            let out = destination_gpr(rd as u32); // either register or EAX
+                                                                  // NOTE: we consider inputs as non-reduced and need to output fully reduced. We are mod p = 2^31 - 1,
+                                                                  // so handy relations are 2^31 == 1 and 2^32 == 2.
+
+                            match mop_number {
+                                0 => {
+                                    touch_register_and_increment_timestamp!(ops, formal_rs1);
+                                    touch_register_and_increment_timestamp!(ops, formal_rs2);
+
+                                    // here we will want to special-case a variant when we have rs2 == 0 as it's heavily used in the verifier
+                                    if formal_rs2 == 0 {
+                                        // Our purpose is to fully reduce. Max input value is 2^32 - 1, that is 2*p + 1, so we need to subtract at most 2 moduluses.
+                                        // Ideally we should reduce data dependencies, but it's not like we can do much
+                                        load_into(&mut ops, formal_rs1 as u32, out);
+                                        dynasm!(ops
+                                            ; mov Rd(SCRATCH_REGISTER), Rd(out)
+                                            ; mov edx, Rd(out)
+                                            // try to reduce by 1p
+                                            ; sub edx, 0x7fff_ffffu32 as i32
+                                            ; cmovnc Rd(out), edx
+                                            // and by 2p
+                                            ; sub Rd(SCRATCH_REGISTER), (0x7fff_ffffu32 * 2) as i32
+                                            ; cmovnc Rd(out), Rd(SCRATCH_REGISTER)
+                                        );
+                                        record_circuit_type(&mut ops, CounterType::AddSubLui, 1);
+                                    } else {
+                                        // we will reduce inputs to be in range of 31 bit to avoid data dependencies
+
+                                        // Either rs1 or rs2 would be overwritten over out, or rs1 will go into EAX, and rs2 go into EDX
+                                        load_abelian_into(
+                                            &mut ops,
+                                            formal_rs1 as u32,
+                                            formal_rs2 as u32,
+                                            out,
+                                            x64::Rq::RDX as u8,
+                                        );
+                                        dynasm!(ops
+                                            // reduce first
+                                            ; mov Rd(SCRATCH_REGISTER), Rd(out)
+                                            ; and Rd(out), 0x7fff_ffffu32 as i32
+                                            ; shr Rd(SCRATCH_REGISTER), 31i8
+                                            ; add Rd(out), Rd(SCRATCH_REGISTER)
+                                            // reduce second
+                                            ; mov Rd(SCRATCH_REGISTER), edx
+                                            ; and edx, 0x7fff_ffffu32 as i32
+                                            ; shr Rd(SCRATCH_REGISTER), 31i8
+                                            ; add edx, Rd(SCRATCH_REGISTER)
+                                            // now add and almost reduce
+                                            ; add Rd(out), edx
+                                            ; mov Rd(SCRATCH_REGISTER), Rd(out)
+                                            ; and Rd(out), 0x7fff_ffffu32 as i32
+                                            ; shr Rd(SCRATCH_REGISTER), 31i8
+                                            ; add Rd(out), Rd(SCRATCH_REGISTER)
+                                            // and reduce completely
+                                            ; mov Rd(SCRATCH_REGISTER), Rd(out)
+                                            ; sub Rd(SCRATCH_REGISTER), 0x7fff_ffffu32 as i32
+                                            ; cmovnc Rd(out), Rd(SCRATCH_REGISTER)
+                                        );
+                                        record_circuit_type(&mut ops, CounterType::AddSubLui, 1);
+                                    }
+                                }
+                                1 => {
+                                    touch_register_and_increment_timestamp!(ops, formal_rs1);
+                                    touch_register_and_increment_timestamp!(ops, formal_rs2);
+                                    assert!(formal_rs1 != 0);
+                                    assert!(formal_rs2 != 0);
+
+                                    // same logic as with addition
+                                    load_into(&mut ops, formal_rs2 as u32, x64::Rq::RDX as u8);
+                                    load_into(&mut ops, formal_rs1 as u32, out);
+                                    dynasm!(ops
+                                        // reduce first
+                                        ; mov Rd(SCRATCH_REGISTER), Rd(out)
+                                        ; and Rd(out), 0x7fff_ffffu32 as i32
+                                        ; shr Rd(SCRATCH_REGISTER), 31i8
+                                        ; add Rd(out), Rd(SCRATCH_REGISTER)
+                                        // reduce second
+                                        ; mov Rd(SCRATCH_REGISTER), edx
+                                        ; and edx, 0x7fff_ffffu32 as i32
+                                        ; shr Rd(SCRATCH_REGISTER), 31i8
+                                        ; add edx, Rd(SCRATCH_REGISTER)
+                                        // now add and almost reduce
+                                        ; sub Rd(out), edx
+                                        ; mov Rd(SCRATCH_REGISTER), Rd(out)
+                                        ; and Rd(out), 0x7fff_ffffu32 as i32
+                                        ; shr Rd(SCRATCH_REGISTER), 31i8
+                                        ; sub Rd(out), Rd(SCRATCH_REGISTER)
+                                        // and reduce completely
+                                        ; mov Rd(SCRATCH_REGISTER), Rd(out)
+                                        ; sub Rd(SCRATCH_REGISTER), 0x7fff_ffffu32 as i32
+                                        ; cmovnc Rd(out), Rd(SCRATCH_REGISTER)
+                                    );
+                                    record_circuit_type(&mut ops, CounterType::AddSubLui, 1);
+                                }
+                                2 => {
+                                    touch_register_and_increment_timestamp!(ops, formal_rs1);
+                                    touch_register_and_increment_timestamp!(ops, formal_rs2);
+
+                                    assert!(formal_rs1 != 0);
+                                    assert!(formal_rs2 != 0);
+
+                                    // if pc == 0x0015db60 {
+                                    //     dynasm!(ops
+                                    //         ; int 3
+                                    //     );
+                                    // }
+
+                                    // same logic as with addition
+                                    load_abelian_into(
+                                        &mut ops,
+                                        formal_rs1 as u32,
+                                        formal_rs2 as u32,
+                                        out,
+                                        x64::Rq::RDX as u8,
+                                    );
+                                    dynasm!(ops
+                                        // reduce first
+                                        ; mov Rd(SCRATCH_REGISTER), Rd(out)
+                                        ; and Rd(out), 0x7fff_ffffu32 as i32
+                                        ; shr Rd(SCRATCH_REGISTER), 31i8
+                                        ; add Rd(out), Rd(SCRATCH_REGISTER)
+                                        // reduce second
+                                        ; mov Rd(SCRATCH_REGISTER), edx
+                                        ; and edx, 0x7fff_ffffu32 as i32
+                                        ; shr Rd(SCRATCH_REGISTER), 31i8
+                                        ; add edx, Rd(SCRATCH_REGISTER)
+                                        // reinterpret as u64 and mul low
+                                        ; imul Rq(out), rdx
+                                        ; mov rdx, Rq(out)
+                                        ; shr rdx, 31i8
+                                        ; and Rd(out), 0x7fff_ffffu32 as i32
+                                        // now continue as in addition
+                                        ; add Rd(out), edx
+                                        ; mov Rd(SCRATCH_REGISTER), Rd(out)
+                                        ; and Rd(out), 0x7fff_ffffu32 as i32
+                                        ; shr Rd(SCRATCH_REGISTER), 31i8
+                                        ; add Rd(out), Rd(SCRATCH_REGISTER)
+                                        // and reduce completely
+                                        ; mov Rd(SCRATCH_REGISTER), Rd(out)
+                                        ; sub Rd(SCRATCH_REGISTER), 0x7fff_ffffu32 as i32
+                                        ; cmovnc Rd(out), Rd(SCRATCH_REGISTER)
+                                    );
+                                    record_circuit_type(&mut ops, CounterType::AddSubLui, 1);
+                                }
+                                _ => {
+                                    panic!("Unknown MOP number {}", mop_number);
+                                }
+                            }
+
+                            touch_register_and_bump_timestamp!(ops, rd, 2);
+                            store_result(&mut ops, rd as u32);
+
+                            i += 1;
+                            continue;
+                        }
+                    }
+                }
+            }
+
             let Ok(instruction) = riscv_decode::decode(raw_instruction) else {
                 panic!(
                     "Unknown instruction 0x{:08x} at PC = 0x{:08x}",
@@ -590,15 +797,6 @@ impl<I: ContextImpl> JittedCode<I> {
                 emit_runtime_error!(ops);
                 continue;
             };
-
-            if let Some(cycles_bound) = cycles_bound {
-                let ts_bound = (cycles_bound as u64) * TIMESTAMP_STEP + INITIAL_TIMESTAMP;
-                emit_early_exit!(ops, pc, ts_bound);
-            }
-
-            // print_registers!(ops, pc, raw_instruction);
-
-            let mut instruction_emitted = false;
 
             // Pure instructions
             if matches!(
@@ -1547,9 +1745,10 @@ impl<I: ContextImpl> JittedCode<I> {
 
         dynasm!(ops
             // in r9 we expect PC
-            ; ->exit_with_execuction_panic:
+            ; ->exit_with_execution_panic:
             // update state
             ; mov rdx, rsp
+            ; mov [rdx + (MachineState::PC_OFFSET as i32)], r9d
             ;; save_machine_state!(ops)
             ; mov rax, QWORD print_runtime_panic as _
             ; mov rdi, r8
@@ -1793,6 +1992,8 @@ extern "sysv64" fn process_csr<const CSR_NUMBER: u32>(
         keccak_unrolled_implementation(trace_piece, memory_holder, machine_state)
     } else if CSR_NUMBER == BIGINT_OPS_WITH_CONTROL_CSR_REGISTER {
         bigint_implementation(trace_piece, memory_holder, machine_state)
+    } else if CSR_NUMBER == BLAKE2S_DELEGATION_CSR_REGISTER {
+        blake_implementation(trace_piece, memory_holder, machine_state)
     } else {
         panic!("Unknown CSR number {}", CSR_NUMBER);
     }
@@ -1846,6 +2047,9 @@ extern "sysv64" fn print_registers(
     instruction: u32,
 ) {
     let cycle = (timestamp - INITIAL_TIMESTAMP) / TIMESTAMP_STEP;
+    if cycle < 836694 {
+        return;
+    }
     // println!(
     //     "Cycle {}: PC = 0x{:08x}, instruction 0x{:08x}",
     //     cycle
@@ -1856,10 +2060,11 @@ extern "sysv64" fn print_registers(
         "{registers:?} at cycle {} and PC = 0x{:08x}, instruction 0x{:08x}",
         cycle, pc, instruction
     );
-    println!(
-        "Will execute {:?}",
-        riscv_decode::decode(instruction).unwrap()
-    );
+    if let Ok(opcode) = riscv_decode::decode(instruction) {
+        println!("Will execute {:?}", opcode);
+    } else {
+        println!("Will execute some custom opcode");
+    }
 }
 
 extern "sysv64" fn print_runtime_panic(timestamp: u64, machine_state: &MachineState) {
