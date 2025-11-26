@@ -142,6 +142,7 @@ impl OpcodeFamilyDecoder for ReducedMachineDecoder {
                         rd_index = 0;
                     }
                     InstructionType::JType => {
+                        rs1_index = 0;
                         rs2_index = 0;
                     }
                     InstructionType::UType => {

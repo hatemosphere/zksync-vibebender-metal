@@ -68,7 +68,9 @@ pub fn run_unrolled_reduced_test_impl(
     let lde_factor = 2;
     let tree_cap_size = 32;
 
-    let worker = Worker::new_with_num_threads(1);
+    // let worker = Worker::new_with_num_threads(1);
+    let worker = Worker::new_with_num_threads(8);
+
     // load binary
     let binary = std::fs::read("../examples/basic_fibonacci/app.bin").unwrap();
     // let binary = std::fs::read("../tools/verifier/recursion_layer.bin").unwrap();
@@ -148,11 +150,6 @@ pub fn run_unrolled_reduced_test_impl(
     );
     assert_eq!(num_trivial, 0, "trivial padding is not expected in tests");
 
-    println!("Finished at PC = 0x{:08x}", state.pc);
-    for (reg_idx, reg) in state.registers.iter().enumerate() {
-        println!("x{} = {}", reg_idx, reg.value);
-    }
-
     let final_pc = state.pc;
     let final_timestamp = state.timestamp;
 
@@ -175,6 +172,24 @@ pub fn run_unrolled_reduced_test_impl(
     println!("Finished at PC = 0x{:08x}", final_pc);
     for (reg_idx, reg) in register_final_state.iter().enumerate() {
         println!("x{} = {}", reg_idx, reg.current_value);
+    }
+
+    let flattened_inits_and_teardowns: Vec<_> = shuffle_ram_touched_addresses
+        .into_iter()
+        .flatten()
+        .collect();
+
+    let mut memory_read_set = BTreeSet::new();
+    let mut memory_write_set = BTreeSet::new();
+
+    for i in 0..32 {
+        memory_write_set.insert((true, i as u32, 0, 0));
+        memory_read_set.insert((
+            true,
+            i as u32,
+            register_final_state[i].last_access_timestamp,
+            register_final_state[i].current_value,
+        ));
     }
 
     let memory_argument_alpha = Mersenne31Quartic::from_array_of_base([
@@ -360,10 +375,17 @@ pub fn run_unrolled_reduced_test_impl(
             &inits_and_teardowns[0].lazy_init_data,
         );
 
-        // println!(
-        //     "Opcode = 0x{:08x}",
-        //     family_data[0].data[29].opcode_data.opcode
-        // );
+        println!("PC = 0x{:08x}", buffer[18].initial_pc());
+
+        println!(
+            "Opcode = 0x{:08x}",
+            text_section[buffer[18].initial_pc() as usize / 4]
+        );
+
+        println!(
+            "Opcode = {:?}",
+            instructions[buffer[18].initial_pc() as usize / 4]
+        );
 
         assert_eq!(
             inits_and_teardowns[0].lazy_init_data.len(),
@@ -392,6 +414,15 @@ pub fn run_unrolled_reduced_test_impl(
             &table_driver,
             &worker,
             Global,
+        );
+
+        ensure_memory_trace_consistency(&memory_trace, &full_trace);
+
+        parse_shuffle_ram_accesses_from_full_trace(
+            &circuit,
+            &full_trace,
+            &mut memory_write_set,
+            &mut memory_read_set,
         );
 
         println!("Checking is satisfied");
@@ -455,6 +486,110 @@ pub fn run_unrolled_reduced_test_impl(
             Mersenne31Quartic::ZERO
         );
         permutation_argument_accumulator.mul_assign(&proof.permutation_grand_product_accumulator);
+    }
+
+    // inits and teardowns
+    {
+        let expected_init_set: Vec<_> = memory_read_set.difference(&memory_write_set).collect();
+        let expected_teardown_set: Vec<_> = memory_write_set.difference(&memory_read_set).collect();
+        assert_eq!(expected_init_set.len(), expected_teardown_set.len());
+        // assert_eq!(expected_init_set.len(), flattened_inits_and_teardowns.len());
+
+        if flattened_inits_and_teardowns.len() != expected_init_set.len() {
+            for (idx, (address, (teardown_ts, teardown_value))) in
+                flattened_inits_and_teardowns.iter().enumerate()
+            {
+                let mut init_set_el = None;
+                for (i, (is_reg, addr, ts, init_value)) in expected_init_set.iter().enumerate() {
+                    if *addr == *address {
+                        init_set_el = Some((*is_reg, *addr, *ts, *init_value));
+                    }
+                }
+                let Some(init_set_el) = init_set_el else {
+                    panic!("No expected init set element for address {} of flattened inits or teardowns", *address);
+                };
+
+                let mut teardown_set_el = None;
+                for (i, (is_reg, addr, ts, teardown_value)) in
+                    expected_teardown_set.iter().enumerate()
+                {
+                    if *addr == *address {
+                        teardown_set_el = Some((*is_reg, *addr, *ts, *teardown_value));
+                    }
+                }
+                let Some(teardown_set_el) = teardown_set_el else {
+                    panic!("No expected teardown set element for address {} of flattened inits or teardowns", *address);
+                };
+                let (_, _, expected_teardown_ts, expected_teardown_value) = teardown_set_el;
+                assert_eq!(
+                    *teardown_ts, expected_teardown_ts,
+                    "failed for address {}",
+                    address
+                );
+                assert_eq!(
+                    *teardown_value, expected_teardown_value,
+                    "failed for address {}",
+                    address
+                );
+            }
+        }
+
+        for (idx, (is_register, addr, ts, init_value)) in expected_init_set.iter().enumerate() {
+            assert!(
+                *is_register == false,
+                "found an unexpected init for register {} with value {} at timestamp {}",
+                *addr,
+                *init_value,
+                *ts
+            );
+            assert_eq!(
+                *ts, 0,
+                "init timestamp is invalid for memory address {}",
+                addr
+            );
+            assert_eq!(
+                *init_value, 0,
+                "init value is invalid for memory address {}",
+                addr
+            );
+            assert_eq!(
+                flattened_inits_and_teardowns[idx].0, *addr,
+                "diverged at expected lazy init {}",
+                idx
+            );
+        }
+        for (idx, (is_register, addr, ts, value)) in expected_teardown_set.iter().enumerate() {
+            assert!(
+                *is_register == false,
+                "found an unexpected teardown for register {} with value {} at timestamp {}",
+                *addr,
+                *value,
+                *ts
+            );
+            assert!(
+                *ts > INITIAL_TIMESTAMP,
+                "teardown timestamp is invalid for memory address {}",
+                addr
+            );
+            assert_eq!(
+                flattened_inits_and_teardowns[idx].1 .0, *ts,
+                "diverged at expected lazy init {}",
+                idx
+            );
+            assert_eq!(
+                flattened_inits_and_teardowns[idx].1 .1, *value,
+                "diverged at expected lazy init {}",
+                idx
+            );
+        }
+
+        for ((_, addr0, _, _), (_, addr1, _, _)) in
+            expected_init_set.iter().zip(expected_teardown_set.iter())
+        {
+            assert_eq!(*addr0, *addr1);
+        }
+
+        assert_eq!(total_unique_teardowns, expected_teardown_set.len());
     }
 
     assert_eq!(permutation_argument_accumulator, Mersenne31Quartic::ONE);
