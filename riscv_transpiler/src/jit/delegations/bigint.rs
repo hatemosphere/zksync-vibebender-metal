@@ -43,6 +43,7 @@ pub fn bigint_implementation(
         let timestamps = memory_holder
             .timestamps
             .as_mut_ptr()
+            .add(offset)
             .cast::<[TimestampScalar; 8]>()
             .as_mut_unchecked();
 
@@ -70,6 +71,7 @@ pub fn bigint_implementation(
         let timestamps = memory_holder
             .timestamps
             .as_mut_ptr()
+            .add(offset)
             .cast::<[TimestampScalar; 8]>()
             .as_mut_unchecked();
 
