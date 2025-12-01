@@ -1,6 +1,7 @@
 #pragma once
 #include "common.cuh"
 #include "memory.cuh"
+#include "ptx.cuh"
 
 // Mersenne31 field arithmetic partially based on
 // https://github.com/Plonky3/Plonky3/tree/main/mersenne-31
@@ -48,6 +49,26 @@ struct base_field {
   static DEVICE_FORCEINLINE base_field mul(const base_field x, const base_field y) {
     const uint64_t product = static_cast<uint64_t>(x.limb) * static_cast<uint64_t>(y.limb);
     return from_u62_max_minus_one(product);
+  }
+
+  static DEVICE_FORCEINLINE base_field mul_mont(const base_field x, const base_field y) {
+    using namespace ptx;
+
+    constexpr unsigned N = ORDER;
+    constexpr unsigned Nprime = 2147483649;
+
+    const unsigned T_lo = mul_lo(x.limb, y.limb);
+    const unsigned T_hi = mul_hi(x.limb, y.limb);
+
+    const unsigned m = mul_lo(T_lo, Nprime);
+
+    unsigned _out_lo = mad_lo_cc(m, N, T_lo); // should be 0, but we need the carry
+    unsigned out_hi = madc_hi(m, N, T_hi); // should not carry out, because output is < 2N
+
+    if (out_hi > N)
+      out_hi -= N;
+
+    return base_field{out_hi};
   }
 
   static DEVICE_FORCEINLINE base_field sqr(const base_field x) { return mul(x, x); }

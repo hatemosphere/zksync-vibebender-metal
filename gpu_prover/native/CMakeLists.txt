@@ -36,6 +36,7 @@ add_library(gpu_prover_native STATIC
         ops_cub/device_scan/i_mul_bf.cu
         ops_cub/device_scan/i_mul_e4.cu
         ops_simple.cu
+        ptx.cuh
         stage2.cu
         stage3.cu
         stage4.cu
