@@ -136,7 +136,7 @@ serde = { version = "1", default-features = false, features = ["derive", "alloc"
 clap = { version = "4.5.21", features = ["derive"] }
 # rand = {version = "0.8", default-features = false, features = ["std_rng"] }
 rand = { version = "0.9", default-features = false }
-zerocopy = "0.8" 
+zerocopy = "=0.8.26" 
 unroll = "0.1"
 seq-macro = "0.3"
 super-seq-macro = "0.3"
