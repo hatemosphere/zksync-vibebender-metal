@@ -3,7 +3,7 @@ use super::*;
 pub fn mul_div_tables() -> Vec<TableType> {
     // no tables
     vec![
-        TableType::RangeCheckSmall, // for 8-bit decompositions
+        TableType::RangeCheck8x8, // for 8-bit decompositions
     ]
 }
 

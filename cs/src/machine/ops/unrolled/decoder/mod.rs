@@ -103,7 +103,7 @@ pub fn create_decoder_circuit_table_driver_into_cs<
 
     cs.materialize_table(TableType::QuickDecodeDecompositionCheck4x4x4);
     cs.materialize_table(TableType::QuickDecodeDecompositionCheck7x3x6);
-    cs.materialize_table(TableType::RangeCheckSmall);
+    cs.materialize_table(TableType::RangeCheck8x8);
 }
 
 pub fn opcodes_for_full_machine() -> Vec<Box<dyn OpcodeFamilyDecoder>> {

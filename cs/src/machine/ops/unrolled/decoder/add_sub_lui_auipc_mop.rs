@@ -31,6 +31,10 @@ impl InstructionFamilyBitmaskCircuitParser for AddSubLuiAuipcMopFamilyCircuitMas
 }
 
 impl AddSubLuiAuipcMopFamilyCircuitMask {
+    pub fn from_mask(mask: [Boolean; ADD_SUB_LUI_AUIPC_MOP_FAMILY_NUM_FLAGS]) -> Self {
+        Self { inner: mask }
+    }
+
     // getters for our opcodes
     pub fn perform_add(&self) -> Boolean {
         self.inner[ADD_OP_BIT]

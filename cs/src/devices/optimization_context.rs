@@ -147,7 +147,8 @@ impl<F: PrimeField, CS: Circuit<F>> OptimizationContext<F, CS> {
             self.registers[self.indexers.register_allocation_indexer]
         } else {
             // unconditionally allocate and range check
-            let reg = Register::new(cs);
+            let idx = self.registers.len();
+            let reg = Register::new_named(cs, &format!("Opt ctx register {}", idx));
             self.registers.push(reg);
             reg
         };
@@ -673,7 +674,12 @@ impl<F: PrimeField, CS: Circuit<F>> OptimizationContext<F, CS> {
         let of_flag = if self.indexers.add_sub_indexer < self.add_sub_ofs.len() {
             self.add_sub_ofs[self.indexers.add_sub_indexer]
         } else {
+            let idx = self.add_sub_ofs.len();
             let of = cs.add_boolean_variable();
+            cs.set_name_for_variable(
+                of.get_variable().unwrap(),
+                &format!("Opt ctx add/sub carry/borrow {}", idx),
+            );
             self.add_sub_ofs.push(of);
             of
         };
@@ -1551,7 +1557,15 @@ impl<F: PrimeField, CS: Circuit<F>> OptimizationContext<F, CS> {
             assert_eq!(flags.len(), b_s.len());
             assert_eq!(flags.len(), c_s.len());
 
-            enforce_add_sub_relation(cs, self.add_sub_ofs[cur_index], &a_s, &b_s, &c_s, &flags);
+            enforce_add_sub_relation(
+                cs,
+                self.add_sub_ofs[cur_index],
+                &a_s,
+                &b_s,
+                &c_s,
+                &flags,
+                cur_index,
+            );
 
             cur_index += 1;
         }

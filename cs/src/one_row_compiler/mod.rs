@@ -16,7 +16,7 @@ use std::collections::BTreeSet;
 
 mod bytecode_preprocessed_executor;
 mod compile_init_and_teardown_circuit;
-mod compile_layout;
+pub(crate) mod compile_layout;
 mod decoder_compilation;
 mod executor_compilation;
 
@@ -967,10 +967,6 @@ impl<F: PrimeField> CompiledCircuitArtifact<F> {
             state_linkage_constraints: &self.state_linkage_constraints,
             public_inputs: &self.public_inputs,
             lazy_init_address_aux_vars: &self.lazy_init_address_aux_vars,
-            // memory_queries_timestamp_comparison_aux_vars: &self
-            //     .memory_queries_timestamp_comparison_aux_vars,
-            // batched_memory_access_timestamp_comparison_aux_vars: self
-            //     .batched_memory_access_timestamp_comparison_aux_vars.as_compiled(),
             trace_len_log2,
         }
     }
@@ -1067,7 +1063,7 @@ fn layout_memory_subtree_variable(
 }
 
 #[track_caller]
-fn layout_witness_subtree_multiple_variables<const N: usize>(
+pub(crate) fn layout_witness_subtree_multiple_variables<const N: usize>(
     offset: &mut usize,
     variables: [Variable; N],
     all_variables_to_place: &mut BTreeSet<Variable>,
@@ -1094,7 +1090,7 @@ fn layout_witness_subtree_multiple_variables<const N: usize>(
 }
 
 #[track_caller]
-fn layout_memory_subtree_multiple_variables<const N: usize>(
+pub(crate) fn layout_memory_subtree_multiple_variables<const N: usize>(
     offset: &mut usize,
     variables: [Variable; N],
     all_variables_to_place: &mut BTreeSet<Variable>,

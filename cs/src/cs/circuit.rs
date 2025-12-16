@@ -28,7 +28,7 @@ pub enum Invariant {
     Substituted((Placeholder, usize)),
 }
 
-#[derive(Debug, Clone, Copy)]
+#[derive(Debug, Clone, Copy, Hash, PartialEq, Eq, serde::Serialize, serde::Deserialize)]
 pub enum ShuffleRamQueryType {
     RegisterOnly {
         register_index: Variable,
@@ -88,7 +88,7 @@ impl ShuffleRamQueryType {
 // Prover would have to substitute global timestamp here
 // but itself, and ensure that eventually global read timestamp
 // is < global write timestamp + local offset
-#[derive(Debug, Clone, Copy)]
+#[derive(Debug, Clone, Copy, Hash, PartialEq, Eq, serde::Serialize, serde::Deserialize)]
 pub struct ShuffleRamMemQuery {
     pub query_type: ShuffleRamQueryType,
     pub local_timestamp_in_cycle: usize,
@@ -134,10 +134,26 @@ pub struct LookupQuery<F: PrimeField> {
     pub table: LookupQueryTableType,
 }
 
-#[derive(Clone, Copy, Debug)]
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum LookupQueryTableType {
     Variable(Variable),
     Constant(TableType),
+}
+
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub enum LookupQueryTableTypeExt<F: PrimeField> {
+    Variable(Variable),
+    Constant(TableType),
+    Expression(LookupInput<F>),
+}
+
+impl<F: PrimeField> LookupQueryTableTypeExt<F> {
+    pub fn from_simple(value: LookupQueryTableType) -> Self {
+        match value {
+            LookupQueryTableType::Constant(c) => Self::Constant(c),
+            LookupQueryTableType::Variable(v) => Self::Variable(v),
+        }
+    }
 }
 
 pub struct LinkedVariablesPair {
@@ -294,6 +310,9 @@ pub struct CircuitOutput<F: PrimeField> {
     pub range_check_expressions: Vec<RangeCheckQuery<F>>,
     pub boolean_vars: Vec<Variable>,
     pub substitutions: HashMap<(Placeholder, usize), Variable>,
+    pub variable_names: HashMap<Variable, String>,
+    pub variables_from_constraints: HashMap<Variable, Constraint<F>>,
+    pub circuit_family_bitmask: Vec<Variable>,
 }
 
 impl<F: PrimeField> CircuitOutput<F> {
@@ -314,6 +333,8 @@ pub trait Circuit<F: PrimeField>: Sized {
 
     fn new() -> Self;
     fn add_variable(&mut self) -> Variable;
+    fn add_named_variable(&mut self, name: &str) -> Variable;
+    fn set_name_for_variable(&mut self, var: Variable, name: &str);
     fn set_values(&mut self, node: impl WitnessResolutionDescription<F, Self::WitnessPlacer>);
     fn get_value(&self, _var: Variable) -> Option<F> {
         None
@@ -355,6 +376,13 @@ pub trait Circuit<F: PrimeField>: Sized {
     }
 
     #[track_caller]
+    fn add_named_boolean_variable(&mut self, name: &str) -> Boolean {
+        let new_var = self.add_named_variable(name);
+        self.require_invariant(new_var, Invariant::Boolean);
+        Boolean::Is(new_var)
+    }
+
+    #[track_caller]
     fn add_variable_with_range_check(&mut self, width: u32) -> Num<F> {
         assert!(
             width as usize == SMALL_RANGE_CHECK_TABLE_WIDTH
@@ -366,65 +394,34 @@ pub trait Circuit<F: PrimeField>: Sized {
     }
 
     #[track_caller]
-    fn add_variable_from_constraint(&mut self, mut constraint: Constraint<F>) -> Variable {
-        assert!(constraint.is_empty() == false);
-        assert!(constraint.terms.iter().all(|x| x.is_constant()) == false);
-        constraint.normalize();
-        let new_var = self.add_variable();
-        collapse_max_quadratic_constraint_into(self, constraint.clone(), new_var);
-
-        constraint -= new_var.into();
-        self.add_constraint(constraint);
-
-        new_var
+    fn add_variable_from_constraint(&mut self, constraint: Constraint<F>) -> Variable {
+        let name = format!("Variable at {}::{}", file!(), line!());
+        self.add_named_variable_from_constraint(constraint, &name)
     }
+
+    fn add_named_variable_from_constraint(
+        &mut self,
+        constraint: Constraint<F>,
+        name: &str,
+    ) -> Variable;
 
     #[track_caller]
     fn add_variable_from_constraint_without_witness_evaluation(
         &mut self,
-        mut constraint: Constraint<F>,
-    ) -> Variable {
-        assert!(constraint.is_empty() == false);
-        assert!(constraint.terms.iter().all(|x| x.is_constant()) == false);
-        constraint.normalize();
-        let new_var = self.add_variable();
-        constraint -= new_var.into();
-        self.add_constraint(constraint);
-
-        new_var
-    }
+        constraint: Constraint<F>,
+    ) -> Variable;
 
     #[track_caller]
     fn add_variable_from_constraint_allow_explicit_linear(
         &mut self,
-        mut constraint: Constraint<F>,
-    ) -> Variable {
-        assert!(constraint.is_empty() == false);
-        assert!(constraint.terms.iter().all(|x| x.is_constant()) == false);
-        constraint.normalize();
-        let new_var = self.add_variable();
-        collapse_max_quadratic_constraint_into(self, constraint.clone(), new_var);
-
-        constraint -= new_var.into();
-        self.add_constraint_allow_explicit_linear(constraint);
-
-        new_var
-    }
+        constraint: Constraint<F>,
+    ) -> Variable;
 
     #[track_caller]
     fn add_variable_from_constraint_allow_explicit_linear_without_witness_evaluation(
         &mut self,
-        mut constraint: Constraint<F>,
-    ) -> Variable {
-        assert!(constraint.is_empty() == false);
-        assert!(constraint.terms.iter().all(|x| x.is_constant()) == false);
-        constraint.normalize();
-        let new_var = self.add_variable();
-        constraint -= new_var.into();
-        self.add_constraint_allow_explicit_linear(constraint);
-
-        new_var
-    }
+        constraint: Constraint<F>,
+    ) -> Variable;
 
     #[track_caller]
     fn choose(&mut self, flag: Boolean, if_true_val: Num<F>, if_false_val: Num<F>) -> Num<F> {
@@ -924,6 +921,12 @@ pub trait Circuit<F: PrimeField>: Sized {
     fn allocate_execution_circuit_state<const ASSUME_PREPROCESSED_DECODER_TABLE: bool>(
         &mut self,
     ) -> OpcodeFamilyCircuitState<F>;
+
+    fn allocate_machine_state(
+        &mut self,
+        need_funct3: bool,
+        family_bitmask_size: usize,
+    ) -> (OpcodeFamilyCircuitState<F>, Vec<Variable>);
 }
 
 impl<F: PrimeField> LookupInput<F> {

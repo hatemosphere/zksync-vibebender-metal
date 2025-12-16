@@ -17,11 +17,20 @@ fn apply_add_sub_lui_auipc_mop<F: PrimeField, CS: Circuit<F>>(
     cs: &mut CS,
     inputs: OpcodeFamilyCircuitState<F>,
 ) {
-    let mut opt_ctx = OptimizationContext::new();
     let decoder = <AddSubLuiAuipcMopDecoder as OpcodeFamilyDecoder>::BitmaskCircuitParser::parse(
         cs,
         inputs.decoder_data.circuit_family_extra_mask,
     );
+
+    apply_add_sub_lui_auipc_mop_inner(cs, inputs, decoder)
+}
+
+fn apply_add_sub_lui_auipc_mop_inner<F: PrimeField, CS: Circuit<F>>(
+    cs: &mut CS,
+    inputs: OpcodeFamilyCircuitState<F>,
+    decoder: <AddSubLuiAuipcMopDecoder as OpcodeFamilyDecoder>::BitmaskCircuitParser,
+) {
+    let mut opt_ctx = OptimizationContext::new();
 
     if let Some(circuit_family_extra_mask) =
         cs.get_value(inputs.decoder_data.circuit_family_extra_mask)
@@ -236,9 +245,10 @@ fn apply_add_sub_lui_auipc_mop<F: PrimeField, CS: Circuit<F>>(
     {
         opt_ctx.restore_indexers(indexers);
         // that will create a witness for us
-        let tmp = cs.add_variable_from_constraint(
+        let tmp = cs.add_named_variable_from_constraint(
             (Constraint::from(rs1_reg_low) + shift * Term::from(rs1_reg_high))
                 * (Constraint::from(rs2_reg_low) + shift * Term::from(rs2_reg_high)),
+            "MULMOD intermediate value",
         );
         cs.add_constraint(
             Constraint::from(is_mulmod)
@@ -460,6 +470,19 @@ pub fn add_sub_lui_auipc_mop_circuit_with_preprocessed_bytecode<F: PrimeField, C
     apply_add_sub_lui_auipc_mop(cs, input);
 }
 
+pub fn add_sub_lui_auipc_mop_circuit_with_preprocessed_bytecode_for_gkr<
+    F: PrimeField,
+    CS: Circuit<F>,
+>(
+    cs: &mut CS,
+) {
+    let (input, bitmask) = cs.allocate_machine_state(false, ADD_SUB_LUI_AUIPC_MOP_FAMILY_NUM_FLAGS);
+    let bitmask: [_; ADD_SUB_LUI_AUIPC_MOP_FAMILY_NUM_FLAGS] = bitmask.try_into().unwrap();
+    let bitmask = bitmask.map(|el| Boolean::Is(el));
+    let decoder = AddSubLuiAuipcMopFamilyCircuitMask::from_mask(bitmask);
+    apply_add_sub_lui_auipc_mop_inner(cs, input, decoder);
+}
+
 #[cfg(test)]
 mod test {
     use super::*;
@@ -488,5 +511,17 @@ mod test {
             &|cs| add_sub_lui_auipc_mop_circuit_with_preprocessed_bytecode(cs),
         );
         serialize_to_file(&ssa_forms, "add_sub_lui_auipc_mop_preprocessed_ssa.json");
+    }
+
+    #[test]
+    fn compile_add_sub_lui_auipc_mop_into_gkr() {
+        use ::field::Mersenne31Field;
+
+        let compiled = compile_unrolled_circuit_state_transition_into_gkr::<Mersenne31Field>(
+            &|cs| add_sub_lui_auipc_mop_table_addition_fn(cs),
+            &|cs| add_sub_lui_auipc_mop_circuit_with_preprocessed_bytecode_for_gkr(cs),
+            1 << 20,
+            24,
+        );
     }
 }

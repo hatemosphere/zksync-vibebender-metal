@@ -72,6 +72,14 @@ impl<F: PrimeField> CompiledDegree2Constraint<F> {
 #[derive(
     Clone, Debug, PartialEq, Eq, PartialOrd, Ord, Hash, serde::Serialize, serde::Deserialize,
 )]
+pub struct Degree1Constraint<F: PrimeField> {
+    pub linear_terms: Box<[(F, Variable)]>,
+    pub constant_term: F,
+}
+
+#[derive(
+    Clone, Debug, PartialEq, Eq, PartialOrd, Ord, Hash, serde::Serialize, serde::Deserialize,
+)]
 pub struct CompiledDegree1Constraint<F: PrimeField> {
     pub linear_terms: Box<[(F, ColumnAddress)]>,
     pub constant_term: F,

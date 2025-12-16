@@ -42,6 +42,10 @@ pub struct BasicAssembly<F: PrimeField, W: WitnessPlacer<F> = CSDebugWitnessEval
     pub witness_placer: Option<W>,
     witness_graph: WitnessResolutionGraph<F, W>,
 
+    pub variable_names: HashMap<Variable, String>,
+    variables_from_constraints: HashMap<Variable, Constraint<F>>,
+    circuit_family_bitmask: Vec<Variable>,
+
     logger: Vec<(&'static str, u64, OptCtxIndexers)>,
 }
 
@@ -70,6 +74,10 @@ impl<F: PrimeField, W: WitnessPlacer<F>> Circuit<F> for BasicAssembly<F, W> {
 
             witness_placer: None,
 
+            variable_names: HashMap::new(),
+            variables_from_constraints: HashMap::new(),
+            circuit_family_bitmask: vec![],
+
             logger: vec![],
         }
     }
@@ -79,14 +87,104 @@ impl<F: PrimeField, W: WitnessPlacer<F>> Circuit<F> for BasicAssembly<F, W> {
         // if self.no_index_assigned == 42 {
         //     panic!("debug");
         // }
+        let location = std::panic::Location::caller();
+        let name = format!("Variable at {}::{}", location.file(), location.line());
+        self.add_named_variable(&name)
+    }
+
+    fn add_named_variable(&mut self, name: &str) -> Variable {
         let variable = Variable(self.no_index_assigned);
         self.no_index_assigned += 1;
+
+        self.variable_names.insert(variable, name.to_string());
 
         variable
     }
 
+    fn set_name_for_variable(&mut self, var: Variable, name: &str) {
+        self.variable_names.insert(var, name.to_string());
+    }
+
     fn add_constant_variable(&mut self, _fr: F) -> Variable {
         unimplemented!("unlikely needed for our circuits");
+    }
+
+    fn add_named_variable_from_constraint(
+        &mut self,
+        mut constraint: Constraint<F>,
+        name: &str,
+    ) -> Variable {
+        assert!(constraint.is_empty() == false);
+        assert!(constraint.terms.iter().all(|x| x.is_constant()) == false);
+        constraint.normalize();
+        let new_var = self.add_named_variable(name);
+        self.variables_from_constraints
+            .insert(new_var, constraint.clone());
+
+        use crate::cs::utils::collapse_max_quadratic_constraint_into;
+        collapse_max_quadratic_constraint_into(self, constraint.clone(), new_var);
+
+        constraint -= new_var.into();
+        self.add_constraint(constraint);
+
+        new_var
+    }
+
+    #[track_caller]
+    fn add_variable_from_constraint_without_witness_evaluation(
+        &mut self,
+        mut constraint: Constraint<F>,
+    ) -> Variable {
+        assert!(constraint.is_empty() == false);
+        assert!(constraint.terms.iter().all(|x| x.is_constant()) == false);
+        constraint.normalize();
+        let new_var = self.add_variable();
+        self.variables_from_constraints
+            .insert(new_var, constraint.clone());
+
+        constraint -= new_var.into();
+        self.add_constraint(constraint);
+
+        new_var
+    }
+
+    #[track_caller]
+    fn add_variable_from_constraint_allow_explicit_linear(
+        &mut self,
+        mut constraint: Constraint<F>,
+    ) -> Variable {
+        assert!(constraint.is_empty() == false);
+        assert!(constraint.terms.iter().all(|x| x.is_constant()) == false);
+        constraint.normalize();
+        let new_var = self.add_variable();
+        self.variables_from_constraints
+            .insert(new_var, constraint.clone());
+
+        use crate::cs::utils::collapse_max_quadratic_constraint_into;
+        collapse_max_quadratic_constraint_into(self, constraint.clone(), new_var);
+
+        constraint -= new_var.into();
+        self.add_constraint_allow_explicit_linear(constraint);
+
+        new_var
+    }
+
+    #[track_caller]
+    fn add_variable_from_constraint_allow_explicit_linear_without_witness_evaluation(
+        &mut self,
+        mut constraint: Constraint<F>,
+    ) -> Variable {
+        assert!(constraint.is_empty() == false);
+        assert!(constraint.terms.iter().all(|x| x.is_constant()) == false);
+        constraint.normalize();
+        let new_var = self.add_variable();
+        self.variables_from_constraints
+            .insert(new_var, constraint.clone());
+
+        constraint -= new_var.into();
+        self.add_constraint_allow_explicit_linear(constraint);
+
+        new_var
     }
 
     #[track_caller]
@@ -128,6 +226,9 @@ impl<F: PrimeField, W: WitnessPlacer<F>> Circuit<F> for BasicAssembly<F, W> {
 
     #[track_caller]
     fn get_value(&self, var: Variable) -> Option<F> {
+        if var.is_placeholder() {
+            return None;
+        }
         if let Some(witness_placer) = self.witness_placer.as_ref() {
             if std::any::TypeId::of::<W>() == std::any::TypeId::of::<CSDebugWitnessEvaluator<F>>() {
                 unsafe {
@@ -893,6 +994,155 @@ impl<F: PrimeField, W: WitnessPlacer<F>> Circuit<F> for BasicAssembly<F, W> {
         state
     }
 
+    fn allocate_machine_state(
+        &mut self,
+        need_funct3: bool,
+        family_bitmask_size: usize,
+    ) -> (OpcodeFamilyCircuitState<F>, Vec<Variable>) {
+        // Variables will be allocated with all the corresponding guarantees,
+        // and circuit should use them in constraints and make witness values if necessary
+
+        // NOTE: We should make most of the variables below as substituted placeholders,
+        // to formally recognize them as inputs for witness-evals
+
+        // PC - by induction we start with 0, and then always adjust using range checks (and 0 mod 4),
+        // so we can allocate from witness and allow permutation argument to take care of correct range
+        let initial_pc: [Variable; 2] =
+            std::array::from_fn(|i| self.add_named_variable(&format!("initial_pc[{}]", i)));
+        initial_pc.iter().enumerate().for_each(|(i, el)| {
+            self.require_invariant(*el, Invariant::Substituted((Placeholder::PcInit, i)))
+        });
+
+        // Same for timestamps - those are incremented with a proper range check in the execution circuits
+        let initial_timestamp: [Variable; NUM_TIMESTAMP_COLUMNS_FOR_RAM] =
+            std::array::from_fn(|i| self.add_named_variable(&format!("initial_ts[{}]", i)));
+
+        let cycle_start_state = MachineCycleStartOrEndState {
+            pc: initial_pc,
+            timestamp: initial_timestamp,
+            _marker: std::marker::PhantomData,
+        };
+
+        // variables for decoder are not checked at all, and circuit will be responsible to properly constraint
+        // them
+
+        // NOTE: Ideally compiler should take care of this boolean check, but there is no nice place in quotient to put it,
+        // so we will add constraints
+        let execute = self.add_named_variable("Execute flag for cycle");
+        self.require_invariant(
+            execute,
+            Invariant::Substituted((Placeholder::ExecuteOpcodeFamilyCycle, 0)),
+        );
+        use crate::constraint::Term;
+        self.add_constraint((Term::from(execute) - Term::from(1u64)) * Term::from(execute));
+
+        let decoder_data: DecoderData<F> = DecoderData {
+            rs1_index: self.add_named_variable("rs1 index from decoder"),
+            rs2_index: self.add_named_variable("rs2 index from decoder"),
+            rd_index: self.add_named_variable("rd index from decoder"),
+            rd_is_zero: self.add_named_variable("rd is zero from decoder"), // boolean in nature
+            imm: std::array::from_fn(|i| {
+                self.add_named_variable(&format!("imm[{}] from decoder", i))
+            }),
+            funct3: if need_funct3 {
+                self.add_named_variable("funct3 from decoder")
+            } else {
+                Variable::placeholder_variable()
+            },
+            funct7: None,
+            circuit_family_extra_mask: Variable::placeholder_variable(),
+            _marker: std::marker::PhantomData,
+        };
+
+        self.require_invariant(
+            decoder_data.rs1_index,
+            Invariant::Substituted((Placeholder::RS1Index, 0)),
+        );
+        self.require_invariant(
+            decoder_data.rs2_index,
+            Invariant::Substituted((Placeholder::RS2Index, 0)),
+        );
+        self.require_invariant(
+            decoder_data.rd_index,
+            Invariant::Substituted((Placeholder::RDIndex, 0)),
+        );
+        self.require_invariant(
+            decoder_data.rd_is_zero,
+            Invariant::Substituted((Placeholder::RDIsZero, 0)),
+        );
+        decoder_data.imm.iter().enumerate().for_each(|(i, el)| {
+            self.require_invariant(*el, Invariant::Substituted((Placeholder::DecodedImm, i)))
+        });
+        if need_funct3 {
+            self.require_invariant(
+                decoder_data.funct3,
+                Invariant::Substituted((Placeholder::DecodedFunct3, 0)),
+            );
+        }
+        self.require_invariant(
+            decoder_data.circuit_family_extra_mask,
+            Invariant::Substituted((Placeholder::DecodedExecutorFamilyMask, 0)),
+        );
+
+        let mut circuit_family_bitmask = Vec::with_capacity(family_bitmask_size);
+        for i in 0..family_bitmask_size {
+            let bitmask_el = self.add_named_boolean_variable(&format!("family_bit[{}]", i));
+            circuit_family_bitmask.push(bitmask_el.get_variable().unwrap());
+        }
+
+        // we can also attach initial witness here - we need initial PC and decoder
+        let value_fn = move |placer: &mut Self::WitnessPlacer| {
+            let initial_pc_value = placer.get_oracle_u32(Placeholder::PcInit);
+            placer.assign_u32_from_u16_parts(initial_pc, &initial_pc_value);
+
+            let decoder_data = decoder_data;
+            placer.spec_decoder_relation(initial_pc, &decoder_data);
+        };
+        self.set_values(value_fn);
+
+        // not make a final state - opcode family circuit is reponsible to create a PC,
+        // and timestamps bump comes from compiler
+
+        let final_pc: [Variable; 2] =
+            std::array::from_fn(|i| self.add_named_variable(&format!("final_pc[{}]", i)));
+        final_pc.iter().enumerate().for_each(|(i, el)| {
+            self.require_invariant(*el, Invariant::Substituted((Placeholder::PcFin, i)))
+        });
+
+        let final_timestamp: [Variable; NUM_TIMESTAMP_COLUMNS_FOR_RAM] =
+            std::array::from_fn(|i| self.add_named_variable(&format!("final_ts[{}]", i)));
+
+        let cycle_end_state = MachineCycleStartOrEndState {
+            pc: final_pc,
+            timestamp: final_timestamp,
+            _marker: std::marker::PhantomData,
+        };
+
+        // we also mark timestamps as formally assigned - those are resolved in prover
+        let value_fn = move |placer: &mut Self::WitnessPlacer| {
+            placer.assume_assigned(execute);
+
+            placer.assume_assigned(cycle_start_state.timestamp[0]);
+            placer.assume_assigned(cycle_start_state.timestamp[1]);
+
+            placer.assume_assigned(cycle_end_state.timestamp[0]);
+            placer.assume_assigned(cycle_end_state.timestamp[1]);
+        };
+        self.set_values(value_fn);
+
+        let state = OpcodeFamilyCircuitState {
+            execute,
+            cycle_start_state,
+            decoder_data,
+            cycle_end_state,
+        };
+
+        self.executor_machine_state = Some(state.clone());
+        self.circuit_family_bitmask = circuit_family_bitmask.clone();
+
+        (state, circuit_family_bitmask)
+    }
+
     fn set_log(&mut self, opt_ctx: &OptimizationContext<F, Self>, name: &'static str) {
         if ENABLE_LOGGING {
             self.logger
@@ -977,7 +1227,7 @@ impl<F: PrimeField, W: WitnessPlacer<F>> Circuit<F> for BasicAssembly<F, W> {
                 let second_input = LookupInput::Variable(second_input);
                 self.enforce_lookup_tuple_for_fixed_table(
                     &[first_input, second_input, LookupInput::empty()],
-                    TableType::RangeCheckSmall,
+                    TableType::RangeCheck8x8,
                     false,
                 );
             } else {
@@ -985,7 +1235,7 @@ impl<F: PrimeField, W: WitnessPlacer<F>> Circuit<F> for BasicAssembly<F, W> {
                 let first_input = LookupInput::Variable(first_input);
                 self.enforce_lookup_tuple_for_fixed_table(
                     &[first_input, LookupInput::empty(), LookupInput::empty()],
-                    TableType::RangeCheckSmall,
+                    TableType::RangeCheck8x8,
                     false,
                 );
             }
@@ -1006,6 +1256,9 @@ impl<F: PrimeField, W: WitnessPlacer<F>> Circuit<F> for BasicAssembly<F, W> {
             register_and_indirect_memory_accesses,
             decoder_machine_state,
             executor_machine_state,
+            variable_names,
+            circuit_family_bitmask,
+            variables_from_constraints,
             ..
         } = self;
 
@@ -1036,6 +1289,9 @@ impl<F: PrimeField, W: WitnessPlacer<F>> Circuit<F> for BasicAssembly<F, W> {
             register_and_indirect_memory_accesses,
             decoder_machine_state,
             executor_machine_state,
+            variable_names,
+            circuit_family_bitmask,
+            variables_from_constraints,
         };
 
         (output, self.witness_placer)

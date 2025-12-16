@@ -145,8 +145,12 @@ pub fn bump_pc_no_range_checks_explicit<F: PrimeField, CS: Circuit<F>>(
 
         // (var - var2) * zero_flag = 0;
         // (var - var2) * var_inv = 1 - zero_flag;
-        let var_inv = circuit.add_variable();
+        let var_inv = circuit.add_named_variable("pc+4 low limb zero check inv var");
         let low_eq_flag = circuit.add_boolean_variable();
+        circuit.set_name_for_variable(
+            low_eq_flag.get_variable().unwrap(),
+            "pc+4 low limb is zero var",
+        );
         let low_eq_flag_var = low_eq_flag.get_variable().unwrap();
 
         circuit.add_constraint(
@@ -208,8 +212,12 @@ pub fn bump_pc_no_range_checks_explicit<F: PrimeField, CS: Circuit<F>>(
     {
         // (var - var2) * zero_flag = 0;
         // (var - var2) * var_inv = 1 - zero_flag;
-        let var_inv = circuit.add_variable();
+        let var_inv = circuit.add_named_variable("pc+4 high limb zero check inv var");
         let eq_flag = circuit.add_boolean_variable();
+        circuit.set_name_for_variable(
+            eq_flag.get_variable().unwrap(),
+            "pc+4 high limb is zero var",
+        );
         let eq_flag_var = eq_flag.get_variable().unwrap();
 
         circuit.add_constraint(
@@ -446,7 +454,7 @@ pub(crate) fn get_rs1_as_shuffle_ram<F: PrimeField, C: Circuit<F>>(
 
     // no range check is needed here, as our RAM is consistent by itself - our writes(!) are range-checked,
     // so any reads will have to be range-checked
-    let value = Register::new_unchecked_from_placeholder::<C>(cs, placeholder);
+    let value = Register::new_unchecked_from_placeholder_named::<C>(cs, placeholder, "rs1");
 
     // registers live in their separate address space
     let query = form_mem_op_for_register_only(local_timestamp_in_cycle, reg_encoding, value, value);
@@ -468,7 +476,7 @@ pub(crate) fn get_rs2_as_shuffle_ram<F: PrimeField, C: Circuit<F>>(
 
     // no range check is needed here, as our RAM is consistent by itself - our writes(!) are range-checked,
     // so any reads will have to be range-checked
-    let value = Register::new_unchecked_from_placeholder::<C>(cs, placeholder);
+    let value = Register::new_unchecked_from_placeholder_named::<C>(cs, placeholder, "rs2");
 
     // registers live in their separate address space
     let query = form_mem_op_for_register_only(local_timestamp_in_cycle, reg_encoding, value, value);
@@ -488,9 +496,15 @@ pub(crate) fn set_rd_with_mask_as_shuffle_ram<F: PrimeField, C: Circuit<F>>(
     } else {
         RD_STORE_LOCAL_TIMESTAMP + 1
     };
-    let read_value =
-        Register::new_unchecked_from_placeholder(cs, Placeholder::WriteRdReadSetWitness);
+    let read_value = Register::new_unchecked_from_placeholder_named(
+        cs,
+        Placeholder::WriteRdReadSetWitness,
+        "rd read value",
+    );
     let masked_write_value = write_value.mask(cs, reg_is_x0.toggle());
+    cs.set_name_for_variable(masked_write_value.0[0].get_variable(), "rd write value[0]");
+    cs.set_name_for_variable(masked_write_value.0[1].get_variable(), "rd write value[1]");
+
     let query = form_mem_op_for_register_only(
         local_timestamp_in_cycle,
         reg_encoding,
@@ -512,8 +526,11 @@ pub(crate) fn set_rd_without_mask_as_shuffle_ram<F: PrimeField, C: Circuit<F>>(
     } else {
         RD_STORE_LOCAL_TIMESTAMP + 1
     };
-    let read_value =
-        Register::new_unchecked_from_placeholder(cs, Placeholder::WriteRdReadSetWitness);
+    let read_value = Register::new_unchecked_from_placeholder_named(
+        cs,
+        Placeholder::WriteRdReadSetWitness,
+        "rd",
+    );
     let query = form_mem_op_for_register_only(
         local_timestamp_in_cycle,
         reg_encoding,

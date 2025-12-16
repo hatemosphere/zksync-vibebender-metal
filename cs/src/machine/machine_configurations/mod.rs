@@ -316,7 +316,7 @@ pub fn create_table_driver<
         "machine must not define CSR support table"
     );
     assert!(
-        used_tables.contains(&TableType::RangeCheckSmall) == false,
+        used_tables.contains(&TableType::RangeCheck8x8) == false,
         "machine must not define 8-bit range check table"
     );
 
@@ -340,7 +340,7 @@ pub fn create_table_driver<
     table_driver.materialize_table(TableType::QuickDecodeDecompositionCheck4x4x4);
     table_driver.materialize_table(TableType::QuickDecodeDecompositionCheck7x3x6);
     table_driver.materialize_table(TableType::U16GetSignAndHighByte);
-    table_driver.materialize_table(TableType::RangeCheckSmall);
+    table_driver.materialize_table(TableType::RangeCheck8x8);
 
     let decoder_table = M::create_decoder_table(TableType::OpTypeBitmask.to_table_id());
     table_driver.add_table_with_content(
@@ -392,7 +392,7 @@ pub fn create_table_driver_into_cs<
         "machine must not define CSR support table"
     );
     assert!(
-        used_tables.contains(&TableType::RangeCheckSmall) == false,
+        used_tables.contains(&TableType::RangeCheck8x8) == false,
         "machine must not define 8-bit range check table"
     );
 
@@ -414,7 +414,7 @@ pub fn create_table_driver_into_cs<
     cs.materialize_table(TableType::QuickDecodeDecompositionCheck4x4x4);
     cs.materialize_table(TableType::QuickDecodeDecompositionCheck7x3x6);
     cs.materialize_table(TableType::U16GetSignAndHighByte);
-    cs.materialize_table(TableType::RangeCheckSmall);
+    cs.materialize_table(TableType::RangeCheck8x8);
 
     let decoder_table = M::create_decoder_table(TableType::OpTypeBitmask.to_table_id());
     cs.add_table_with_content(

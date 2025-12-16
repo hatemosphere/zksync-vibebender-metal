@@ -19,8 +19,8 @@ pub enum TableType {
     CsrBitmask,
     Or = 6,
     And = 7,
-    RangeCheckSmall,
-    RangeCheckLarge,
+    RangeCheck8x8,
+    // RangeCheckLarge,
     AndNot,
     QuickDecodeDecompositionCheck4x4x4,
     QuickDecodeDecompositionCheck7x3x6,
@@ -73,6 +73,7 @@ pub enum TableType {
     XorSpecialIota,
     AndN,
     RotL,
+    Decoder,
     DynamicPlaceholder, // MUST be the last
 }
 
@@ -81,5 +82,4 @@ pub const NUM_COLUMNS_FOR_COMMON_TABLE_WIDTH_SETUP: usize = COMMON_TABLE_WIDTH +
 pub const SMALL_RANGE_CHECK_TABLE_WIDTH: usize = 8;
 pub const LARGE_RANGE_CHECK_TABLE_WIDTH: usize = 16;
 
-pub const SMALL_RANGE_CHECK_TABLE_ID: u32 = TableType::RangeCheckSmall as u32;
-pub const LARGE_RANGE_CHECK_TABLE_ID: u32 = TableType::RangeCheckLarge as u32;
+pub const SMALL_RANGE_CHECK_TABLE_ID: u32 = TableType::RangeCheck8x8 as u32;

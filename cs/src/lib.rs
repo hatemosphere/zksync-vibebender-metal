@@ -21,6 +21,8 @@ pub mod delegation;
 #[cfg(feature = "compiler")]
 pub mod devices;
 #[cfg(feature = "compiler")]
+pub mod gkr_compiler;
+#[cfg(feature = "compiler")]
 pub mod machine;
 #[cfg(feature = "compiler")]
 pub mod one_row_compiler;

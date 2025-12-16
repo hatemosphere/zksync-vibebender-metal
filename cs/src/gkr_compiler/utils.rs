@@ -1,0 +1,720 @@
+use std::fmt::Debug;
+
+use super::*;
+
+use crate::constraint::Constraint;
+use crate::definitions::DecoderData;
+use crate::definitions::GKRAddress;
+use crate::definitions::OpcodeFamilyCircuitState;
+use crate::definitions::Variable;
+use crate::definitions::REGISTER_SIZE;
+use crate::gkr_compiler::graph::graph_element_equals_if_eq;
+use crate::gkr_compiler::graph::GKRGraph;
+use crate::gkr_compiler::graph::GraphElement;
+use crate::gkr_compiler::graph::GraphHolder;
+
+#[track_caller]
+pub(crate) fn layout_witness_subtree_variable_at_column(
+    offset: usize,
+    variable: Variable,
+    all_variables_to_place: &mut BTreeSet<Variable>,
+    layout: &mut BTreeMap<Variable, GKRAddress>,
+) -> GKRAddress {
+    assert!(
+        all_variables_to_place.remove(&variable),
+        "variable {:?} was already placed",
+        variable
+    );
+    let address = GKRAddress::BaseLayerWitness(offset);
+    let existing = layout.insert(variable, address);
+    assert!(existing.is_none());
+
+    address
+}
+
+#[derive(Clone, Hash, Debug, serde::Serialize, serde::Deserialize)]
+pub struct MachineStateWithDecoderData {
+    pub execute: usize,
+    pub initial_pc: [usize; 2],
+    pub initial_timestamp: [usize; NUM_TIMESTAMP_COLUMNS_FOR_RAM],
+    pub final_pc: [usize; 2],
+    pub final_timestamp: [usize; NUM_TIMESTAMP_COLUMNS_FOR_RAM],
+    pub rs1_index: usize,
+    // can be memory or witness, as there can be some selection there
+    pub rs2_index: GKRAddress,
+    pub rd_index: GKRAddress,
+    pub rd_is_zero: GKRAddress,
+    pub imm: [GKRAddress; REGISTER_SIZE],
+    pub funct3: Option<GKRAddress>,
+    pub circuit_family_extra_mask: Vec<GKRAddress>,
+}
+
+pub(crate) fn layout_machine_state_for_preprocessed_bytecode<F: PrimeField>(
+    graph: &mut GKRGraph,
+    all_variables_to_place: &mut BTreeSet<Variable>,
+    state: &OpcodeFamilyCircuitState<F>,
+    family_bitmask: Vec<Variable>,
+) -> MachineStateWithDecoderData {
+    let [execute] =
+        graph.layout_memory_subtree_multiple_variables([state.execute], all_variables_to_place);
+    let GKRAddress::BaseLayerMemory(execute) = execute else {
+        unreachable!()
+    };
+    let initial_pc = graph.layout_memory_subtree_multiple_variables(
+        state.cycle_start_state.pc,
+        all_variables_to_place,
+    );
+    let initial_pc = initial_pc.map(|el| {
+        let GKRAddress::BaseLayerMemory(el) = el else {
+            unreachable!()
+        };
+
+        el
+    });
+    let initial_timestamp = graph.layout_memory_subtree_multiple_variables(
+        state.cycle_start_state.timestamp,
+        all_variables_to_place,
+    );
+    let initial_timestamp = initial_timestamp.map(|el| {
+        let GKRAddress::BaseLayerMemory(el) = el else {
+            unreachable!()
+        };
+
+        el
+    });
+
+    let final_pc = graph
+        .layout_memory_subtree_multiple_variables(state.cycle_end_state.pc, all_variables_to_place);
+    let final_pc = final_pc.map(|el| {
+        let GKRAddress::BaseLayerMemory(el) = el else {
+            unreachable!()
+        };
+
+        el
+    });
+    let final_timestamp = graph.layout_memory_subtree_multiple_variables(
+        state.cycle_end_state.timestamp,
+        all_variables_to_place,
+    );
+    let final_timestamp = final_timestamp.map(|el| {
+        let GKRAddress::BaseLayerMemory(el) = el else {
+            unreachable!()
+        };
+
+        el
+    });
+
+    // but the rest CAN be in witness, and form a special lookup table entry PC -> decoder data
+
+    let DecoderData {
+        rs1_index,
+        rs2_index,
+        rd_index,
+        rd_is_zero,
+        imm,
+        funct3,
+        funct7,
+        circuit_family_extra_mask,
+        ..
+    } = state.decoder_data.clone();
+
+    let rs1_index =
+        if let Some(GKRAddress::BaseLayerMemory(offset)) = graph.get_fixed_layout_pos(&rs1_index) {
+            offset
+        } else {
+            unreachable!();
+        };
+
+    let rs2_index =
+        if let Some(GKRAddress::BaseLayerMemory(offset)) = graph.get_fixed_layout_pos(&rs2_index) {
+            GKRAddress::BaseLayerMemory(offset)
+        } else {
+            let t = graph
+                .layout_witness_subtree_multiple_variables([rs2_index], all_variables_to_place);
+
+            t[0]
+        };
+
+    let rd_index = if let Some(GKRAddress::BaseLayerMemory(offset)) =
+        graph.get_fixed_layout_pos(&rd_index)
+    {
+        GKRAddress::BaseLayerMemory(offset)
+    } else {
+        let t = graph.layout_witness_subtree_multiple_variables([rd_index], all_variables_to_place);
+
+        t[0]
+    };
+
+    let rd_is_zero =
+        graph.layout_witness_subtree_multiple_variables([rd_is_zero], all_variables_to_place);
+    let imm = graph.layout_witness_subtree_multiple_variables(imm, all_variables_to_place);
+    let funct3 = if funct3.is_placeholder() {
+        None
+    } else {
+        let funct3 =
+            graph.layout_witness_subtree_multiple_variables([funct3], all_variables_to_place);
+        Some(funct3[0])
+    };
+
+    assert!(funct7.is_none());
+    assert!(circuit_family_extra_mask.is_placeholder());
+
+    let mut bitmask = Vec::with_capacity(family_bitmask.len());
+    for el in family_bitmask.into_iter() {
+        let el = if let Some(GKRAddress::BaseLayerMemory(offset)) = graph.get_fixed_layout_pos(&el)
+        {
+            GKRAddress::BaseLayerMemory(offset)
+        } else {
+            let t = graph.layout_witness_subtree_multiple_variables([el], all_variables_to_place);
+
+            t[0]
+        };
+        bitmask.push(el);
+    }
+
+    MachineStateWithDecoderData {
+        execute,
+        initial_pc,
+        initial_timestamp,
+        final_pc,
+        final_timestamp,
+        rs1_index,
+        rs2_index,
+        rd_index,
+        rd_is_zero: rd_is_zero[0],
+        imm,
+        funct3,
+        circuit_family_extra_mask: bitmask,
+    }
+}
+
+pub trait DependentNode {
+    fn add_dependencies_into(
+        &self,
+        graph: &mut dyn graph::GraphHolder,
+        dst: &mut Vec<graph::NodeIndex>,
+    );
+}
+
+// impl<T: DependentNode> DependentNode for Box<T> {
+//     fn add_dependencies_into(
+//         &self,
+//         graph: &mut dyn graph::GraphHolder,
+//         dst: &mut Vec<graph::NodeIndex>,
+//     ) {
+//         <T as DependentNode>::add_dependencies_into(&*self, graph, dst);
+//     }
+// }
+
+#[derive(Clone, Copy, Hash, Debug, PartialEq, Eq, serde::Serialize, serde::Deserialize)]
+pub enum AddressSpaceIsRegister {
+    Is(Variable),
+    Not(Variable),
+}
+
+#[derive(Clone, Copy, Hash, Debug, PartialEq, Eq, serde::Serialize, serde::Deserialize)]
+#[repr(u8)]
+pub enum AddressSpaceType {
+    Register = 0,
+    RAM = 1,
+    PC = 2,
+}
+
+#[derive(Clone, Copy, Hash, Debug, PartialEq, Eq, serde::Serialize, serde::Deserialize)]
+#[repr(u8)]
+pub enum AddressSpace {
+    Constant(AddressSpaceType),
+    RegisterOrRam(AddressSpaceIsRegister),
+}
+
+impl DependentNode for AddressSpace {
+    fn add_dependencies_into(
+        &self,
+        graph: &mut dyn graph::GraphHolder,
+        dst: &mut Vec<graph::NodeIndex>,
+    ) {
+        match self {
+            Self::Constant(..) => {}
+            Self::RegisterOrRam(t) => match t {
+                AddressSpaceIsRegister::Is(var) | AddressSpaceIsRegister::Not(var) => {
+                    let index = graph.get_variable_position_assume_placed(*var);
+                    dst.push(index);
+                }
+            },
+        }
+    }
+}
+
+#[derive(Clone, Copy, Hash, Debug, PartialEq, Eq, serde::Serialize, serde::Deserialize)]
+pub enum AddressSpaceAddress {
+    Empty,
+    SingleLimb(Variable),
+    U32Space([Variable; 2]),
+    U32SpaceSpecialIndirect {
+        low_base: Variable,
+        low_dynamic_offset: Option<Variable>,
+        offset: u32,
+        high: Variable,
+    },
+}
+
+impl DependentNode for AddressSpaceAddress {
+    fn add_dependencies_into(
+        &self,
+        graph: &mut dyn graph::GraphHolder,
+        dst: &mut Vec<graph::NodeIndex>,
+    ) {
+        // By our construction we ALWAYS have dependencies here on the base layer
+        match self {
+            Self::Empty => {}
+            Self::SingleLimb(var) => {
+                let index = graph.get_variable_position_assume_placed(*var);
+                dst.push(index);
+            }
+            Self::U32Space(vars) => {
+                for var in vars.iter() {
+                    let index = graph.get_variable_position_assume_placed(*var);
+                    dst.push(index);
+                }
+            }
+            Self::U32SpaceSpecialIndirect {
+                low_base,
+                low_dynamic_offset,
+                high,
+                ..
+            } => {
+                dst.push(graph.get_variable_position_assume_placed(*low_base));
+                if let Some(low_dynamic_offset) = low_dynamic_offset {
+                    dst.push(graph.get_variable_position_assume_placed(*low_dynamic_offset));
+                }
+                dst.push(graph.get_variable_position_assume_placed(*high));
+            }
+        }
+    }
+}
+
+#[derive(Clone, Copy, Hash, Debug, PartialEq, Eq, serde::Serialize, serde::Deserialize)]
+pub struct MemoryPermutationExpression {
+    pub address_space: AddressSpace,
+    pub address: AddressSpaceAddress,
+    pub timestamp: [Variable; NUM_TIMESTAMP_COLUMNS_FOR_RAM],
+    pub value: [Variable; REGISTER_SIZE],
+    pub timestamp_offset: u32,
+}
+
+impl DependentNode for MemoryPermutationExpression {
+    fn add_dependencies_into(
+        &self,
+        graph: &mut dyn graph::GraphHolder,
+        dst: &mut Vec<graph::NodeIndex>,
+    ) {
+        self.address_space.add_dependencies_into(graph, dst);
+        self.address.add_dependencies_into(graph, dst);
+        for ts in self.timestamp.iter() {
+            let index = graph.get_variable_position_assume_placed(*ts);
+            dst.push(index);
+        }
+        for value in self.value.iter() {
+            let index = graph.get_variable_position_assume_placed(*value);
+            dst.push(index);
+        }
+    }
+}
+
+// #[derive(Clone, Copy, Hash, Debug, PartialEq, Eq, serde::Serialize, serde::Deserialize)]
+// pub struct MemoryPermutationAccumulationNode {
+//     pub inputs: [MemoryPermutationExpression; 2],
+//     pub is_write: bool,
+// }
+
+// impl DependentNode for MemoryPermutationAccumulationNode {
+//     fn add_dependencies_into(
+//         &self,
+//         graph: &mut dyn graph::GraphHolder,
+//         dst: &mut Vec<graph::NodeIndex>,
+//     ) {
+//         for input in self.inputs.iter() {
+//             input.add_dependencies_into(graph, dst);
+//         }
+//     }
+// }
+
+// impl GraphElement for MemoryPermutationAccumulationNode {
+//     fn as_dyn(&'_ self) -> &'_ (dyn GraphElement + 'static) {
+//         self
+//     }
+//     fn equals(&self, other: &dyn GraphElement) -> bool {
+//         graph_element_equals_if_eq(self, other)
+//     }
+//     fn dependencies(&self, graph: &mut dyn graph::GraphHolder) -> Vec<graph::NodeIndex> {
+//         let mut deps = vec![];
+//         self.add_dependencies_into(graph, &mut deps);
+
+//         deps
+//     }
+//     fn short_name(&self) -> String {
+//         if self.is_write {
+//             "Memory grand product write accumulation node".to_string()
+//         } else {
+//             "Memory grand product read accumulation node".to_string()
+//         }
+//     }
+//     fn evaluation_description(&self, graph: &mut dyn graph::GraphHolder) -> NoFieldGKRRelation {
+
+//     }
+// }
+
+pub fn add_compiler_defined_variable_from_constraint<F: PrimeField>(
+    num_variables: &mut u64,
+    all_variables_to_place: &mut BTreeSet<Variable>,
+    variables_from_constraints: &mut HashMap<Variable, Constraint<F>>,
+    constraint: Constraint<F>,
+) -> Variable {
+    let var = Variable(*num_variables);
+    *num_variables += 1;
+    all_variables_to_place.insert(var);
+    variables_from_constraints.insert(var, constraint.clone());
+
+    var
+}
+
+#[derive(Clone, Hash, Debug, PartialEq, Eq)]
+pub enum GrandProductAccumulationStep {
+    Base {
+        lhs: MemoryPermutationExpression,
+        rhs: MemoryPermutationExpression,
+        is_write: bool,
+    },
+    Aggregation {
+        lhs: Box<Self>,
+        rhs: Box<Self>,
+        is_write: bool,
+    },
+    Unbalanced {
+        lhs: Box<Self>,
+        rhs: MemoryPermutationExpression,
+        is_write: bool,
+    },
+}
+
+impl GrandProductAccumulationStep {
+    fn is_write(&self) -> bool {
+        match self {
+            Self::Base { is_write, .. }
+            | Self::Aggregation { is_write, .. }
+            | Self::Unbalanced { is_write, .. } => *is_write,
+        }
+    }
+}
+
+impl DependentNode for GrandProductAccumulationStep {
+    fn add_dependencies_into(
+        &self,
+        graph: &mut dyn graph::GraphHolder,
+        dst: &mut Vec<graph::NodeIndex>,
+    ) {
+        match self {
+            Self::Base { lhs, rhs, .. } => {
+                lhs.add_dependencies_into(graph, dst);
+                rhs.add_dependencies_into(graph, dst);
+            }
+            Self::Aggregation { lhs, rhs, .. } => {
+                let t0 = graph
+                    .get_node_index(lhs.as_ref().as_dyn())
+                    .expect("already placed");
+                let t1 = graph
+                    .get_node_index(rhs.as_ref().as_dyn())
+                    .expect("already placed");
+                dst.push(t0);
+                dst.push(t1);
+            }
+            Self::Unbalanced { lhs, rhs, .. } => {
+                let t0 = graph
+                    .get_node_index(lhs.as_ref().as_dyn())
+                    .expect("already placed");
+                dst.push(t0);
+                rhs.add_dependencies_into(graph, dst);
+            }
+        }
+    }
+}
+
+impl GraphElement for GrandProductAccumulationStep {
+    fn as_dyn(&'_ self) -> &'_ (dyn GraphElement + 'static) {
+        self
+    }
+
+    fn dyn_clone(&self) -> Box<dyn GraphElement> {
+        Box::new(self.clone())
+    }
+
+    fn equals(&self, other: &dyn GraphElement) -> bool {
+        graph_element_equals_if_eq(self, other)
+    }
+
+    fn dependencies(&self, graph: &mut dyn graph::GraphHolder) -> Vec<graph::NodeIndex> {
+        let mut dst = vec![];
+        self.add_dependencies_into(graph, &mut dst);
+        dst
+    }
+
+    fn short_name(&self) -> String {
+        let is_write = self.is_write();
+        match self {
+            Self::Base { .. } => {
+                if is_write {
+                    "Memory grand product base write accumulation node".to_string()
+                } else {
+                    "Memory grand product base read accumulation node".to_string()
+                }
+            }
+            Self::Aggregation { .. } => {
+                if is_write {
+                    "Memory grand product aggregation write accumulation node".to_string()
+                } else {
+                    "Memory grand product aggregation read accumulation node".to_string()
+                }
+            }
+            Self::Unbalanced { .. } => {
+                if is_write {
+                    "Memory grand product unbalanced write accumulation node".to_string()
+                } else {
+                    "Memory grand product unbalanced read accumulation node".to_string()
+                }
+            }
+        }
+    }
+
+    fn evaluation_description(&self, graph: &mut dyn GraphHolder) -> NoFieldGKRRelation {
+        match self {
+            Self::Base { lhs, rhs, .. } => {
+                // add to cache first
+                let parts = [lhs, rhs].map(|el| {
+                    let cached = mem_permutation_expr_into_cached_expr(el, &*graph);
+                    graph.add_cached_relation(cached)
+                });
+                NoFieldGKRRelation::InitialGrandProduct(parts)
+            }
+            Self::Aggregation { .. } => {
+                unimplemented!()
+            }
+            Self::Unbalanced { .. } => {
+                unimplemented!()
+            }
+        }
+    }
+}
+
+// impl DependentNode for Box<GrandProductAccumulationStep> {
+//     fn add_dependencies_into(
+//         &self,
+//         graph: &mut dyn graph::GraphHolder,
+//         dst: &mut Vec<graph::NodeIndex>,
+//     ) {
+//         match self.as_ref() {
+//             GrandProductAccumulationStep::Pairwise(inner) => {
+//                 let t0 = graph
+//                     .get_node_index(inner.lhs.as_ref().as_dyn())
+//                     .expect("already placed");
+//                 let t1 = graph
+//                     .get_node_index(inner.rhs.as_ref().as_dyn())
+//                     .expect("already placed");
+//                 dst.push(t0);
+//                 dst.push(t1);
+//             }
+//             GrandProductAccumulationStep::PairwiseBase(inner) => {
+//                 let t0 = graph.get_node_index(&inner.lhs).expect("already placed");
+//                 let t1 = graph.get_node_index(&inner.rhs).expect("already placed");
+//                 dst.push(t0);
+//                 dst.push(t1);
+//             }
+//             GrandProductAccumulationStep::UnbalancedWithBase(inner) => {
+//                 let t0 = graph
+//                     .get_node_index(inner.lhs.as_ref().as_dyn())
+//                     .expect("already placed");
+//                 let t1 = graph.get_node_index(&inner.rhs).expect("already placed");
+//                 dst.push(t0);
+//                 dst.push(t1);
+//             }
+//         }
+//     }
+// }
+
+// impl GraphElement for Box<GrandProductAccumulationStep> {
+//     fn as_dyn(&'_ self) -> &'_ (dyn GraphElement + 'static) {
+//         self
+//     }
+//     fn equals(&self, other: &dyn GraphElement) -> bool {
+//         graph_element_equals_if_eq::<GrandProductAccumulationStep>(self.as_ref(), other)
+//     }
+
+//     fn dependencies(&self, graph: &mut dyn graph::GraphHolder) -> Vec<graph::NodeIndex> {
+//         match self.as_ref() {
+//             GrandProductAccumulationStep::Pairwise(inner) => {
+//                 GraphElement::dependencies(inner.as_dyn(), graph)
+//             }
+//             GrandProductAccumulationStep::PairwiseBase(inner) => {
+//                 GraphElement::dependencies(inner.as_dyn(), graph)
+//             }
+//             GrandProductAccumulationStep::UnbalancedWithBase(inner) => {
+//                 GraphElement::dependencies(inner.as_dyn(), graph)
+//             }
+//         }
+//     }
+
+//     fn short_name(&self) -> String {
+//         match self.as_ref() {
+//             GrandProductAccumulationStep::Pairwise(inner) => {
+//                 GraphElement::short_name(inner.as_dyn())
+//             }
+//             GrandProductAccumulationStep::PairwiseBase(inner) => {
+//                 GraphElement::short_name(inner.as_dyn())
+//             }
+//             GrandProductAccumulationStep::UnbalancedWithBase(inner) => {
+//                 GraphElement::short_name(inner.as_dyn())
+//             }
+//         }
+//     }
+// }
+
+#[derive(Clone, Copy, Hash, Debug, PartialEq, Eq, serde::Serialize, serde::Deserialize)]
+pub struct GrandProductAccumulationMaskingNode<T: DependentNode + GraphElement + Clone> {
+    pub lhs: T,
+    pub mask: GKRAddress,
+    pub is_write: bool,
+}
+
+impl<T: DependentNode + GraphElement + Debug + Clone> DependentNode
+    for GrandProductAccumulationMaskingNode<T>
+{
+    fn add_dependencies_into(
+        &self,
+        graph: &mut dyn graph::GraphHolder,
+        dst: &mut Vec<graph::NodeIndex>,
+    ) {
+        let Some(t0) = graph.get_node_index(&self.lhs) else {
+            panic!("Node {:?} must be already placed", &self.lhs);
+        };
+        dst.push(t0);
+        let node_idx = graph
+            .get_node_index(&self.mask)
+            .expect("must be already placed");
+        dst.push(node_idx);
+    }
+}
+
+impl<T: DependentNode + GraphElement + PartialEq + Eq + Debug + Clone> GraphElement
+    for GrandProductAccumulationMaskingNode<T>
+{
+    fn as_dyn(&'_ self) -> &'_ (dyn GraphElement + 'static) {
+        self
+    }
+
+    fn dyn_clone(&self) -> Box<dyn GraphElement> {
+        Box::new(self.clone())
+    }
+
+    fn equals(&self, other: &dyn GraphElement) -> bool {
+        graph_element_equals_if_eq(self, other)
+    }
+
+    fn dependencies(&self, graph: &mut dyn graph::GraphHolder) -> Vec<graph::NodeIndex> {
+        let mut deps = vec![];
+        self.add_dependencies_into(graph, &mut deps);
+
+        deps
+    }
+
+    fn short_name(&self) -> String {
+        if self.is_write {
+            "Memory grand product write masking node".to_string()
+        } else {
+            "Memory grand product read masking node".to_string()
+        }
+    }
+
+    fn evaluation_description(&self, graph: &mut dyn GraphHolder) -> NoFieldGKRRelation {
+        todo!();
+    }
+}
+
+pub(crate) fn mem_permutation_expr_into_cached_expr(
+    mem: &MemoryPermutationExpression,
+    graph: &dyn GraphHolder,
+) -> NoFieldGKRCacheRelation {
+    let address_space = match mem.address_space {
+        AddressSpace::Constant(c) => CompiledAddressSpaceRelationStrict::Constant(c as u8 as u32),
+        AddressSpace::RegisterOrRam(is_reg) => match is_reg {
+            AddressSpaceIsRegister::Is(v) => CompiledAddressSpaceRelationStrict::Is(
+                graph.get_variable_address_assume_placed(v).as_memory(),
+            ),
+            AddressSpaceIsRegister::Not(v) => CompiledAddressSpaceRelationStrict::Not(
+                graph.get_variable_address_assume_placed(v).as_memory(),
+            ),
+        },
+    };
+    let address = match mem.address {
+        AddressSpaceAddress::Empty => CompliedAddressStrict::Constant(0),
+        AddressSpaceAddress::SingleLimb(v) => {
+            CompliedAddressStrict::U16Space(graph.get_variable_address_assume_placed(v).as_memory())
+        }
+        AddressSpaceAddress::U32Space(s) => CompliedAddressStrict::U32Space(
+            s.map(|v| graph.get_variable_address_assume_placed(v).as_memory()),
+        ),
+        AddressSpaceAddress::U32SpaceSpecialIndirect {
+            low_base,
+            low_dynamic_offset,
+            offset,
+            high,
+        } => {
+            let low_base = graph
+                .get_variable_address_assume_placed(low_base)
+                .as_memory();
+            let low_dynamic_offset = low_dynamic_offset
+                .map(|el| graph.get_variable_address_assume_placed(el).as_memory());
+            let high = graph.get_variable_address_assume_placed(high).as_memory();
+            CompliedAddressStrict::U32SpaceSpecialIndirect {
+                low_base,
+                low_dynamic_offset,
+                low_offset: offset as u64,
+                high,
+            }
+        }
+    };
+    let value = mem
+        .value
+        .map(|el| graph.get_variable_address_assume_placed(el).as_memory());
+    let timestamp = mem
+        .timestamp
+        .map(|el| graph.get_variable_address_assume_placed(el).as_memory());
+
+    let rel = NoFieldSpecialMemoryContributionRelation {
+        address_space,
+        address,
+        timestamp,
+        value,
+        timestamp_offset: mem.timestamp_offset,
+    };
+
+    NoFieldGKRCacheRelation::MemoryTuple(rel)
+}
+
+pub(crate) fn lookup_input_into_cached_expr<F: PrimeField, const TOTAL_WIDTH: usize>(
+    lookup: &LookupInputNode<F, TOTAL_WIDTH>,
+    graph: &dyn GraphHolder,
+) -> NoFieldGKRCacheRelation {
+    let mut dst = vec![];
+    for relation in lookup.inputs.iter() {
+        let mut t = vec![];
+        for (c, v) in relation.linear_terms.iter() {
+            let v = graph.get_variable_address_assume_placed(*v);
+            t.push((c.as_u64_reduced(), v));
+        }
+        let rel = NoFieldLinearRelation {
+            linear_terms: t.into_boxed_slice(),
+            constant: relation.constant_term.as_u64_reduced(),
+        };
+        dst.push(rel);
+    }
+    NoFieldGKRCacheRelation::VectorizedLookup(dst.into_boxed_slice())
+}

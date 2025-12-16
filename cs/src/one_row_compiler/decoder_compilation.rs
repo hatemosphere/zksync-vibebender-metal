@@ -6,6 +6,8 @@ impl<F: PrimeField> OneRowCompiler<F> {
         circuit_output: CircuitOutput<F>,
         trace_len_log2: usize,
     ) -> CompiledCircuitArtifact<F> {
+        unreachable!("do not use yet, as there is no proper decoder/executor circuit separation");
+
         // our main purposes are:
         // - place variables in particular grid places
         // - select whether they go into witness subtree or memory subtree
@@ -29,6 +31,7 @@ impl<F: PrimeField> OneRowCompiler<F> {
             register_and_indirect_memory_accesses,
             decoder_machine_state,
             executor_machine_state,
+            ..
         } = circuit_output;
 
         assert!(trace_len_log2 > TIMESTAMP_COLUMNS_NUM_BITS as usize);
@@ -198,7 +201,7 @@ impl<F: PrimeField> OneRowCompiler<F> {
             ];
             let lookup = LookupSetDescription {
                 input_columns,
-                table_index: TableIndex::Constant(TableType::RangeCheckSmall),
+                table_index: TableIndex::Constant(TableType::RangeCheck8x8),
             };
             width_3_lookups.push(lookup);
         }

@@ -12,6 +12,7 @@ mod constraints;
 mod cycle_state;
 mod decoding_utils;
 mod delegation;
+mod gkr_layers;
 mod lookup;
 mod memory_tree;
 mod ram_access;
@@ -21,12 +22,15 @@ mod table_type;
 mod unrolled_families;
 mod witness_tree;
 
+pub mod gkr;
+
 pub use self::columns::*;
 pub use self::constants::*;
 pub use self::constraints::*;
 pub use self::cycle_state::*;
 pub use self::decoding_utils::*;
 pub use self::delegation::*;
+pub use self::gkr_layers::*;
 pub use self::lookup::*;
 pub use self::memory_tree::*;
 pub use self::ram_access::*;

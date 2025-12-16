@@ -68,7 +68,7 @@ impl<F: PrimeField> Num<F> {
     }
 }
 
-#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+#[derive(Clone, Copy, Debug, Hash, PartialEq, Eq, serde::Serialize, serde::Deserialize)]
 pub enum Boolean {
     /// Existential view of the boolean variable
     Is(Variable),
@@ -104,6 +104,7 @@ impl Boolean {
         }
     }
 
+    #[track_caller]
     pub fn new<F: PrimeField, C: Circuit<F>>(circuit: &mut C) -> Self {
         circuit.add_boolean_variable()
     }
@@ -939,16 +940,58 @@ impl<F: PrimeField> Register<F> {
         Self([low, high])
     }
 
+    #[track_caller]
+    pub fn new_named<C: Circuit<F>>(circuit: &mut C, name: &str) -> Self {
+        let low = circuit.add_variable_with_range_check(LIMB_WIDTH as u32);
+        let high = circuit.add_variable_with_range_check(LIMB_WIDTH as u32);
+        circuit.set_name_for_variable(low.get_variable(), &format!("{}[0]", name));
+        circuit.set_name_for_variable(high.get_variable(), &format!("{}[1]", name));
+
+        Self([low, high])
+    }
+
+    #[track_caller]
     pub fn new_unchecked<C: Circuit<F>>(circuit: &mut C) -> Self {
         let vars: [Num<F>; 2] = std::array::from_fn(|_| Num::Var(circuit.add_variable()));
         Self(vars)
     }
 
+    #[track_caller]
+    pub fn new_unchecked_named<C: Circuit<F>>(circuit: &mut C, name: &str) -> Self {
+        let vars: [Num<F>; 2] = std::array::from_fn(|i| {
+            let var = circuit.add_named_variable(&format!("{}[{}]", name, i));
+            Num::Var(var)
+        });
+        Self(vars)
+    }
+
+    #[track_caller]
     pub fn new_unchecked_from_placeholder<CS: Circuit<F>>(
         cs: &mut CS,
         placeholder: Placeholder,
     ) -> Self {
         let new = Self::new_unchecked(cs);
+
+        // set value
+        let vars = new.0.map(|el| el.get_variable());
+        let value_fn = move |placer: &mut CS::WitnessPlacer| {
+            let value = placer.get_oracle_u32(placeholder);
+
+            placer.assign_u32_from_u16_parts(vars, &value);
+        };
+
+        cs.set_values(value_fn);
+
+        new
+    }
+
+    #[track_caller]
+    pub fn new_unchecked_from_placeholder_named<CS: Circuit<F>>(
+        cs: &mut CS,
+        placeholder: Placeholder,
+        name: &str,
+    ) -> Self {
+        let new = Self::new_unchecked_named(cs, name);
 
         // set value
         let vars = new.0.map(|el| el.get_variable());

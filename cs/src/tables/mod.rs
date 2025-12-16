@@ -677,8 +677,8 @@ impl quote::ToTokens for TableType {
             TableType::And => quote! { TableType::And },
             TableType::Xor => quote! { TableType::Xor },
             TableType::Or => quote! { TableType::Or },
-            TableType::RangeCheckSmall => quote! { TableType::RangeCheckSmall },
-            TableType::RangeCheckLarge => quote! { TableType::RangeCheckLarge },
+            TableType::RangeCheck8x8 => quote! { TableType::RangeCheck8x8 },
+            // TableType::RangeCheckLarge => quote! { TableType::RangeCheckLarge },
             TableType::PowersOf2 => quote! { TableType::PowersOf2 },
             TableType::OpTypeBitmask => quote! { TableType::OpTypeBitmask },
             TableType::InsnEncodingChecker => quote! { TableType::InsnEncodingChecker },
@@ -772,6 +772,7 @@ impl quote::ToTokens for TableType {
             TableType::XorSpecialIota => quote!(TableType::XorSpecialIota),
             TableType::AndN => quote!(TableType::AndN),
             TableType::RotL => quote!(TableType::RotL),
+            TableType::Decoder => quote!(TableType::Decoder),
             TableType::DynamicPlaceholder => {
                 unimplemented!("should not appear in final circuits")
             }
@@ -794,12 +795,12 @@ impl TableType {
             TableType::And => LookupWrapper::Dimensional3(create_and_table(id)),
             TableType::Xor => LookupWrapper::Dimensional3(create_xor_table::<F, 8>(id)),
             TableType::Or => LookupWrapper::Dimensional3(create_or_table(id)),
-            TableType::RangeCheckSmall => LookupWrapper::Dimensional3(
+            TableType::RangeCheck8x8 => LookupWrapper::Dimensional3(
                 create_formal_width_3_range_check_table_for_two_tuple::<F, 8>(id),
             ),
-            TableType::RangeCheckLarge => {
-                LookupWrapper::Dimensional1(create_range_check_table::<F, 16>(id))
-            }
+            // TableType::RangeCheckLarge => {
+            //     LookupWrapper::Dimensional1(create_range_check_table::<F, 16>(id))
+            // }
             // TableType::PowersOf2 => LookupWrapper::Dimensional3(create_pow2_table::<F, 5>(id)),
             TableType::OpTypeBitmask => {
                 panic!("Machine must defined it's own way to create supporting decoder table")

@@ -41,6 +41,28 @@ pub fn compile_unrolled_circuit_state_transition<F: PrimeField>(
     compiled
 }
 
+pub fn compile_unrolled_circuit_state_transition_into_gkr<F: PrimeField>(
+    table_addition_fn: &dyn Fn(&mut crate::cs::cs_reference::BasicAssembly<F>) -> (),
+    circuit_fn: &dyn Fn(&mut crate::cs::cs_reference::BasicAssembly<F>) -> (),
+    max_bytecode_size_in_words: usize,
+    trace_len_log2: usize,
+) -> () {
+    use crate::cs::cs_reference::BasicAssembly;
+    use crate::gkr_compiler::GKRCompiler;
+
+    let mut cs = BasicAssembly::<F>::new();
+    (table_addition_fn)(&mut cs);
+    (circuit_fn)(&mut cs);
+
+    let (cs_output, _) = cs.finalize();
+
+    let compiler = GKRCompiler::default();
+    let compiled =
+        compiler.compile_family_circuit(cs_output, max_bytecode_size_in_words, 0, trace_len_log2);
+
+    todo!()
+}
+
 pub fn compile_unified_circuit_state_transition<F: PrimeField>(
     table_addition_fn: &dyn Fn(&mut crate::cs::cs_reference::BasicAssembly<F>) -> (),
     circuit_fn: &dyn Fn(&mut crate::cs::cs_reference::BasicAssembly<F>) -> (),

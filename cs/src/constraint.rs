@@ -1,3 +1,5 @@
+use std::collections::HashSet;
+
 use crate::cs::circuit::Circuit;
 use crate::definitions::*;
 use crate::types::{Boolean, Num};
@@ -262,6 +264,17 @@ impl<F: PrimeField> Term<F> {
         }
     }
 
+    pub fn dump_variables(&self, into: &mut HashSet<Variable>) {
+        match self {
+            Term::Constant(_) => {}
+            Term::Expression { degree, inner, .. } => {
+                for var in inner[..*degree].iter() {
+                    into.insert(*var);
+                }
+            }
+        }
+    }
+
     pub fn degree_for_var(&self, variable: &Variable) -> usize {
         match self {
             Term::Constant(_) => 0,
@@ -316,7 +329,7 @@ impl<F: PrimeField> Term<F> {
     }
 }
 
-#[derive(Clone, Debug)]
+#[derive(Clone, Debug, PartialEq, Eq)]
 pub struct Constraint<F: PrimeField> {
     pub terms: Vec<Term<F>>,
 }
@@ -535,6 +548,12 @@ impl<F: PrimeField> Constraint<F> {
         }
 
         degree
+    }
+
+    pub fn dump_variables(&self, into: &mut HashSet<Variable>) {
+        for term in self.terms.iter() {
+            term.dump_variables(into);
+        }
     }
 
     pub fn express_variable(&self, variable: Variable) -> Self {

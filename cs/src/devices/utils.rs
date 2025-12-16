@@ -10,6 +10,7 @@ pub(crate) fn enforce_add_sub_relation<F: PrimeField, CS: Circuit<F>>(
     b_s: &[Register<F>],
     c_s: &[Register<F>],
     flags: &[Boolean],
+    relation_idx: usize,
 ) {
     assert_eq!(a_s.len(), b_s.len());
     assert_eq!(a_s.len(), c_s.len());
@@ -42,6 +43,10 @@ pub(crate) fn enforce_add_sub_relation<F: PrimeField, CS: Circuit<F>>(
     }
 
     let carry_intermediate = Boolean::new(cs);
+    cs.set_name_for_variable(
+        carry_intermediate.get_variable().unwrap(),
+        &format!("Opt ctx add/sub intermedaite carry {}", relation_idx),
+    );
     let carry_intermediate_var = carry_intermediate.get_variable().unwrap();
 
     let value_fn = move |placer: &mut CS::WitnessPlacer| {
