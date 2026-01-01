@@ -21,8 +21,10 @@ use crate::device_structures::{
 use crate::field::{BaseField, Ext2Field};
 use crate::ntt::utils::REAL_COLS_PER_BLOCK;
 use crate::ntt::{
+    bit_reverse_by_radix_8,
     bitrev_Z_to_natural_composition_main_evals, bitrev_Z_to_natural_trace_coset_evals,
     natural_composition_coset_evals_to_bitrev_Z, natural_compressed_coset_evals_to_bitrev_Z,
+    natural_evals_to_bitrev_Z_radix_8,
     natural_main_evals_to_natural_coset_evals, natural_trace_main_evals_to_bitrev_Z,
 };
 use crate::prover::context::DeviceProperties;
@@ -858,6 +860,210 @@ fn run_natural_main_evals_to_natural_coset_evals_and_back(
         assert_eq!(&src_host[0..memory_size], &dst_host[0..memory_size]);
     }
     ctx.destroy().unwrap();
+}
+
+#[test]
+#[serial]
+fn test_bit_reverse_by_radix_8() {
+    let ctx = DeviceContext::create(12).unwrap();
+    let stream = CudaStream::default();
+    let log_n = 6;
+    let n = 1 << log_n;
+    let mut h_src = vec![BF::ZERO; 2 * n];
+    let mut rng = rand::rng();
+    h_src.fill_with(|| BF::from_nonreduced_u32(rng.random()));
+    let mut h_dst = vec![BF::ZERO; 2 * n];
+    let mut d_src = DeviceAllocation::<BF>::alloc(2 * n).unwrap();
+    let mut d_dst = DeviceAllocation::<BF>::alloc(2 * n).unwrap();
+    let mut d_src_matrix = DeviceMatrixChunkMut::new(&mut d_src, n, 0, n);
+    let mut d_dst_matrix = DeviceMatrixChunkMut::new(&mut d_dst, n, 0, n);
+    memory_copy_async(
+        d_src_matrix.slice_mut(),
+        &h_src[0..2 * n],
+        &stream,
+    )
+    .unwrap();
+    bit_reverse_by_radix_8(&d_src_matrix, &mut d_dst_matrix, log_n, &stream).unwrap();
+    memory_copy_async(
+        &mut h_dst[0..2 * n],
+        d_dst_matrix.slice(),
+        &stream,
+    )
+    .unwrap();
+    stream.synchronize().unwrap();
+    let inputs: Vec<E2> = (&h_src[0..64])
+        .iter()
+        .zip((&h_src[64..]).iter())
+        .map(|(c0, c1)| E2::from_coeffs_in_base(&[*c0, *c1]))
+        .collect();
+    let outputs: Vec<E2> = (&h_dst[0..64])
+        .iter()
+        .zip((&h_dst[64..]).iter())
+        .map(|(c0, c1)| E2::from_coeffs_in_base(&[*c0, *c1]))
+        .collect();
+    for (input, output) in inputs.iter().zip(outputs.iter()) {
+        println!("{} {}", input, output);
+    }
+    ctx.destroy().unwrap();
+}
+
+fn run_natural_evals_to_bitrev_Z_radix_8(
+    log_n_range: Range<usize>,
+    num_bf_cols: usize,
+) {
+    let ctx = DeviceContext::create(12).unwrap();
+    let n_max = 1 << (log_n_range.end - 1);
+    assert_eq!(num_bf_cols % 2, 0);
+    let num_Z_cols = num_bf_cols / 2;
+    let worker = Worker::new();
+    let twiddles = precompute_twiddles_for_fft::<E2, Global, true>(n_max, &worker);
+
+    let mut rng = rand::rng();
+    const OFFSET: usize = 0;
+    let max_stride: usize = n_max + OFFSET;
+    let max_memory_size = (max_stride * num_bf_cols) as usize;
+    // Using parallel rng generation, as in the benches, does not reduce runtime noticeably
+    let mut inputs_orig_host =
+        HostAllocation::<BF>::alloc(max_memory_size, CudaHostAllocFlags::DEFAULT).unwrap();
+    inputs_orig_host.fill_with(|| BF::from_nonreduced_u32(rng.random()));
+    for i in 0..max_stride {
+        inputs_orig_host[i] = BF::from_nonreduced_u32((i + 1) as u32);
+        inputs_orig_host[i + max_stride] = BF::from_nonreduced_u32((i + 2) as u32);
+    }
+    let mut inputs_host =
+        HostAllocation::<BF>::alloc(max_memory_size, CudaHostAllocFlags::DEFAULT).unwrap();
+    let mut outputs_host =
+        HostAllocation::<BF>::alloc(max_memory_size, CudaHostAllocFlags::DEFAULT).unwrap();
+    let mut inplace_host =
+        HostAllocation::<BF>::alloc(max_memory_size, CudaHostAllocFlags::DEFAULT).unwrap();
+    let mut inputs_device = DeviceAllocation::<BF>::alloc(max_memory_size).unwrap();
+    let mut outputs_device = DeviceAllocation::<BF>::alloc(max_memory_size).unwrap();
+    let mut inplace_device = DeviceAllocation::<BF>::alloc(max_memory_size).unwrap();
+    let stream = CudaStream::default();
+    for log_n in log_n_range {
+        let n = (1 << log_n) as usize;
+        let stride = n + OFFSET;
+        let memory_size = stride * num_bf_cols;
+
+        (&mut inputs_host[0..memory_size]).copy_from_slice(&inputs_orig_host[0..memory_size]);
+
+        // Nonbitrev to bitrev, out of place
+        memory_copy_async(
+            &mut inputs_device[0..memory_size],
+            &inputs_host[0..memory_size],
+            &stream,
+        )
+        .unwrap();
+        let mut inputs_device_matrix =
+            DeviceMatrixChunkMut::new(&mut inputs_device[0..memory_size], stride, OFFSET, n);
+        let mut outputs_device_matrix =
+            DeviceMatrixChunkMut::new(&mut outputs_device[0..memory_size], stride, OFFSET, n);
+        natural_evals_to_bitrev_Z_radix_8(
+            &inputs_device_matrix,
+            &mut outputs_device_matrix,
+            log_n,
+            &stream,
+        )
+        .unwrap();
+        bit_reverse_by_radix_8(
+            &outputs_device_matrix,
+            &mut inputs_device_matrix,
+            log_n,
+            &stream,
+        )
+        .unwrap();
+        memory_copy_async(
+            &mut outputs_host[0..memory_size],
+            &inputs_device[0..memory_size],
+            &stream,
+        )
+        .unwrap();
+
+        // Nonbitrev to bitrev, in place
+        memory_copy_async(
+            &mut inplace_device[0..memory_size],
+            &inputs_host[0..memory_size],
+            &stream,
+        )
+        .unwrap();
+        let inplace_output_view = &mut inplace_device[0..memory_size];
+        let inplace_input_view = unsafe {
+            DeviceSlice::from_raw_parts(inplace_output_view.as_ptr(), inplace_output_view.len())
+        };
+        let inplace_input_view_matrix =
+            DeviceMatrixChunk::new(&inplace_input_view[0..memory_size], stride, OFFSET, n);
+        let mut inplace_output_view_matrix =
+            DeviceMatrixChunkMut::new(&mut inplace_output_view[0..memory_size], stride, OFFSET, n);
+        natural_evals_to_bitrev_Z_radix_8(
+            &inplace_input_view_matrix,
+            &mut inplace_output_view_matrix,
+            log_n,
+            &stream,
+        )
+        .unwrap();
+        bit_reverse_by_radix_8(
+            &inplace_input_view_matrix,
+            &mut inplace_output_view_matrix,
+            log_n,
+            &stream,
+        )
+        .unwrap();
+        memory_copy_async(
+            &mut inplace_host[0..memory_size],
+            inplace_output_view,
+            &stream,
+        )
+        .unwrap();
+
+        stream.synchronize().unwrap();
+
+        // Check forward variants against CPU forward results
+
+        for ntt_pair in 0..num_Z_cols {
+            let start = 2 * ntt_pair * stride + OFFSET as usize;
+            let xs_range = start..start + n;
+            let ys_range = start + stride..start + stride + n;
+            let twiddles = &twiddles[..(n >> 1)];
+            let Zs_out_of_place: Vec<E2> = (&outputs_host[xs_range.clone()])
+                .iter()
+                .zip(&outputs_host[ys_range.clone()])
+                .map(|(c0, c1)| E2::from_coeffs_in_base(&[*c0, *c1]))
+                .collect();
+            let Zs_inplace: Vec<E2> = (&inplace_host[xs_range.clone()])
+                .iter()
+                .zip(&inplace_host[ys_range.clone()])
+                .map(|(c0, c1)| E2::from_coeffs_in_base(&[*c0, *c1]))
+                .collect();
+            let mut cpu_refs: Vec<E2> = (&inputs_host[xs_range.clone()])
+                .iter()
+                .zip(&inputs_host[ys_range.clone()])
+                .map(|(c0, c1)| E2::from_coeffs_in_base(&[*c0, *c1]))
+                .collect();
+            ifft_natural_to_natural::<BF, E2, E2>(&mut cpu_refs, E2::ONE, twiddles);
+            for k in 0..n {
+                assert_eq!(
+                    Zs_out_of_place[k], cpu_refs[k],
+                    "2^{} ntt_pair {} k {}",
+                    log_n, ntt_pair, k
+                );
+                assert_eq!(
+                    Zs_inplace[k], cpu_refs[k],
+                    "2^{} ntt_pair {} k {}",
+                    log_n, ntt_pair, k
+                );
+            }
+        }
+    }
+    ctx.destroy().unwrap();
+}
+
+#[test]
+#[serial]
+fn test_natural_evals_to_bitrev_Z_radix_8() {
+    run_natural_evals_to_bitrev_Z_radix_8(
+        12..13,
+        2,
+    );
 }
 
 #[test]

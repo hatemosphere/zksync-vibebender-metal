@@ -82,6 +82,18 @@ template <bool inverse> DEVICE_FORCEINLINE e2f get_twiddle(const unsigned i) {
   return e2f::mul(fine, coarse);
 }
 
+// this variant uses direct indexing
+template <bool inverse> DEVICE_FORCEINLINE e2f get_twiddle_with_direct_index(const unsigned i) {
+  const powers_data_2_layer &data = inverse ? ab_powers_data_w_inv_direct_for_ntt : ab_powers_data_w_direct_for_ntt;
+  unsigned coarse_idx = (i >> data.fine.log_count) & data.coarse.mask;
+  unsigned fine_idx = i & data.coarse.mask;
+  auto coarse = memory::load_ca(data.coarse.values + coarse_idx);
+  if (fine_idx == 0)
+    return coarse;
+  auto fine = memory::load_ca(data.fine.values + fine_idx);
+  return e2f::mul(fine, coarse);
+}
+
 DEVICE_FORCEINLINE void shfl_xor_e2f(e2f *vals, const unsigned i, const unsigned lane_id, const unsigned lane_mask) {
   // Some threads need to post vals[2 * i], others need to post vals[2 * i + 1].
   // We use a temporary to avoid calling shfls divergently, which is unsafe on pre-Volta.

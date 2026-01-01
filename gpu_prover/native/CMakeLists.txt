@@ -17,6 +17,7 @@ add_library(gpu_prover_native STATIC
         memory.cuh
         ntt/bitrev_Z_to_natural_evals.cu
         ntt/natural_evals_to_bitrev_Z.cu
+        ntt/natural_evals_to_bitrev_Z_radix_8.cu
         ntt/ntt.cuh
         ops_complex.cu
         ops_complex.cuh

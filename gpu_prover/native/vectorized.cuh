@@ -136,5 +136,15 @@ template <memory::st_modifier ST_MODIFIER> struct vectorized_e2_matrix_setter : 
     memory::store<uint2, ST_MODIFIER>(reinterpret_cast<uint2 *>(ptr), c0s);
     memory::store<uint2, ST_MODIFIER>(reinterpret_cast<uint2 *>(ptr + this->internal.stride), c1s);
   }
+
+  DEVICE_FORCEINLINE void set_four_adjacent(const unsigned row, const field::ext2_field val0, const field::ext2_field val1,
+                                            const field::ext2_field val2, const field::ext2_field val3) const {
+    field::base_field *ptr = this->internal.ptr + row;
+    const uint4 c0s{val0[0].limb, val1[0].limb, val2[0].limb, val3[0].limb};
+    const uint4 c1s{val0[1].limb, val1[1].limb, val2[1].limb, val3[1].limb};
+    memory::store<uint4, ST_MODIFIER>(reinterpret_cast<uint4 *>(ptr), c0s);
+    memory::store<uint4, ST_MODIFIER>(reinterpret_cast<uint4 *>(ptr + this->internal.stride), c1s);
+  }
 };
+
 } // namespace airbender::vectorized

@@ -91,6 +91,8 @@ unsafe impl Sync for PowersData3Layer {}
 cuda_struct_and_stub! { static ab_powers_data_w: PowersData3Layer; }
 cuda_struct_and_stub! { static ab_powers_data_w_bitrev_for_ntt: PowersData2Layer; }
 cuda_struct_and_stub! { static ab_powers_data_w_inv_bitrev_for_ntt: PowersData2Layer; }
+cuda_struct_and_stub! { static ab_powers_data_w_direct_for_ntt: PowersData2Layer; }
+cuda_struct_and_stub! { static ab_powers_data_w_inv_direct_for_ntt: PowersData2Layer; }
 cuda_struct_and_stub! { static ab_inv_sizes: [BaseField; OMEGA_LOG_ORDER as usize + 1]; }
 
 unsafe fn copy_to_symbol<T>(symbol: &T, src: &T) -> CudaResult<()> {
@@ -114,6 +116,10 @@ unsafe fn copy_to_symbols(
     powers_of_w_coarse_bitrev_for_ntt: *const Ext2Field,
     powers_of_w_inv_fine_bitrev_for_ntt: *const Ext2Field,
     powers_of_w_inv_coarse_bitrev_for_ntt: *const Ext2Field,
+    powers_of_w_fine_direct_for_ntt: *const Ext2Field,
+    powers_of_w_coarse_direct_for_ntt: *const Ext2Field,
+    powers_of_w_inv_fine_direct_for_ntt: *const Ext2Field,
+    powers_of_w_inv_coarse_direct_for_ntt: *const Ext2Field,
     inv_sizes_host: [BaseField; OMEGA_LOG_ORDER as usize + 1],
 ) -> CudaResult<()> {
     let coarsest_log_count = powers_of_w_coarsest_log_count;
@@ -150,6 +156,26 @@ unsafe fn copy_to_symbols(
             coarse_log_count,
         ),
     )?;
+    let fine_log_count = coarser_log_count;
+    let coarse_log_count = coarsest_log_count;
+    copy_to_symbol(
+        &ab_powers_data_w_direct_for_ntt,
+        &PowersData2Layer::new(
+            powers_of_w_fine_direct_for_ntt,
+            fine_log_count,
+            powers_of_w_coarse_direct_for_ntt,
+            coarse_log_count,
+        ),
+    )?;
+    copy_to_symbol(
+        &ab_powers_data_w_inv_direct_for_ntt,
+        &PowersData2Layer::new(
+            powers_of_w_inv_fine_direct_for_ntt,
+            fine_log_count,
+            powers_of_w_inv_coarse_direct_for_ntt,
+            coarse_log_count,
+        ),
+    )?;
     copy_to_symbol(&ab_inv_sizes, &inv_sizes_host)?;
     Ok(())
 }
@@ -175,6 +201,10 @@ pub struct DeviceContext {
     pub powers_of_w_coarse_bitrev_for_ntt: DeviceAllocation<Ext2Field>,
     pub powers_of_w_inv_fine_bitrev_for_ntt: DeviceAllocation<Ext2Field>,
     pub powers_of_w_inv_coarse_bitrev_for_ntt: DeviceAllocation<Ext2Field>,
+    pub powers_of_w_fine_direct_for_ntt: DeviceAllocation<Ext2Field>,
+    pub powers_of_w_coarse_direct_for_ntt: DeviceAllocation<Ext2Field>,
+    pub powers_of_w_inv_fine_direct_for_ntt: DeviceAllocation<Ext2Field>,
+    pub powers_of_w_inv_coarse_direct_for_ntt: DeviceAllocation<Ext2Field>,
 }
 
 impl DeviceContext {
@@ -235,6 +265,42 @@ impl DeviceContext {
             &mut powers_of_w_inv_coarse_bitrev_for_ntt,
             true,
         )?;
+
+        let length_fine = 1usize << (OMEGA_LOG_ORDER - powers_of_w_coarsest_log_count);
+        let length_coarse = 1usize << powers_of_w_coarsest_log_count;
+        let mut powers_of_w_fine_direct_for_ntt =
+            DeviceAllocation::<Ext2Field>::alloc(length_fine)?;
+        let mut powers_of_w_coarse_direct_for_ntt =
+            DeviceAllocation::<Ext2Field>::alloc(length_coarse)?;
+        let mut powers_of_w_inv_fine_direct_for_ntt =
+            DeviceAllocation::<Ext2Field>::alloc(length_fine)?;
+        let mut powers_of_w_inv_coarse_direct_for_ntt =
+            DeviceAllocation::<Ext2Field>::alloc(length_coarse)?;
+        generate_powers_dev(
+            domain_generator_for_size::<Ext2Field>(1u64 << OMEGA_LOG_ORDER),
+            &mut powers_of_w_fine_direct_for_ntt,
+            false,
+        )?;
+        generate_powers_dev(
+            domain_generator_for_size::<Ext2Field>(length_coarse as u64),
+            &mut powers_of_w_coarse_direct_for_ntt,
+            false,
+        )?;
+        generate_powers_dev(
+            domain_generator_for_size::<Ext2Field>(1u64 << OMEGA_LOG_ORDER)
+                .inverse()
+                .expect("must exist"),
+            &mut powers_of_w_inv_fine_direct_for_ntt,
+            false,
+        )?;
+        generate_powers_dev(
+            domain_generator_for_size::<Ext2Field>(length_coarse as u64)
+                .inverse()
+                .expect("must exist"),
+            &mut powers_of_w_inv_coarse_direct_for_ntt,
+            false,
+        )?;
+
         let two_inv = BaseField::new(2).inverse().expect("must exist");
         let mut inv_sizes_host = [BaseField::ONE; (OMEGA_LOG_ORDER + 1) as usize];
         distribute_powers_serial(&mut inv_sizes_host, BaseField::ONE, two_inv);
@@ -248,6 +314,10 @@ impl DeviceContext {
                 powers_of_w_coarse_bitrev_for_ntt.as_ptr(),
                 powers_of_w_inv_fine_bitrev_for_ntt.as_ptr(),
                 powers_of_w_inv_coarse_bitrev_for_ntt.as_ptr(),
+                powers_of_w_fine_direct_for_ntt.as_ptr(),
+                powers_of_w_coarse_direct_for_ntt.as_ptr(),
+                powers_of_w_inv_fine_direct_for_ntt.as_ptr(),
+                powers_of_w_inv_coarse_direct_for_ntt.as_ptr(),
                 inv_sizes_host,
             )?;
         }
@@ -259,6 +329,10 @@ impl DeviceContext {
             powers_of_w_coarse_bitrev_for_ntt,
             powers_of_w_inv_fine_bitrev_for_ntt,
             powers_of_w_inv_coarse_bitrev_for_ntt,
+            powers_of_w_fine_direct_for_ntt,
+            powers_of_w_coarse_direct_for_ntt,
+            powers_of_w_inv_fine_direct_for_ntt,
+            powers_of_w_inv_coarse_direct_for_ntt,
         })
     }
 
@@ -270,6 +344,10 @@ impl DeviceContext {
         self.powers_of_w_coarse_bitrev_for_ntt.free()?;
         self.powers_of_w_inv_fine_bitrev_for_ntt.free()?;
         self.powers_of_w_inv_coarse_bitrev_for_ntt.free()?;
+        self.powers_of_w_fine_direct_for_ntt.free()?;
+        self.powers_of_w_coarse_direct_for_ntt.free()?;
+        self.powers_of_w_inv_fine_direct_for_ntt.free()?;
+        self.powers_of_w_inv_coarse_direct_for_ntt.free()?;
         Ok(())
     }
 }

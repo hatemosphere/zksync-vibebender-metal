@@ -31,6 +31,17 @@ type BF = BaseField;
 type E2 = Ext2Field;
 
 cuda_kernel!(
+    BitReverseByRadix8,
+    bit_reverse_by_radix_8_kernel,
+    inputs_matrix: PtrAndStride<BF>,
+    outputs_matrix: MutPtrAndStride<BF>,
+    idx_bit_chunks: u32,
+    log_n: u32,
+);
+
+bit_reverse_by_radix_8_kernel!(ab_bit_reverse_by_radix_8);
+
+cuda_kernel!(
     B2NOneStage,
     b2n_one_stage_kernel,
     inputs_matrix: PtrAndStride<BF>,
@@ -66,6 +77,113 @@ b2n_multi_stage_kernel!(ab_bitrev_Z_to_natural_coset_evals_noninitial_7_or_8_sta
 b2n_multi_stage_kernel!(ab_bitrev_Z_to_natural_coset_evals_initial_7_stages_warp);
 b2n_multi_stage_kernel!(ab_bitrev_Z_to_natural_coset_evals_initial_8_stages_warp);
 b2n_multi_stage_kernel!(ab_bitrev_Z_to_natural_coset_evals_initial_9_to_12_stages_block);
+
+cuda_kernel!(
+    N2BOneStageKernel,
+    one_stage_kernel,
+    inputs_matrix: PtrAndStride<BF>,
+    outputs_matrix: MutPtrAndStride<BF>,
+    start_stage: u32,
+    log_n: u32,
+    blocks_per_ntt: u32,
+    evals_are_coset: bool,
+    evals_are_compressed: bool,
+);
+
+one_stage_kernel!(ab_evals_to_Z_one_stage);
+
+cuda_kernel!(
+    N2BMultiStage,
+    n2b_multi_stage_kernel,
+    inputs_matrix: PtrAndStride<BF>,
+    outputs_matrix: MutPtrAndStride<BF>,
+    start_stage: u32,
+    stages_this_launch: u32,
+    log_n: u32,
+    num_Z_cols: u32,
+    grid_offset: u32,
+);
+
+n2b_multi_stage_kernel!(ab_evals_to_Z_nonfinal_7_or_8_stages_block);
+n2b_multi_stage_kernel!(ab_main_domain_evals_to_Z_final_7_stages_warp);
+n2b_multi_stage_kernel!(ab_main_domain_evals_to_Z_final_8_stages_warp);
+n2b_multi_stage_kernel!(ab_main_domain_evals_to_Z_final_9_to_12_stages_block);
+n2b_multi_stage_kernel!(ab_coset_evals_to_Z_final_7_stages_warp);
+n2b_multi_stage_kernel!(ab_coset_evals_to_Z_final_8_stages_warp);
+n2b_multi_stage_kernel!(ab_coset_evals_to_Z_final_9_to_12_stages_block);
+n2b_multi_stage_kernel!(ab_compressed_coset_evals_to_Z_final_7_stages_warp);
+n2b_multi_stage_kernel!(ab_compressed_coset_evals_to_Z_final_8_stages_warp);
+n2b_multi_stage_kernel!(ab_compressed_coset_evals_to_Z_final_9_to_12_stages_block);
+
+cuda_kernel!(
+    N2BRadix8,
+    n2b_radix_8_kernel,
+    inputs_matrix: PtrAndStride<BF>,
+    outputs_matrix: MutPtrAndStride<BF>,
+    start_stage: u32,
+    idx_bit_chunks: u32,
+    log_n: u32,
+    grid_offset: u32,
+);
+
+n2b_radix_8_kernel!(ab_radix_8_main_domain_evals_to_Z_nonfinal_6_stages_warp);
+n2b_radix_8_kernel!(ab_radix_8_main_domain_evals_to_Z_final_12_stages_block);
+
+pub fn bit_reverse_by_radix_8(
+    inputs_matrix: &(impl DeviceMatrixChunkImpl<BF> + ?Sized),
+    outputs_matrix: &mut (impl DeviceMatrixChunkMutImpl<BF> + ?Sized),
+    log_n: usize,
+    stream: &CudaStream,
+) -> CudaResult<()> {
+    let n = 1 << log_n;
+    assert_eq!(inputs_matrix.rows(), n);
+    assert_eq!(outputs_matrix.rows(), n);
+    assert_eq!(inputs_matrix.cols(), 2);
+    assert_eq!(outputs_matrix.cols(), 2);
+    assert_eq!(log_n % 3, 0);
+    let bit_chunks = log_n / 3;
+    let inputs_matrix = inputs_matrix.as_ptr_and_stride();
+    let outputs_matrix = outputs_matrix.as_mut_ptr_and_stride();
+    let threads = 128;
+    let blocks = n.get_chunks_count(threads);
+    let config = CudaLaunchConfig::basic(blocks as u32, threads as u32, stream);
+    let args = BitReverseByRadix8Arguments::new(
+        inputs_matrix,
+        outputs_matrix,
+        bit_chunks as u32,
+        log_n as u32,
+    );
+    BitReverseByRadix8Function(ab_bit_reverse_by_radix_8).launch(&config, &args)
+}
+
+pub fn natural_evals_to_bitrev_Z_radix_8(
+    inputs_matrix: &(impl DeviceMatrixChunkImpl<BF> + ?Sized),
+    outputs_matrix: &mut (impl DeviceMatrixChunkMutImpl<BF> + ?Sized),
+    log_n: usize,
+    stream: &CudaStream,
+) -> CudaResult<()> {
+    let n = 1 << log_n;
+    assert_eq!(inputs_matrix.rows(), n);
+    assert_eq!(outputs_matrix.rows(), n);
+    assert_eq!(inputs_matrix.cols(), 2);
+    assert_eq!(outputs_matrix.cols(), 2);
+    assert_eq!(log_n % 3, 0);
+    let exchg_region_bit_chunks = 0;
+    let inputs_matrix = inputs_matrix.as_ptr_and_stride();
+    let outputs_matrix = outputs_matrix.as_mut_ptr_and_stride();
+    let threads = 256;
+    let blocks = n.get_chunks_count(4096);
+    let config = CudaLaunchConfig::basic(blocks as u32, threads as u32, stream);
+    let args = N2BRadix8Arguments::new(
+        inputs_matrix,
+        outputs_matrix,
+        0,
+        exchg_region_bit_chunks as u32,
+        log_n as u32,
+        0,
+    );
+    N2BRadix8Function(ab_radix_8_main_domain_evals_to_Z_final_12_stages_block).launch(&config, &args)
+}
 
 #[allow(clippy::too_many_arguments)]
 fn bitrev_Z_to_natural_evals(
@@ -230,43 +348,6 @@ pub fn bitrev_Z_to_natural_composition_main_evals(
         stream,
     )
 }
-
-cuda_kernel!(
-    N2BOneStageKernel,
-    one_stage_kernel,
-    inputs_matrix: PtrAndStride<BF>,
-    outputs_matrix: MutPtrAndStride<BF>,
-    start_stage: u32,
-    log_n: u32,
-    blocks_per_ntt: u32,
-    evals_are_coset: bool,
-    evals_are_compressed: bool,
-);
-
-one_stage_kernel!(ab_evals_to_Z_one_stage);
-
-cuda_kernel!(
-    N2BMultiStage,
-    n2b_multi_stage_kernel,
-    inputs_matrix: PtrAndStride<BF>,
-    outputs_matrix: MutPtrAndStride<BF>,
-    start_stage: u32,
-    stages_this_launch: u32,
-    log_n: u32,
-    num_Z_cols: u32,
-    grid_offset: u32,
-);
-
-n2b_multi_stage_kernel!(ab_evals_to_Z_nonfinal_7_or_8_stages_block);
-n2b_multi_stage_kernel!(ab_main_domain_evals_to_Z_final_7_stages_warp);
-n2b_multi_stage_kernel!(ab_main_domain_evals_to_Z_final_8_stages_warp);
-n2b_multi_stage_kernel!(ab_main_domain_evals_to_Z_final_9_to_12_stages_block);
-n2b_multi_stage_kernel!(ab_coset_evals_to_Z_final_7_stages_warp);
-n2b_multi_stage_kernel!(ab_coset_evals_to_Z_final_8_stages_warp);
-n2b_multi_stage_kernel!(ab_coset_evals_to_Z_final_9_to_12_stages_block);
-n2b_multi_stage_kernel!(ab_compressed_coset_evals_to_Z_final_7_stages_warp);
-n2b_multi_stage_kernel!(ab_compressed_coset_evals_to_Z_final_8_stages_warp);
-n2b_multi_stage_kernel!(ab_compressed_coset_evals_to_Z_final_9_to_12_stages_block);
 
 #[allow(clippy::too_many_arguments)]
 fn natural_evals_to_bitrev_Z(
