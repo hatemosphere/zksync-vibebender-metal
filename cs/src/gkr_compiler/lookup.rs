@@ -1,451 +1,13 @@
 use crate::cs::circuit::LookupQueryTableTypeExt;
 use crate::definitions::{Degree1Constraint, GKRAddress, Variable};
-use crate::gkr_compiler::graph::{graph_element_equals_if_eq, GKRGraph, GraphElement, GraphHolder};
+use crate::gkr_compiler::graph::{GKRGraph, GraphHolder};
+use crate::gkr_compiler::lookup_nodes::LookupInputRelation;
 use crate::gkr_compiler::lookup_nodes::LookupRationalPair;
 use crate::one_row_compiler::LookupInput;
 use crate::tables::TableType;
 
 use super::compiled_constraint::GKRCompiledLinearConstraint;
 use super::*;
-
-#[derive(Clone, Hash, Debug, PartialEq, Eq, serde::Serialize, serde::Deserialize)]
-pub struct LookupInputRelation<F: PrimeField, const TOTAL_WIDTH: usize> {
-    #[serde(bound(
-        deserialize = "arrayvec::ArrayVec<Degree1Constraint<F>, TOTAL_WIDTH>: serde::Deserialize<'de>"
-    ))]
-    #[serde(bound(
-        serialize = "arrayvec::ArrayVec<Degree1Constraint<F>, TOTAL_WIDTH>: serde::Serialize"
-    ))]
-    pub inputs: arrayvec::ArrayVec<Degree1Constraint<F>, TOTAL_WIDTH>,
-}
-
-impl<F: PrimeField, const TOTAL_WIDTH: usize> DependentNode
-    for LookupInputRelation<F, TOTAL_WIDTH>
-{
-    fn add_dependencies_into(
-        &self,
-        graph: &mut dyn graph::GraphHolder,
-        dst: &mut Vec<graph::NodeIndex>,
-    ) {
-        for c in self.inputs.iter() {
-            for (_, v) in c.linear_terms.iter() {
-                let idx = graph.get_node_index_for_variable(*v);
-                dst.push(idx);
-            }
-        }
-    }
-}
-
-// This node takes two expressions like 1/(witness + gamma) and will produce 1 new GKR virtual poly
-// that is product of denominators. It is real node, but for the rest we will represent numerator/denominator as a tuple
-#[derive(Clone, Hash, Debug, PartialEq, Eq, serde::Serialize, serde::Deserialize)]
-pub struct TrivialLookupInputDenominatorNode<F: PrimeField, const TOTAL_WIDTH: usize> {
-    #[serde(bound(deserialize = "LookupInputRelation<F, TOTAL_WIDTH>: serde::Deserialize<'de>"))]
-    #[serde(bound(serialize = "LookupInputRelation<F, TOTAL_WIDTH>: serde::Serialize"))]
-    pub inputs: [LookupInputRelation<F, TOTAL_WIDTH>; 2],
-    pub lookup_type: LookupType,
-}
-
-impl<F: PrimeField, const TOTAL_WIDTH: usize> DependentNode
-    for TrivialLookupInputDenominatorNode<F, TOTAL_WIDTH>
-{
-    fn add_dependencies_into(
-        &self,
-        graph: &mut dyn graph::GraphHolder,
-        dst: &mut Vec<graph::NodeIndex>,
-    ) {
-        for input in self.inputs.iter() {
-            input.add_dependencies_into(graph, dst);
-        }
-    }
-}
-
-impl<F: PrimeField, const TOTAL_WIDTH: usize> GraphElement
-    for TrivialLookupInputDenominatorNode<F, TOTAL_WIDTH>
-{
-    fn as_dyn(&'_ self) -> &'_ (dyn GraphElement + 'static) {
-        self
-    }
-    fn dyn_clone(&self) -> Box<dyn GraphElement> {
-        Box::new(self.clone())
-    }
-    fn dependencies(&self, graph: &mut dyn graph::GraphHolder) -> Vec<graph::NodeIndex> {
-        let mut dst = vec![];
-        DependentNode::add_dependencies_into(self, graph, &mut dst);
-        dst
-    }
-    fn equals(&self, other: &dyn GraphElement) -> bool {
-        graph_element_equals_if_eq(self, other)
-    }
-    fn short_name(&self) -> String {
-        match self.lookup_type {
-            LookupType::RangeCheck16 => {
-                "Trivial lookup input denominator node in range-check 16".to_string()
-            }
-            LookupType::TimestampRangeCheck => {
-                "Trivial lookup input denominator node in timestamp range-check".to_string()
-            }
-            LookupType::Generic => {
-                "Trivial lookup input denominator node in generic lookup".to_string()
-            }
-        }
-    }
-    fn evaluation_description(&self, graph: &mut dyn GraphHolder) -> NoFieldGKRRelation {
-        // add cached relations
-        let parts = self.inputs.each_ref().map(|el| {
-            let cached = lookup_input_into_cached_expr(el, &*graph);
-            graph.add_cached_relation(cached)
-        });
-
-        NoFieldGKRRelation::LookupDenominatorFromCaches(parts)
-    }
-}
-
-#[derive(Clone, Hash, Debug, PartialEq, Eq, serde::Serialize, serde::Deserialize)]
-pub struct MaterializedVectorLookupInputNode<F: PrimeField, const TOTAL_WIDTH: usize> {
-    #[serde(bound(deserialize = "LookupInputRelation<F, TOTAL_WIDTH>: serde::Deserialize<'de>"))]
-    #[serde(bound(serialize = "LookupInputRelation<F, TOTAL_WIDTH>: serde::Serialize"))]
-    pub input: LookupInputRelation<F, TOTAL_WIDTH>,
-    pub lookup_type: LookupType,
-}
-
-impl<F: PrimeField, const TOTAL_WIDTH: usize> DependentNode
-    for MaterializedVectorLookupInputNode<F, TOTAL_WIDTH>
-{
-    fn add_dependencies_into(
-        &self,
-        graph: &mut dyn graph::GraphHolder,
-        dst: &mut Vec<graph::NodeIndex>,
-    ) {
-        self.input.add_dependencies_into(graph, dst);
-    }
-}
-
-impl<F: PrimeField, const TOTAL_WIDTH: usize> GraphElement
-    for MaterializedVectorLookupInputNode<F, TOTAL_WIDTH>
-{
-    fn as_dyn(&'_ self) -> &'_ (dyn GraphElement + 'static) {
-        self
-    }
-    fn dyn_clone(&self) -> Box<dyn GraphElement> {
-        Box::new(self.clone())
-    }
-    fn dependencies(&self, graph: &mut dyn graph::GraphHolder) -> Vec<graph::NodeIndex> {
-        let mut dst = vec![];
-        DependentNode::add_dependencies_into(self, graph, &mut dst);
-        dst
-    }
-    fn equals(&self, other: &dyn GraphElement) -> bool {
-        graph_element_equals_if_eq(self, other)
-    }
-    fn short_name(&self) -> String {
-        match self.lookup_type {
-            LookupType::RangeCheck16 => {
-                "Materialize vector lookup input node in range-check 16".to_string()
-            }
-            LookupType::TimestampRangeCheck => {
-                "Materialize vector lookup input node in timestamp range-check".to_string()
-            }
-            LookupType::Generic => {
-                "Materialize vector lookup input node in generic lookup".to_string()
-            }
-        }
-    }
-    fn evaluation_description(&self, graph: &mut dyn GraphHolder) -> NoFieldGKRRelation {
-        let rel = lookup_input_into_cached_expr(&self.input, &*graph);
-        let NoFieldGKRCacheRelation::VectorizedLookup(inner) = rel else {
-            unreachable!()
-        };
-
-        NoFieldGKRRelation::MaterializedVectorLookupInput(inner)
-    }
-}
-
-// this is just a way of bookkeeping. It is not a real node
-#[derive(Clone, Hash, Debug, PartialEq, Eq, serde::Serialize, serde::Deserialize)]
-pub enum LookupAccumulationInputTuple<F: PrimeField, const TOTAL_WIDTH: usize> {
-    #[serde(bound(deserialize = "LookupInputRelation<F, TOTAL_WIDTH>: serde::Deserialize<'de>"))]
-    #[serde(bound(serialize = "LookupInputRelation<F, TOTAL_WIDTH>: serde::Serialize"))]
-    NaiveInput {
-        den: LookupInputRelation<F, TOTAL_WIDTH>,
-    },
-    CopySingleInput {
-        input: GKRAddress,
-    },
-    MaterializedVectorInput {
-        input: MaterializedVectorLookupInputNode<F, TOTAL_WIDTH>,
-    },
-    TriviallyAccumulated {
-        num: [LookupInputRelation<F, TOTAL_WIDTH>; 2],
-        den: TrivialLookupInputDenominatorNode<F, TOTAL_WIDTH>,
-    },
-    #[serde(bound(
-        deserialize = "arrayvec::ArrayVec<GKRAddress, TOTAL_WIDTH>: serde::Deserialize<'de>"
-    ))]
-    #[serde(bound(serialize = "arrayvec::ArrayVec<GKRAddress, TOTAL_WIDTH>: serde::Serialize"))]
-    MultiplicityInputFromSetup {
-        num: Variable,
-        den: arrayvec::ArrayVec<GKRAddress, TOTAL_WIDTH>, // setup
-    },
-    MultiplicityInputFromWitness {
-        num: Variable,
-        den: LookupInputRelation<F, TOTAL_WIDTH>,
-    },
-    // CopyInput(CopyNode),
-    // CopyVectorInput(CopyNode),
-    // CopyRationalPair {
-    //     num: CopyNode,
-    //     den: CopyNode,
-    // }
-}
-
-impl<F: PrimeField, const TOTAL_WIDTH: usize> DependentNode
-    for LookupAccumulationInputTuple<F, TOTAL_WIDTH>
-{
-    fn add_dependencies_into(
-        &self,
-        graph: &mut dyn graph::GraphHolder,
-        dst: &mut Vec<graph::NodeIndex>,
-    ) {
-        match self {
-            Self::NaiveInput { den } => {
-                DependentNode::add_dependencies_into(den, graph, dst);
-            }
-            Self::CopySingleInput { input } => {
-                let node_idx = graph.get_node_index_for_address(*input);
-                dst.push(node_idx);
-            }
-            Self::MaterializedVectorInput { input } => {
-                let node_idx = graph.get_node_index(input).expect("already placed");
-                dst.push(node_idx);
-            }
-            Self::TriviallyAccumulated { num, den } => {
-                assert_eq!(num, &den.inputs);
-                for input in num.iter() {
-                    DependentNode::add_dependencies_into(input, graph, dst);
-                }
-                let node_idx = graph.get_node_index(den).expect("already placed");
-                dst.push(node_idx);
-            }
-            Self::MultiplicityInputFromSetup { num, den: _, .. } => {
-                let idx = graph.get_node_index_for_variable(*num);
-                dst.push(idx);
-            }
-            Self::MultiplicityInputFromWitness { num, den, .. } => {
-                let idx = graph.get_node_index_for_variable(*num);
-                dst.push(idx);
-                DependentNode::add_dependencies_into(den, graph, dst);
-            } // Self::CopyInput(node) | Self::CopyVectorInput(node) => {
-              //     let node_idx = graph.get_node_index(node).expect("already placed");
-              //     dst.push(node_idx);
-              // }
-              // Self::CopyRationalPair { num, den } => {
-              //     dst.push(graph.get_node_index(num).expect("already placed"));
-              //     dst.push(graph.get_node_index(den).expect("already placed"));
-              // }
-        }
-    }
-}
-
-// formal accumulation nodes, that take two rational
-#[derive(Clone, Hash, Debug, PartialEq, Eq, serde::Serialize, serde::Deserialize)]
-pub enum LookupAccumulationNode<F: PrimeField, const TOTAL_WIDTH: usize> {
-    #[serde(bound(
-        deserialize = "LookupAccumulationInputTuple<F, TOTAL_WIDTH>: serde::Deserialize<'de>"
-    ))]
-    #[serde(bound(serialize = "LookupAccumulationInputTuple<F, TOTAL_WIDTH>: serde::Serialize"))]
-    InitialAccumulation {
-        lhs: LookupAccumulationInputTuple<F, TOTAL_WIDTH>,
-        rhs: LookupAccumulationInputTuple<F, TOTAL_WIDTH>,
-    },
-    #[serde(bound(
-        deserialize = "NumeratorNode<F, TOTAL_WIDTH>: serde::Deserialize<'de>, DenominatorNode<F, TOTAL_WIDTH>: serde::Deserialize<'de>"
-    ))]
-    #[serde(bound(
-        serialize = "NumeratorNode<F, TOTAL_WIDTH>: serde::Serialize, DenominatorNode<F, TOTAL_WIDTH>: serde::Serialize"
-    ))]
-    Recursive {
-        lhs: (
-            Box<NumeratorNode<F, TOTAL_WIDTH>>,
-            Box<DenominatorNode<F, TOTAL_WIDTH>>,
-        ),
-        rhs: (
-            Box<NumeratorNode<F, TOTAL_WIDTH>>,
-            Box<DenominatorNode<F, TOTAL_WIDTH>>,
-        ),
-    },
-    Unbalanced {
-        lhs: (
-            Box<NumeratorNode<F, TOTAL_WIDTH>>,
-            Box<DenominatorNode<F, TOTAL_WIDTH>>,
-        ),
-        rhs: LookupAccumulationInputTuple<F, TOTAL_WIDTH>,
-    },
-    CopyBaseInput {
-        source: GKRAddress,
-    },
-    CopyVectorInput {
-        source: GKRAddress,
-    },
-    CopyRationalPair {
-        num: GKRAddress,
-        den: GKRAddress,
-    },
-}
-
-impl<F: PrimeField, const TOTAL_WIDTH: usize> DependentNode
-    for LookupAccumulationNode<F, TOTAL_WIDTH>
-{
-    fn add_dependencies_into(
-        &self,
-        graph: &mut dyn graph::GraphHolder,
-        dst: &mut Vec<graph::NodeIndex>,
-    ) {
-        match self {
-            Self::InitialAccumulation { lhs, rhs } => {
-                DependentNode::add_dependencies_into(lhs, graph, dst);
-                DependentNode::add_dependencies_into(rhs, graph, dst);
-            }
-            Self::Recursive { lhs, rhs } => {
-                for node in [
-                    lhs.0.as_ref().as_dyn(),
-                    lhs.1.as_ref().as_dyn(),
-                    rhs.0.as_ref().as_dyn(),
-                    rhs.1.as_ref().as_dyn(),
-                ] {
-                    let node_idx = graph.get_node_index(node).expect("already placed");
-                    dst.push(node_idx);
-                }
-            }
-            Self::Unbalanced { lhs, rhs } => {
-                for node in [lhs.0.as_ref().as_dyn(), lhs.1.as_ref().as_dyn()] {
-                    let node_idx = graph.get_node_index(node).expect("already placed");
-                    dst.push(node_idx);
-                }
-                DependentNode::add_dependencies_into(rhs, graph, dst);
-            }
-            Self::CopyBaseInput { source } => {
-                dst.push(graph.get_node_index_for_address(*source));
-            }
-            Self::CopyVectorInput { source } => {
-                dst.push(graph.get_node_index_for_address(*source));
-            }
-            Self::CopyRationalPair { num, den } => {
-                dst.push(graph.get_node_index_for_address(*num));
-                dst.push(graph.get_node_index_for_address(*den));
-            }
-        }
-    }
-}
-
-#[derive(Clone, Hash, Debug, PartialEq, Eq)]
-pub struct NumeratorNode<F: PrimeField, const TOTAL_WIDTH: usize>(
-    pub LookupAccumulationNode<F, TOTAL_WIDTH>,
-    String,
-);
-
-#[derive(Clone, Hash, Debug, PartialEq, Eq)]
-pub struct DenominatorNode<F: PrimeField, const TOTAL_WIDTH: usize>(
-    pub LookupAccumulationNode<F, TOTAL_WIDTH>,
-    String,
-);
-
-impl<F: PrimeField, const TOTAL_WIDTH: usize> DependentNode for NumeratorNode<F, TOTAL_WIDTH> {
-    fn add_dependencies_into(
-        &self,
-        graph: &mut dyn graph::GraphHolder,
-        dst: &mut Vec<graph::NodeIndex>,
-    ) {
-        DependentNode::add_dependencies_into(&self.0, graph, dst);
-    }
-}
-
-impl<F: PrimeField, const TOTAL_WIDTH: usize> DependentNode for DenominatorNode<F, TOTAL_WIDTH> {
-    fn add_dependencies_into(
-        &self,
-        graph: &mut dyn graph::GraphHolder,
-        dst: &mut Vec<graph::NodeIndex>,
-    ) {
-        DependentNode::add_dependencies_into(&self.0, graph, dst);
-    }
-}
-
-impl<F: PrimeField, const TOTAL_WIDTH: usize> GraphElement for NumeratorNode<F, TOTAL_WIDTH> {
-    fn as_dyn(&'_ self) -> &'_ (dyn GraphElement + 'static) {
-        self
-    }
-    fn dyn_clone(&self) -> Box<dyn GraphElement> {
-        Box::new(self.clone())
-    }
-    fn dependencies(&self, graph: &mut dyn graph::GraphHolder) -> Vec<graph::NodeIndex> {
-        let mut dst = vec![];
-        DependentNode::add_dependencies_into(self, graph, &mut dst);
-        dst
-    }
-    fn equals(&self, other: &dyn GraphElement) -> bool {
-        graph_element_equals_if_eq(self, other)
-    }
-    fn short_name(&self) -> String {
-        format!("Lookup aggregation numerator node for {}", &self.1)
-    }
-    fn evaluation_description(&self, graph: &mut dyn GraphHolder) -> NoFieldGKRRelation {
-        match &self.0 {
-            LookupAccumulationNode::Recursive {
-                lhs: (lhs_num, lhs_den),
-                rhs: (rhs_num, rhs_den),
-            } => match (lhs_num, lhs_den, rhs_num, rhs_den) {
-                (lhs_num, lhs_den, rhs_num, rhs_den) => {
-                    panic!(
-                        "Combination {:?}/{:?} + {:?}/{:?} is not yet supported",
-                        lhs_num, lhs_den, rhs_num, rhs_den
-                    );
-                }
-            },
-            LookupAccumulationNode::InitialAccumulation { lhs, rhs } => match (lhs, rhs) {
-                (lhs, rhs) => {
-                    panic!("Combination {:?} + {:?} is not yet supported", lhs, rhs,);
-                }
-            },
-            LookupAccumulationNode::Unbalanced {
-                lhs: (lhs_num, lhs_den),
-                rhs,
-            } => match (lhs_num, lhs_den, rhs) {
-                (lhs_num, lhs_den, rhs) => {
-                    panic!(
-                        "Combination {:?}/{:?} + {:?} is not yet supported",
-                        lhs_num, lhs_den, rhs,
-                    );
-                }
-            },
-            a @ _ => {
-                panic!("Combination {:?} is not yet supported", a,);
-            }
-        }
-    }
-}
-
-impl<F: PrimeField, const TOTAL_WIDTH: usize> GraphElement for DenominatorNode<F, TOTAL_WIDTH> {
-    fn as_dyn(&'_ self) -> &'_ (dyn GraphElement + 'static) {
-        self
-    }
-    fn dyn_clone(&self) -> Box<dyn GraphElement> {
-        Box::new(self.clone())
-    }
-    fn dependencies(&self, graph: &mut dyn graph::GraphHolder) -> Vec<graph::NodeIndex> {
-        let mut dst = vec![];
-        DependentNode::add_dependencies_into(self, graph, &mut dst);
-        dst
-    }
-    fn equals(&self, other: &dyn GraphElement) -> bool {
-        graph_element_equals_if_eq(self, other)
-    }
-    fn short_name(&self) -> String {
-        format!("Lookup aggregation denominator node for {}", &self.1)
-    }
-    fn evaluation_description(&self, graph: &mut dyn GraphHolder) -> NoFieldGKRRelation {
-        todo!()
-    }
-}
 
 pub(crate) fn layout_width_1_lookup_expressions<F: PrimeField>(
     graph: &mut GKRGraph,
@@ -595,7 +157,7 @@ pub(crate) fn layout_lookup_expressions<F: PrimeField, const TOTAL_WIDTH: usize>
 
     let mut initial_reduction_layer_nodes = vec![];
     assert!(total_rational_terms > 0);
-    let mut expected_placement_layer = 1;
+    let mut placement_layer = 1;
 
     if total_rational_terms % 2 == 0 {
         if let Some(decoder_lookup) = decoder_lookup {
@@ -624,7 +186,8 @@ pub(crate) fn layout_lookup_expressions<F: PrimeField, const TOTAL_WIDTH: usize>
                     lookup_type: lookup,
                 };
 
-                let next_pair = LookupRationalPair::accumulate_pair_into_graph((a, b), graph);
+                let next_pair =
+                    LookupRationalPair::accumulate_pair_into_graph((a, b), graph, placement_layer);
 
                 if expressions.is_empty() {
                     return (multiplicity_var, next_pair);
@@ -655,7 +218,8 @@ pub(crate) fn layout_lookup_expressions<F: PrimeField, const TOTAL_WIDTH: usize>
                     den_node: None,
                     lookup_type: lookup,
                 };
-                let next_pair = LookupRationalPair::accumulate_pair_into_graph((a, b), graph);
+                let next_pair =
+                    LookupRationalPair::accumulate_pair_into_graph((a, b), graph, placement_layer);
 
                 initial_reduction_layer_nodes.push(next_pair);
             }
@@ -684,7 +248,8 @@ pub(crate) fn layout_lookup_expressions<F: PrimeField, const TOTAL_WIDTH: usize>
                     lookup_type: lookup,
                 };
 
-                let next_pair = LookupRationalPair::accumulate_pair_into_graph((a, b), graph);
+                let next_pair =
+                    LookupRationalPair::accumulate_pair_into_graph((a, b), graph, placement_layer);
 
                 if expressions.is_empty() {
                     return (multiplicity_var, next_pair);
@@ -713,7 +278,8 @@ pub(crate) fn layout_lookup_expressions<F: PrimeField, const TOTAL_WIDTH: usize>
                     den_node: None,
                     lookup_type: lookup,
                 };
-                let next_pair = LookupRationalPair::accumulate_pair_into_graph((a, b), graph);
+                let next_pair =
+                    LookupRationalPair::accumulate_pair_into_graph((a, b), graph, placement_layer);
 
                 initial_reduction_layer_nodes.push(next_pair);
             }
@@ -747,7 +313,8 @@ pub(crate) fn layout_lookup_expressions<F: PrimeField, const TOTAL_WIDTH: usize>
                     lookup_type: lookup,
                 };
 
-                let next_pair = LookupRationalPair::accumulate_pair_into_graph((a, b), graph);
+                let next_pair =
+                    LookupRationalPair::accumulate_pair_into_graph((a, b), graph, placement_layer);
 
                 if expressions.is_empty() {
                     return (multiplicity_var, next_pair);
@@ -777,7 +344,8 @@ pub(crate) fn layout_lookup_expressions<F: PrimeField, const TOTAL_WIDTH: usize>
                     den_node: None,
                     lookup_type: lookup,
                 };
-                let next_pair = LookupRationalPair::accumulate_pair_into_graph((a, b), graph);
+                let next_pair =
+                    LookupRationalPair::accumulate_pair_into_graph((a, b), graph, placement_layer);
 
                 initial_reduction_layer_nodes.push(next_pair);
             }
@@ -793,7 +361,8 @@ pub(crate) fn layout_lookup_expressions<F: PrimeField, const TOTAL_WIDTH: usize>
                     lookup_type: lookup,
                 };
 
-                let next_pair = LookupRationalPair::add_single_into_graph(last_input, graph);
+                let next_pair =
+                    LookupRationalPair::add_single_into_graph(last_input, graph, placement_layer);
 
                 initial_reduction_layer_nodes.push(next_pair);
             }
@@ -821,7 +390,8 @@ pub(crate) fn layout_lookup_expressions<F: PrimeField, const TOTAL_WIDTH: usize>
                     lookup_type: lookup,
                 };
 
-                let next_pair = LookupRationalPair::accumulate_pair_into_graph((a, b), graph);
+                let next_pair =
+                    LookupRationalPair::accumulate_pair_into_graph((a, b), graph, placement_layer);
 
                 initial_reduction_layer_nodes.push(next_pair);
             }
@@ -846,7 +416,8 @@ pub(crate) fn layout_lookup_expressions<F: PrimeField, const TOTAL_WIDTH: usize>
                     den_node: None,
                     lookup_type: lookup,
                 };
-                let next_pair = LookupRationalPair::accumulate_pair_into_graph((a, b), graph);
+                let next_pair =
+                    LookupRationalPair::accumulate_pair_into_graph((a, b), graph, placement_layer);
 
                 initial_reduction_layer_nodes.push(next_pair);
             }
@@ -862,7 +433,8 @@ pub(crate) fn layout_lookup_expressions<F: PrimeField, const TOTAL_WIDTH: usize>
                     lookup_type: lookup,
                 };
 
-                let next_pair = LookupRationalPair::add_single_into_graph(last_input, graph);
+                let next_pair =
+                    LookupRationalPair::add_single_into_graph(last_input, graph, placement_layer);
 
                 initial_reduction_layer_nodes.push(next_pair);
             }
@@ -872,11 +444,11 @@ pub(crate) fn layout_lookup_expressions<F: PrimeField, const TOTAL_WIDTH: usize>
     // now we resolved a problem of copying from base layer, but we still want to have all the relations to be between two
     // nearby layers only
 
-    expected_placement_layer += 1;
+    placement_layer += 1;
     println!(
         "Will continue placement of {} lookup rationals into layer {}",
         initial_reduction_layer_nodes.len(),
-        expected_placement_layer
+        placement_layer
     );
 
     let mut current_layer = initial_reduction_layer_nodes;
@@ -888,15 +460,19 @@ pub(crate) fn layout_lookup_expressions<F: PrimeField, const TOTAL_WIDTH: usize>
 
         let mut next_layer = vec![];
         for [a, b] in current_layer.as_chunks::<2>().0.iter() {
-            let next_pair =
-                LookupRationalPair::accumulate_pair_into_graph((a.clone(), b.clone()), graph);
+            let next_pair = LookupRationalPair::accumulate_pair_into_graph(
+                (a.clone(), b.clone()),
+                graph,
+                placement_layer,
+            );
 
             next_layer.push(next_pair);
         }
         match current_layer.as_chunks::<2>().1 {
             [] => {}
             [last] => {
-                let next_pair = LookupRationalPair::add_single_into_graph(last.clone(), graph);
+                let next_pair =
+                    LookupRationalPair::add_single_into_graph(last.clone(), graph, placement_layer);
 
                 next_layer.push(next_pair);
             }

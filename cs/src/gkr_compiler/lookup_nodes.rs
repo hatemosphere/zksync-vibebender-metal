@@ -1,8 +1,6 @@
 use crate::cs::circuit::LookupQueryTableTypeExt;
 use crate::definitions::{Degree1Constraint, GKRAddress, Variable};
-use crate::gkr_compiler::graph::{
-    graph_element_equals_if_eq, CopyNode, GKRGraph, GraphElement, GraphHolder, NodeIndex,
-};
+use crate::gkr_compiler::graph::{CopyNode, GKRGraph, GraphHolder, NodeIndex};
 use crate::one_row_compiler::LookupInput;
 use crate::tables::TableType;
 
@@ -43,36 +41,23 @@ pub struct LookupInputRelation<F: PrimeField, const TOTAL_WIDTH: usize> {
     pub inputs: arrayvec::ArrayVec<Degree1Constraint<F>, TOTAL_WIDTH>,
 }
 
-impl<F: PrimeField, const TOTAL_WIDTH: usize> DependentNode
-    for LookupInputRelation<F, TOTAL_WIDTH>
-{
-    fn add_dependencies_into(
-        &self,
-        graph: &mut dyn graph::GraphHolder,
-        dst: &mut Vec<graph::NodeIndex>,
-    ) {
-        for c in self.inputs.iter() {
-            for (_, v) in c.linear_terms.iter() {
-                let idx = graph.get_node_index_for_variable(*v);
-                dst.push(idx);
-            }
-        }
-    }
-}
-
 // This is just a logical holder of what is a rational pair itself. It's not a node, but can add itself or pair of
 // selves into the graph
 #[derive(Clone, Hash, Debug, PartialEq, Eq, serde::Serialize, serde::Deserialize)]
 pub struct LookupRationalPair {
     pub num: LookupNumerator,
-    pub num_node: Option<NodeIndex>,
+    pub num_node: Option<GKRAddress>,
     pub den: LookupDenominator,
-    pub den_node: Option<NodeIndex>,
+    pub den_node: Option<GKRAddress>,
     pub lookup_type: LookupType,
 }
 
 impl LookupRationalPair {
-    pub fn add_single_into_graph(this: Self, graph: &mut dyn GraphHolder) -> Self {
+    pub fn add_single_into_graph(
+        this: Self,
+        graph: &mut impl GraphHolder,
+        output_layer: usize,
+    ) -> Self {
         // we consider very limited set of options here
         match (this.num, this.den) {
             (LookupNumerator::Identity, LookupDenominator::MaterializeVectorInput(input)) => {
@@ -80,14 +65,13 @@ impl LookupRationalPair {
                 assert!(this.den_node.is_none());
 
                 let node = MaterializeVectorInputNode(input);
-                let node_idx = graph.add_node_dyn(Box::new(node));
-                let address = graph.get_address_for_node_index(node_idx);
+                let den_node = node.add_at_layer(graph, output_layer);
 
                 Self {
                     num: LookupNumerator::Identity,
                     num_node: None,
-                    den: LookupDenominator::Explicit(address),
-                    den_node: Some(node_idx),
+                    den: LookupDenominator::Explicit(den_node),
+                    den_node: Some(den_node),
                     lookup_type: this.lookup_type,
                 }
             }
@@ -96,21 +80,22 @@ impl LookupRationalPair {
                 assert!(this.den_node.is_none());
 
                 match input {
-                    GKRAddress::BaseLayerMemory(..) | GKRAddress::BaseLayerWitness(..) | GKRAddress::Setup(..) => {},
+                    GKRAddress::BaseLayerMemory(..)
+                    | GKRAddress::BaseLayerWitness(..)
+                    | GKRAddress::Setup(..) => {}
                     _ => {
                         unreachable!()
                     }
                 }
 
                 let node = CopyNode::FromBase(input);
-                let node_idx = graph.add_node_dyn(Box::new(node));
-                let address = graph.get_address_for_node_index(node_idx);
+                let den_node = node.add_at_layer(graph, output_layer);
 
                 Self {
                     num: LookupNumerator::Identity,
                     num_node: None,
-                    den: LookupDenominator::CopiedBaseInput(address),
-                    den_node: Some(node_idx),
+                    den: LookupDenominator::CopiedBaseInput(den_node),
+                    den_node: Some(den_node),
                     lookup_type: this.lookup_type,
                 }
             }
@@ -123,14 +108,13 @@ impl LookupRationalPair {
                 };
 
                 let node = CopyNode::FromIntermediate(input);
-                let node_idx = graph.add_node_dyn(Box::new(node));
-                let address = graph.get_address_for_node_index(node_idx);
+                let den_node = node.add_at_layer(graph, output_layer);
 
                 Self {
                     num: LookupNumerator::Identity,
                     num_node: None,
-                    den: LookupDenominator::CopiedCopiedBaseInput(address),
-                    den_node: Some(node_idx),
+                    den: LookupDenominator::CopiedCopiedBaseInput(den_node),
+                    den_node: Some(den_node),
                     lookup_type: this.lookup_type,
                 }
             }
@@ -139,14 +123,13 @@ impl LookupRationalPair {
                 assert!(this.den_node.is_none());
 
                 let node = MaterializeSingleInputNode(input);
-                let node_idx = graph.add_node_dyn(Box::new(node));
-                let address = graph.get_address_for_node_index(node_idx);
+                let den_node = node.add_at_layer(graph, output_layer);
 
                 Self {
                     num: LookupNumerator::Identity,
                     num_node: None,
-                    den: LookupDenominator::CopiedCopiedBaseInput(address),
-                    den_node: Some(node_idx),
+                    den: LookupDenominator::CopiedCopiedBaseInput(den_node),
+                    den_node: Some(den_node),
                     lookup_type: this.lookup_type,
                 }
             }
@@ -159,14 +142,13 @@ impl LookupRationalPair {
                 };
 
                 let node = CopyNode::FromIntermediate(input);
-                let node_idx = graph.add_node_dyn(Box::new(node));
-                let address = graph.get_address_for_node_index(node_idx);
+                let den_node = node.add_at_layer(graph, output_layer);
 
                 Self {
                     num: LookupNumerator::Identity,
                     num_node: None,
-                    den: LookupDenominator::CopiedCopiedBaseInput(address),
-                    den_node: Some(node_idx),
+                    den: LookupDenominator::CopiedCopiedBaseInput(den_node),
+                    den_node: Some(den_node),
                     lookup_type: this.lookup_type,
                 }
             }
@@ -176,7 +158,11 @@ impl LookupRationalPair {
         }
     }
 
-    pub fn accumulate_pair_into_graph(pair: (Self, Self), graph: &mut dyn GraphHolder) -> Self {
+    pub fn accumulate_pair_into_graph(
+        pair: (Self, Self),
+        graph: &mut impl GraphHolder,
+        output_layer: usize,
+    ) -> Self {
         let (a, b) = pair;
         assert_eq!(a.lookup_type, b.lookup_type);
         let lookup_type = a.lookup_type;
@@ -204,30 +190,18 @@ impl LookupRationalPair {
                 LookupNumerator::Negative(multiplicity),
                 LookupDenominator::Setup(setup),
             ) => {
-                let numerator_node = LookupSingleColumnWitnessMinusSetupInputNodeNumerator(
-                    LookupSingleColumnWitnessMinusSetupInputNode {
-                        input: input.clone(),
-                        multiplicity,
-                        setup,
-                    },
-                );
-                let denominator_node = LookupSingleColumnWitnessMinusSetupInputNodeDenominator(
-                    LookupSingleColumnWitnessMinusSetupInputNode {
-                        input,
-                        multiplicity,
-                        setup,
-                    },
-                );
-                let num_node_idx = graph.add_node_dyn(Box::new(numerator_node));
-                let den_node_idx = graph.add_node_dyn(Box::new(denominator_node));
+                let node = LookupSingleColumnWitnessMinusSetupInputNode {
+                    input: input.clone(),
+                    multiplicity,
+                    setup,
+                };
+                let [num, den] = node.add_at_layer(graph, output_layer);
 
                 Self {
-                    num: LookupNumerator::Positive(graph.get_address_for_node_index(num_node_idx)),
-                    num_node: Some(num_node_idx),
-                    den: LookupDenominator::Explicit(
-                        graph.get_address_for_node_index(den_node_idx),
-                    ),
-                    den_node: Some(den_node_idx),
+                    num: LookupNumerator::Positive(num),
+                    num_node: Some(num),
+                    den: LookupDenominator::Explicit(den),
+                    den_node: Some(den),
                     lookup_type,
                 }
             }
@@ -237,28 +211,17 @@ impl LookupRationalPair {
                 LookupNumerator::Identity,
                 LookupDenominator::UseInput(b),
             ) => {
-                let numerator_node = LookupSingleColumnWitnessPairAggregationNodeNumerator(
-                    LookupSingleColumnWitnessPairAggregationNode {
-                        lhs: a.clone(),
-                        rhs: b.clone(),
-                    },
-                );
-                let denominator_node = LookupSingleColumnWitnessPairAggregationNodeDenominator(
-                    LookupSingleColumnWitnessPairAggregationNode {
-                        lhs: a.clone(),
-                        rhs: b.clone(),
-                    },
-                );
-                let num_node_idx = graph.add_node_dyn(Box::new(numerator_node));
-                let den_node_idx = graph.add_node_dyn(Box::new(denominator_node));
+                let node = LookupSingleColumnWitnessPairAggregationNode {
+                    lhs: a.clone(),
+                    rhs: b.clone(),
+                };
+                let [num, den] = node.add_at_layer(graph, output_layer);
 
                 Self {
-                    num: LookupNumerator::Positive(graph.get_address_for_node_index(num_node_idx)),
-                    num_node: Some(num_node_idx),
-                    den: LookupDenominator::Explicit(
-                        graph.get_address_for_node_index(den_node_idx),
-                    ),
-                    den_node: Some(den_node_idx),
+                    num: LookupNumerator::Positive(num),
+                    num_node: Some(num),
+                    den: LookupDenominator::Explicit(den),
+                    den_node: Some(den),
                     lookup_type,
                 }
             }
@@ -268,31 +231,19 @@ impl LookupRationalPair {
                 LookupNumerator::Positive(b_num),
                 LookupDenominator::Explicit(b_den),
             ) => {
-                let numerator_node =
-                    LookupExplicitPairAggregationNodeNumerator(LookupExplicitPairAggregationNode {
-                        lhs_num: a_num,
-                        lhs_den: a_den,
-                        rhs_num: b_num,
-                        rhs_den: b_den,
-                    });
-                let denominator_node = LookupExplicitPairAggregationNodeDenominator(
-                    LookupExplicitPairAggregationNode {
-                        lhs_num: a_num,
-                        lhs_den: a_den,
-                        rhs_num: b_num,
-                        rhs_den: b_den,
-                    },
-                );
-                let num_node_idx = graph.add_node_dyn(Box::new(numerator_node));
-                let den_node_idx = graph.add_node_dyn(Box::new(denominator_node));
+                let node = LookupExplicitPairAggregationNode {
+                    lhs_num: a_num,
+                    lhs_den: a_den,
+                    rhs_num: b_num,
+                    rhs_den: b_den,
+                };
+                let [num, den] = node.add_at_layer(graph, output_layer);
 
                 Self {
-                    num: LookupNumerator::Positive(graph.get_address_for_node_index(num_node_idx)),
-                    num_node: Some(num_node_idx),
-                    den: LookupDenominator::Explicit(
-                        graph.get_address_for_node_index(den_node_idx),
-                    ),
-                    den_node: Some(den_node_idx),
+                    num: LookupNumerator::Positive(num),
+                    num_node: Some(num),
+                    den: LookupDenominator::Explicit(den),
+                    den_node: Some(den),
                     lookup_type,
                 }
             }
@@ -306,33 +257,20 @@ impl LookupRationalPair {
                 assert!(a.den_node.is_some());
                 assert!(b.num_node.is_none());
                 assert!(b.den_node.is_some());
+                let input = NoFieldLinearRelation::from_single_input(input);
 
-                let numerator_node =
-                    LookupExplicitPairWithSingleColumnInputAggregationNodeNumerator(
-                        LookupExplicitPairWithSingleColumnInputAggregationNode {
-                            lhs_num: a_num,
-                            lhs_den: a_den,
-                            base_input: input,
-                        },
-                    );
-                let denominator_node =
-                    LookupExplicitPairWithSingleColumnInputAggregationNodeDenominator(
-                        LookupExplicitPairWithSingleColumnInputAggregationNode {
-                            lhs_num: a_num,
-                            lhs_den: a_den,
-                            base_input: input,
-                        },
-                    );
-                let num_node_idx = graph.add_node_dyn(Box::new(numerator_node));
-                let den_node_idx = graph.add_node_dyn(Box::new(denominator_node));
+                let node = LookupExplicitPairWithSingleColumnInputAggregationNode {
+                    lhs_num: a_num,
+                    lhs_den: a_den,
+                    base_input: input,
+                };
+                let [num, den] = node.add_at_layer(graph, output_layer);
 
                 Self {
-                    num: LookupNumerator::Positive(graph.get_address_for_node_index(num_node_idx)),
-                    num_node: Some(num_node_idx),
-                    den: LookupDenominator::Explicit(
-                        graph.get_address_for_node_index(den_node_idx),
-                    ),
-                    den_node: Some(den_node_idx),
+                    num: LookupNumerator::Positive(num),
+                    num_node: Some(num),
+                    den: LookupDenominator::Explicit(den),
+                    den_node: Some(den),
                     lookup_type,
                 }
             }
@@ -349,78 +287,48 @@ impl LookupRationalPair {
 #[derive(Clone, Hash, Debug, PartialEq, Eq, serde::Serialize, serde::Deserialize)]
 pub struct MaterializeSingleInputNode(pub(crate) NoFieldLinearRelation);
 
-impl DependentNode for MaterializeSingleInputNode {
-    fn add_dependencies_into(
-        &self,
-        graph: &mut dyn graph::GraphHolder,
-        dst: &mut Vec<graph::NodeIndex>,
-    ) {
-        DependentNode::add_dependencies_into(&self.0, graph, dst);
-    }
-}
+impl GKRGate for MaterializeSingleInputNode {
+    type Output = GKRAddress;
 
-impl GraphElement for MaterializeSingleInputNode {
-    fn as_dyn(&'_ self) -> &'_ (dyn GraphElement + 'static) {
-        self
-    }
-    fn dyn_clone(&self) -> Box<dyn GraphElement> {
-        Box::new(self.clone())
-    }
-    fn dependencies(&self, graph: &mut dyn GraphHolder) -> Vec<NodeIndex> {
-        let mut dst = vec![];
-        DependentNode::add_dependencies_into(self, graph, &mut dst);
-        dst
-    }
-    fn equals(&self, other: &dyn GraphElement) -> bool {
-        graph_element_equals_if_eq(self, other)
-    }
     fn short_name(&self) -> String {
         "Materialize single lookup input node".to_string()
     }
-    fn evaluation_description(&self, graph: &mut dyn GraphHolder) -> NoFieldGKRRelation {
-        NoFieldGKRRelation::MaterializedSingleLookupInput(self.0.clone())
+
+    fn add_at_layer(&self, graph: &mut impl GraphHolder, output_layer: usize) -> Self::Output {
+        let output = graph.add_intermediate_variable_at_layer(output_layer);
+        // TODO: decide to cache or not, maybe adaptively based on the number of terms
+
+        let relation = NoFieldGKRRelation::MaterializedSingleLookupInput {
+            input: self.0.clone(),
+            output,
+        };
+        graph.add_enforced_relation(relation, output_layer);
+
+        output
     }
 }
 
 #[derive(Clone, Hash, Debug, PartialEq, Eq, serde::Serialize, serde::Deserialize)]
 pub struct MaterializeVectorInputNode(pub(crate) NoFieldVectorLookupRelation);
 
-impl DependentNode for MaterializeVectorInputNode {
-    fn add_dependencies_into(
-        &self,
-        graph: &mut dyn graph::GraphHolder,
-        dst: &mut Vec<graph::NodeIndex>,
-    ) {
-        for el in self.0 .0.iter() {
-            let NoFieldLinearRelation { linear_terms, .. } = el;
-            for (_, pos) in linear_terms.iter() {
-                let node_idx = graph.get_node_index_for_address(*pos);
-                dst.push(node_idx);
-            }
-        }
-    }
-}
+impl GKRGate for MaterializeVectorInputNode {
+    type Output = GKRAddress;
 
-impl GraphElement for MaterializeVectorInputNode {
-    fn as_dyn(&'_ self) -> &'_ (dyn GraphElement + 'static) {
-        self
-    }
-    fn dyn_clone(&self) -> Box<dyn GraphElement> {
-        Box::new(self.clone())
-    }
-    fn dependencies(&self, graph: &mut dyn GraphHolder) -> Vec<NodeIndex> {
-        let mut dst = vec![];
-        DependentNode::add_dependencies_into(self, graph, &mut dst);
-        dst
-    }
-    fn equals(&self, other: &dyn GraphElement) -> bool {
-        graph_element_equals_if_eq(self, other)
-    }
     fn short_name(&self) -> String {
         "Materialize vector lookup input node".to_string()
     }
-    fn evaluation_description(&self, graph: &mut dyn GraphHolder) -> NoFieldGKRRelation {
-        NoFieldGKRRelation::MaterializedVectorLookupInput(self.0.clone())
+
+    fn add_at_layer(&self, graph: &mut impl GraphHolder, output_layer: usize) -> Self::Output {
+        let output = graph.add_intermediate_variable_at_layer(output_layer);
+        // TODO: decide to cache or not, maybe adaptively based on the number of terms
+
+        let relation = NoFieldGKRRelation::MaterializedVectorLookupInput {
+            input: self.0.clone(),
+            output,
+        };
+        graph.add_enforced_relation(relation, output_layer);
+
+        output
     }
 }
 
@@ -432,82 +340,28 @@ pub struct LookupMaskedWitnessMinusSetupInputNode {
     pub setup: Box<[GKRAddress]>,
 }
 
-impl DependentNode for LookupMaskedWitnessMinusSetupInputNode {
-    fn add_dependencies_into(
-        &self,
-        graph: &mut dyn graph::GraphHolder,
-        dst: &mut Vec<graph::NodeIndex>,
-    ) {
-        dst.push(graph.get_node_index_for_address(self.mask));
-        for el in self.input.0.iter() {
-            let NoFieldLinearRelation { linear_terms, .. } = el;
-            for (_, pos) in linear_terms.iter() {
-                let node_idx = graph.get_node_index_for_address(*pos);
-                dst.push(node_idx);
-            }
-        }
-        dst.push(graph.get_node_index_for_address(self.multiplicity));
-        dst.extend(
-            self.setup
-                .iter()
-                .map(|el| graph.get_node_index_for_address(*el)),
-        );
-    }
-}
+impl GKRGate for LookupMaskedWitnessMinusSetupInputNode {
+    type Output = [GKRAddress; 2];
 
-#[derive(Clone, Hash, Debug, PartialEq, Eq, serde::Serialize, serde::Deserialize)]
-pub struct LookupMaskedWitnessMinusSetupInputNodeNumerator(
-    pub LookupMaskedWitnessMinusSetupInputNode,
-);
-
-impl GraphElement for LookupMaskedWitnessMinusSetupInputNodeNumerator {
-    fn as_dyn(&'_ self) -> &'_ (dyn GraphElement + 'static) {
-        self
-    }
-    fn dyn_clone(&self) -> Box<dyn GraphElement> {
-        Box::new(self.clone())
-    }
-    fn dependencies(&self, graph: &mut dyn GraphHolder) -> Vec<NodeIndex> {
-        let mut dst = vec![];
-        DependentNode::add_dependencies_into(&self.0, graph, &mut dst);
-        dst
-    }
-    fn equals(&self, other: &dyn GraphElement) -> bool {
-        graph_element_equals_if_eq(self, other)
-    }
     fn short_name(&self) -> String {
-        "Numerator for mask/vector_input - multiplicity/vector_setup".to_string()
+        "Mask/vector_input - multiplicity/vector_setup".to_string()
     }
-    fn evaluation_description(&self, graph: &mut dyn GraphHolder) -> NoFieldGKRRelation {
-        todo!();
-    }
-}
 
-#[derive(Clone, Hash, Debug, PartialEq, Eq, serde::Serialize, serde::Deserialize)]
-pub struct LookupMaskedWitnessMinusSetupInputNodeDenominator(
-    pub LookupMaskedWitnessMinusSetupInputNode,
-);
+    fn add_at_layer(&self, graph: &mut impl GraphHolder, output_layer: usize) -> Self::Output {
+        let output = [(); 2].map(|_| graph.add_intermediate_variable_at_layer(output_layer));
+        let cached_input = NoFieldGKRCacheRelation::VectorizedLookup(self.input.clone());
+        let cached_output = NoFieldGKRCacheRelation::VectorizedLookupSetup(self.setup.clone());
+        let cached_input = graph.add_cached_relation(cached_input, output_layer);
+        let cached_output = graph.add_cached_relation(cached_output, output_layer);
 
-impl GraphElement for LookupMaskedWitnessMinusSetupInputNodeDenominator {
-    fn as_dyn(&'_ self) -> &'_ (dyn GraphElement + 'static) {
-        self
-    }
-    fn dyn_clone(&self) -> Box<dyn GraphElement> {
-        Box::new(self.clone())
-    }
-    fn dependencies(&self, graph: &mut dyn GraphHolder) -> Vec<NodeIndex> {
-        let mut dst = vec![];
-        DependentNode::add_dependencies_into(&self.0, graph, &mut dst);
-        dst
-    }
-    fn equals(&self, other: &dyn GraphElement) -> bool {
-        graph_element_equals_if_eq(self, other)
-    }
-    fn short_name(&self) -> String {
-        "Denominator for mask/vector_input - multiplicity/vector_setup".to_string()
-    }
-    fn evaluation_description(&self, graph: &mut dyn GraphHolder) -> NoFieldGKRRelation {
-        todo!();
+        let relation = NoFieldGKRRelation::LookupWithCachedDensAndSetup {
+            input: [self.mask, cached_input],
+            setup: [self.multiplicity, cached_output],
+            output,
+        };
+        graph.add_enforced_relation(relation, output_layer);
+
+        output
     }
 }
 
@@ -518,71 +372,25 @@ pub struct LookupSingleColumnWitnessMinusSetupInputNode {
     pub setup: GKRAddress,
 }
 
-impl DependentNode for LookupSingleColumnWitnessMinusSetupInputNode {
-    fn add_dependencies_into(
-        &self,
-        graph: &mut dyn graph::GraphHolder,
-        dst: &mut Vec<graph::NodeIndex>,
-    ) {
-        DependentNode::add_dependencies_into(&self.input, graph, dst);
-        dst.push(graph.get_node_index_for_address(self.multiplicity));
-        dst.push(graph.get_node_index_for_address(self.setup));
-    }
-}
+impl GKRGate for LookupSingleColumnWitnessMinusSetupInputNode {
+    type Output = [GKRAddress; 2];
 
-#[derive(Clone, Hash, Debug, PartialEq, Eq, serde::Serialize, serde::Deserialize)]
-pub struct LookupSingleColumnWitnessMinusSetupInputNodeNumerator(
-    pub LookupSingleColumnWitnessMinusSetupInputNode,
-);
-
-impl GraphElement for LookupSingleColumnWitnessMinusSetupInputNodeNumerator {
-    fn as_dyn(&'_ self) -> &'_ (dyn GraphElement + 'static) {
-        self
-    }
-    fn dyn_clone(&self) -> Box<dyn GraphElement> {
-        Box::new(self.clone())
-    }
-    fn dependencies(&self, graph: &mut dyn GraphHolder) -> Vec<NodeIndex> {
-        let mut dst = vec![];
-        DependentNode::add_dependencies_into(&self.0, graph, &mut dst);
-        dst
-    }
-    fn equals(&self, other: &dyn GraphElement) -> bool {
-        graph_element_equals_if_eq(self, other)
-    }
     fn short_name(&self) -> String {
-        "Numerator for 1/single_input - multiplicity/single_setup".to_string()
+        "1/single_input - multiplicity/single_setup".to_string()
     }
-    fn evaluation_description(&self, graph: &mut dyn GraphHolder) -> NoFieldGKRRelation {
-        todo!();
-    }
-}
 
-#[derive(Clone, Hash, Debug, PartialEq, Eq, serde::Serialize, serde::Deserialize)]
-pub struct LookupSingleColumnWitnessMinusSetupInputNodeDenominator(
-    pub LookupSingleColumnWitnessMinusSetupInputNode,
-);
+    fn add_at_layer(&self, graph: &mut impl GraphHolder, output_layer: usize) -> Self::Output {
+        let output = [(); 2].map(|_| graph.add_intermediate_variable_at_layer(output_layer));
 
-impl GraphElement for LookupSingleColumnWitnessMinusSetupInputNodeDenominator {
-    fn as_dyn(&'_ self) -> &'_ (dyn GraphElement + 'static) {
-        self
-    }
-    fn dyn_clone(&self) -> Box<dyn GraphElement> {
-        Box::new(self.clone())
-    }
-    fn dependencies(&self, graph: &mut dyn GraphHolder) -> Vec<NodeIndex> {
-        let mut dst = vec![];
-        DependentNode::add_dependencies_into(&self.0, graph, &mut dst);
-        dst
-    }
-    fn equals(&self, other: &dyn GraphElement) -> bool {
-        graph_element_equals_if_eq(self, other)
-    }
-    fn short_name(&self) -> String {
-        "Denominator for 1/single_input - multiplicity/single_setup".to_string()
-    }
-    fn evaluation_description(&self, graph: &mut dyn GraphHolder) -> NoFieldGKRRelation {
-        todo!();
+        let relation = NoFieldGKRRelation::LookupFromBaseInputsWithSetup {
+            input: self.input.clone(),
+            setup: [self.multiplicity, self.setup],
+            output,
+        };
+
+        graph.add_enforced_relation(relation, output_layer);
+
+        output
     }
 }
 
@@ -592,74 +400,24 @@ pub struct LookupSingleColumnWitnessPairAggregationNode {
     pub rhs: NoFieldLinearRelation,
 }
 
-impl DependentNode for LookupSingleColumnWitnessPairAggregationNode {
-    fn add_dependencies_into(
-        &self,
-        graph: &mut dyn graph::GraphHolder,
-        dst: &mut Vec<graph::NodeIndex>,
-    ) {
-        DependentNode::add_dependencies_into(&self.lhs, graph, dst);
-        DependentNode::add_dependencies_into(&self.rhs, graph, dst);
-    }
-}
+impl GKRGate for LookupSingleColumnWitnessPairAggregationNode {
+    type Output = [GKRAddress; 2];
 
-#[derive(Clone, Hash, Debug, PartialEq, Eq, serde::Serialize, serde::Deserialize)]
-pub struct LookupSingleColumnWitnessPairAggregationNodeNumerator(
-    pub LookupSingleColumnWitnessPairAggregationNode,
-);
-
-impl GraphElement for LookupSingleColumnWitnessPairAggregationNodeNumerator {
-    fn as_dyn(&'_ self) -> &'_ (dyn GraphElement + 'static) {
-        self
-    }
-    fn dyn_clone(&self) -> Box<dyn GraphElement> {
-        Box::new(self.clone())
-    }
-    fn dependencies(&self, graph: &mut dyn GraphHolder) -> Vec<NodeIndex> {
-        let mut dst = vec![];
-        DependentNode::add_dependencies_into(&self.0, graph, &mut dst);
-        dst
-    }
-    fn equals(&self, other: &dyn GraphElement) -> bool {
-        graph_element_equals_if_eq(self, other)
-    }
     fn short_name(&self) -> String {
-        "Numerator for 1/single_input + 1/single_input".to_string()
+        "1/single_input + 1/single_input".to_string()
     }
-    fn evaluation_description(&self, _graph: &mut dyn GraphHolder) -> NoFieldGKRRelation {
-        NoFieldGKRRelation::LookupNumeratorFromBaseInputs(
-            [self.0.lhs.clone(), self.0.rhs.clone()]
-        )
-    }
-}
 
-#[derive(Clone, Hash, Debug, PartialEq, Eq, serde::Serialize, serde::Deserialize)]
-pub struct LookupSingleColumnWitnessPairAggregationNodeDenominator(
-    pub LookupSingleColumnWitnessPairAggregationNode,
-);
+    fn add_at_layer(&self, graph: &mut impl GraphHolder, output_layer: usize) -> Self::Output {
+        let output = [(); 2].map(|_| graph.add_intermediate_variable_at_layer(output_layer));
 
-impl GraphElement for LookupSingleColumnWitnessPairAggregationNodeDenominator {
-    fn as_dyn(&'_ self) -> &'_ (dyn GraphElement + 'static) {
-        self
-    }
-    fn dyn_clone(&self) -> Box<dyn GraphElement> {
-        Box::new(self.clone())
-    }
-    fn dependencies(&self, graph: &mut dyn GraphHolder) -> Vec<NodeIndex> {
-        let mut dst = vec![];
-        DependentNode::add_dependencies_into(&self.0, graph, &mut dst);
-        dst
-    }
-    fn equals(&self, other: &dyn GraphElement) -> bool {
-        graph_element_equals_if_eq(self, other)
-    }
-    fn short_name(&self) -> String {
-        "Denominator for 1/single_input + 1/single_input".to_string()
-    }
-    fn evaluation_description(&self, graph: &mut dyn GraphHolder) -> NoFieldGKRRelation {
-        NoFieldGKRRelation::LookupDenominatorFromBaseInputs(
-            [self.0.lhs.clone(), self.0.rhs.clone()]
-        )
+        let relation = NoFieldGKRRelation::LookupPairFromBaseInputs {
+            input: [self.lhs.clone(), self.rhs.clone()],
+            output,
+        };
+
+        graph.add_enforced_relation(relation, output_layer);
+
+        output
     }
 }
 
@@ -671,68 +429,23 @@ pub struct LookupExplicitPairAggregationNode {
     pub rhs_den: GKRAddress,
 }
 
-impl DependentNode for LookupExplicitPairAggregationNode {
-    fn add_dependencies_into(
-        &self,
-        graph: &mut dyn graph::GraphHolder,
-        dst: &mut Vec<graph::NodeIndex>,
-    ) {
-        dst.push(graph.get_node_index_for_address(self.lhs_num));
-        dst.push(graph.get_node_index_for_address(self.lhs_den));
-        dst.push(graph.get_node_index_for_address(self.rhs_num));
-        dst.push(graph.get_node_index_for_address(self.rhs_den));
-    }
-}
+impl GKRGate for LookupExplicitPairAggregationNode {
+    type Output = [GKRAddress; 2];
 
-#[derive(Clone, Hash, Debug, PartialEq, Eq, serde::Serialize, serde::Deserialize)]
-pub struct LookupExplicitPairAggregationNodeNumerator(pub LookupExplicitPairAggregationNode);
-
-impl GraphElement for LookupExplicitPairAggregationNodeNumerator {
-    fn as_dyn(&'_ self) -> &'_ (dyn GraphElement + 'static) {
-        self
-    }
-    fn dyn_clone(&self) -> Box<dyn GraphElement> {
-        Box::new(self.clone())
-    }
-    fn dependencies(&self, graph: &mut dyn GraphHolder) -> Vec<NodeIndex> {
-        let mut dst = vec![];
-        DependentNode::add_dependencies_into(&self.0, graph, &mut dst);
-        dst
-    }
-    fn equals(&self, other: &dyn GraphElement) -> bool {
-        graph_element_equals_if_eq(self, other)
-    }
     fn short_name(&self) -> String {
-        "Numerator for a/b + c/d".to_string()
+        "a/b + c/d".to_string()
     }
-    fn evaluation_description(&self, graph: &mut dyn GraphHolder) -> NoFieldGKRRelation {
-        todo!();
-    }
-}
 
-#[derive(Clone, Hash, Debug, PartialEq, Eq, serde::Serialize, serde::Deserialize)]
-pub struct LookupExplicitPairAggregationNodeDenominator(pub LookupExplicitPairAggregationNode);
+    fn add_at_layer(&self, graph: &mut impl GraphHolder, output_layer: usize) -> Self::Output {
+        let output = [(); 2].map(|_| graph.add_intermediate_variable_at_layer(output_layer));
 
-impl GraphElement for LookupExplicitPairAggregationNodeDenominator {
-    fn as_dyn(&'_ self) -> &'_ (dyn GraphElement + 'static) {
-        self
-    }
-    fn dyn_clone(&self) -> Box<dyn GraphElement> {
-        Box::new(self.clone())
-    }
-    fn dependencies(&self, graph: &mut dyn GraphHolder) -> Vec<NodeIndex> {
-        let mut dst = vec![];
-        DependentNode::add_dependencies_into(&self.0, graph, &mut dst);
-        dst
-    }
-    fn equals(&self, other: &dyn GraphElement) -> bool {
-        graph_element_equals_if_eq(self, other)
-    }
-    fn short_name(&self) -> String {
-        "Denominator for a/b + c/d".to_string()
-    }
-    fn evaluation_description(&self, graph: &mut dyn GraphHolder) -> NoFieldGKRRelation {
-        todo!();
+        let relation = NoFieldGKRRelation::LookupPair {
+            input: [[self.lhs_num, self.lhs_den], [self.rhs_num, self.rhs_den]],
+            output,
+        };
+        graph.add_enforced_relation(relation, output_layer);
+
+        output
     }
 }
 
@@ -740,73 +453,27 @@ impl GraphElement for LookupExplicitPairAggregationNodeDenominator {
 pub struct LookupExplicitPairWithSingleColumnInputAggregationNode {
     pub lhs_num: GKRAddress,
     pub lhs_den: GKRAddress,
-    pub base_input: GKRAddress,
+    pub base_input: NoFieldLinearRelation,
 }
 
-impl DependentNode for LookupExplicitPairWithSingleColumnInputAggregationNode {
-    fn add_dependencies_into(
-        &self,
-        graph: &mut dyn graph::GraphHolder,
-        dst: &mut Vec<graph::NodeIndex>,
-    ) {
-        dst.push(graph.get_node_index_for_address(self.lhs_num));
-        dst.push(graph.get_node_index_for_address(self.lhs_den));
-        dst.push(graph.get_node_index_for_address(self.base_input));
-    }
-}
+impl GKRGate for LookupExplicitPairWithSingleColumnInputAggregationNode {
+    type Output = [GKRAddress; 2];
 
-#[derive(Clone, Hash, Debug, PartialEq, Eq, serde::Serialize, serde::Deserialize)]
-pub struct LookupExplicitPairWithSingleColumnInputAggregationNodeNumerator(
-    pub LookupExplicitPairWithSingleColumnInputAggregationNode,
-);
-
-impl GraphElement for LookupExplicitPairWithSingleColumnInputAggregationNodeNumerator {
-    fn as_dyn(&'_ self) -> &'_ (dyn GraphElement + 'static) {
-        self
-    }
-    fn dyn_clone(&self) -> Box<dyn GraphElement> {
-        Box::new(self.clone())
-    }
-    fn dependencies(&self, graph: &mut dyn GraphHolder) -> Vec<NodeIndex> {
-        let mut dst = vec![];
-        DependentNode::add_dependencies_into(&self.0, graph, &mut dst);
-        dst
-    }
-    fn equals(&self, other: &dyn GraphElement) -> bool {
-        graph_element_equals_if_eq(self, other)
-    }
     fn short_name(&self) -> String {
-        "Numerator for a/b + 1/single_input".to_string()
+        "a/b + 1/single_input".to_string()
     }
-    fn evaluation_description(&self, graph: &mut dyn GraphHolder) -> NoFieldGKRRelation {
-        todo!();
-    }
-}
 
-#[derive(Clone, Hash, Debug, PartialEq, Eq, serde::Serialize, serde::Deserialize)]
-pub struct LookupExplicitPairWithSingleColumnInputAggregationNodeDenominator(
-    pub LookupExplicitPairWithSingleColumnInputAggregationNode,
-);
+    fn add_at_layer(&self, graph: &mut impl GraphHolder, output_layer: usize) -> Self::Output {
+        let output = [(); 2].map(|_| graph.add_intermediate_variable_at_layer(output_layer));
 
-impl GraphElement for LookupExplicitPairWithSingleColumnInputAggregationNodeDenominator {
-    fn as_dyn(&'_ self) -> &'_ (dyn GraphElement + 'static) {
-        self
-    }
-    fn dyn_clone(&self) -> Box<dyn GraphElement> {
-        Box::new(self.clone())
-    }
-    fn dependencies(&self, graph: &mut dyn GraphHolder) -> Vec<NodeIndex> {
-        let mut dst = vec![];
-        DependentNode::add_dependencies_into(&self.0, graph, &mut dst);
-        dst
-    }
-    fn equals(&self, other: &dyn GraphElement) -> bool {
-        graph_element_equals_if_eq(self, other)
-    }
-    fn short_name(&self) -> String {
-        "Denominator for a/b + 1/single_input".to_string()
-    }
-    fn evaluation_description(&self, graph: &mut dyn GraphHolder) -> NoFieldGKRRelation {
-        todo!();
+        let relation = NoFieldGKRRelation::LookupUnbalancedPairWithBaseInputs {
+            input: [self.lhs_num, self.lhs_den],
+            remainder: self.base_input.clone(),
+            output,
+        };
+
+        graph.add_enforced_relation(relation, output_layer);
+
+        output
     }
 }

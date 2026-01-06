@@ -7,7 +7,7 @@ pub enum GKRAddress {
     InnerLayer { layer: usize, offset: usize },
     Setup(usize),
     OptimizedOut(usize),
-    Cached(usize),
+    Cached { layer: usize, offset: usize },
 }
 
 impl GKRAddress {
@@ -23,7 +23,7 @@ impl GKRAddress {
             Self::Setup(offset) => *offset,
             Self::InnerLayer { offset, .. } => *offset,
             Self::OptimizedOut(offset) => *offset,
-            Self::Cached(offset) => *offset,
+            Self::Cached { offset, .. } => *offset,
         }
     }
 

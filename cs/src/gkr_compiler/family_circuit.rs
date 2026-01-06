@@ -325,212 +325,20 @@ impl<F: PrimeField> GKRCompiler<F> {
             circuit_family_bitmask.clone(),
         );
 
-        let mut grand_product_read_accumulation_nodes = vec![];
-        let mut grand_product_write_accumulation_nodes = vec![];
-        let mut copied_predicate_for_grand_product_masking =
-            graph.copy_base_layer_variable(executor_machine_state.execute);
+        use crate::gkr_compiler::memory_like_grand_product::layout_initial_grand_product_accumulation;
 
-        for [a, b] in shuffle_ram_augmented_sets.as_chunks::<2>().0.iter() {
-            // we construct read and write sets separately
-            let mut read_set = vec![];
-            let mut write_set = vec![];
-            for (query, aux) in [a, b] {
-                let read_set_el = match query.query_type {
-                    ShuffleRamQueryType::RegisterOnly { register_index } => {
-                        MemoryPermutationExpression {
-                            address: AddressSpaceAddress::SingleLimb(register_index),
-                            address_space: AddressSpace::Constant(AddressSpaceType::Register),
-                            timestamp: aux.read_timestamp,
-                            value: query.read_value,
-                            timestamp_offset: 0,
-                        }
-                    }
-                    ShuffleRamQueryType::RegisterOrRam {
-                        is_register,
-                        address,
-                    } => {
-                        let address_space_inner = match is_register {
-                            Boolean::Is(var) => AddressSpaceIsRegister::Is(var),
-                            Boolean::Not(var) => AddressSpaceIsRegister::Not(var),
-                            Boolean::Constant(..) => {
-                                unreachable!()
-                            }
-                        };
-                        MemoryPermutationExpression {
-                            address: AddressSpaceAddress::U32Space(address),
-                            address_space: AddressSpace::RegisterOrRam(address_space_inner),
-                            timestamp: aux.read_timestamp,
-                            value: query.read_value,
-                            timestamp_offset: 0,
-                        }
-                    }
-                };
-                read_set.push(read_set_el);
-
-                let write_set_el = match query.query_type {
-                    ShuffleRamQueryType::RegisterOnly { register_index } => {
-                        MemoryPermutationExpression {
-                            address: AddressSpaceAddress::SingleLimb(register_index),
-                            address_space: AddressSpace::Constant(AddressSpaceType::Register),
-                            timestamp: executor_machine_state.cycle_start_state.timestamp,
-                            value: query.write_value,
-                            timestamp_offset: query.local_timestamp_in_cycle as u32,
-                        }
-                    }
-                    ShuffleRamQueryType::RegisterOrRam {
-                        is_register,
-                        address,
-                    } => {
-                        let address_space_inner = match is_register {
-                            Boolean::Is(var) => AddressSpaceIsRegister::Is(var),
-                            Boolean::Not(var) => AddressSpaceIsRegister::Not(var),
-                            Boolean::Constant(..) => {
-                                unreachable!()
-                            }
-                        };
-                        MemoryPermutationExpression {
-                            address: AddressSpaceAddress::U32Space(address),
-                            address_space: AddressSpace::RegisterOrRam(address_space_inner),
-                            timestamp: executor_machine_state.cycle_start_state.timestamp,
-                            value: query.write_value,
-                            timestamp_offset: query.local_timestamp_in_cycle as u32,
-                        }
-                    }
-                };
-                write_set.push(write_set_el);
-            }
-
-            let read_set_node = GrandProductAccumulationStep::Base {
-                lhs: read_set[0].clone(),
-                rhs: read_set[1].clone(),
-                is_write: false,
-            };
-            graph.add_node(read_set_node.clone());
-            grand_product_read_accumulation_nodes.push(read_set_node);
-
-            let write_set_node = GrandProductAccumulationStep::Base {
-                lhs: write_set[0].clone(),
-                rhs: write_set[1].clone(),
-                is_write: true,
-            };
-            graph.add_node(write_set_node.clone());
-            grand_product_write_accumulation_nodes.push(write_set_node);
-        }
-
-        if shuffle_ram_augmented_sets.as_chunks::<2>().1.is_empty() == false {
-            let last_el = shuffle_ram_augmented_sets.as_chunks::<2>().1[0].clone();
-            // we tread PC permutation as a part of our global permutation under all the same rules
-
-            let mut read_set = vec![];
-            let mut write_set = vec![];
-
-            // memory
-            {
-                let (query, aux) = last_el;
-                let read_set_el = match query.query_type {
-                    ShuffleRamQueryType::RegisterOnly { register_index } => {
-                        MemoryPermutationExpression {
-                            address: AddressSpaceAddress::SingleLimb(register_index),
-                            address_space: AddressSpace::Constant(AddressSpaceType::Register),
-                            timestamp: aux.read_timestamp,
-                            value: query.read_value,
-                            timestamp_offset: 0,
-                        }
-                    }
-                    ShuffleRamQueryType::RegisterOrRam {
-                        is_register,
-                        address,
-                    } => {
-                        let address_space_inner = match is_register {
-                            Boolean::Is(var) => AddressSpaceIsRegister::Is(var),
-                            Boolean::Not(var) => AddressSpaceIsRegister::Not(var),
-                            Boolean::Constant(..) => {
-                                unreachable!()
-                            }
-                        };
-                        MemoryPermutationExpression {
-                            address: AddressSpaceAddress::U32Space(address),
-                            address_space: AddressSpace::RegisterOrRam(address_space_inner),
-                            timestamp: aux.read_timestamp,
-                            value: query.read_value,
-                            timestamp_offset: 0,
-                        }
-                    }
-                };
-                read_set.push(read_set_el);
-
-                let write_set_el = match query.query_type {
-                    ShuffleRamQueryType::RegisterOnly { register_index } => {
-                        MemoryPermutationExpression {
-                            address: AddressSpaceAddress::SingleLimb(register_index),
-                            address_space: AddressSpace::Constant(AddressSpaceType::Register),
-                            timestamp: executor_machine_state.cycle_start_state.timestamp,
-                            value: query.write_value,
-                            timestamp_offset: query.local_timestamp_in_cycle as u32,
-                        }
-                    }
-                    ShuffleRamQueryType::RegisterOrRam {
-                        is_register,
-                        address,
-                    } => {
-                        let address_space_inner = match is_register {
-                            Boolean::Is(var) => AddressSpaceIsRegister::Is(var),
-                            Boolean::Not(var) => AddressSpaceIsRegister::Not(var),
-                            Boolean::Constant(..) => {
-                                unreachable!()
-                            }
-                        };
-                        MemoryPermutationExpression {
-                            address: AddressSpaceAddress::U32Space(address),
-                            address_space: AddressSpace::RegisterOrRam(address_space_inner),
-                            timestamp: executor_machine_state.cycle_start_state.timestamp,
-                            value: query.write_value,
-                            timestamp_offset: query.local_timestamp_in_cycle as u32,
-                        }
-                    }
-                };
-                write_set.push(write_set_el);
-            }
-
-            // and PC permutation
-            {
-                let read_set_el = MemoryPermutationExpression {
-                    address: AddressSpaceAddress::Empty,
-                    address_space: AddressSpace::Constant(AddressSpaceType::PC),
-                    timestamp: executor_machine_state.cycle_start_state.timestamp,
-                    value: executor_machine_state.cycle_start_state.pc,
-                    timestamp_offset: 0,
-                };
-                read_set.push(read_set_el);
-
-                let write_set_el = MemoryPermutationExpression {
-                    address: AddressSpaceAddress::Empty,
-                    address_space: AddressSpace::Constant(AddressSpaceType::PC),
-                    timestamp: executor_machine_state.cycle_end_state.timestamp,
-                    value: executor_machine_state.cycle_end_state.pc,
-                    timestamp_offset: 0,
-                };
-                write_set.push(write_set_el);
-            }
-
-            let read_set_node = GrandProductAccumulationStep::Base {
-                lhs: read_set[0].clone(),
-                rhs: read_set[1].clone(),
-                is_write: false,
-            };
-            graph.add_node(read_set_node.clone());
-            grand_product_read_accumulation_nodes.push(read_set_node);
-
-            let write_set_node = GrandProductAccumulationStep::Base {
-                lhs: write_set[0].clone(),
-                rhs: write_set[1].clone(),
-                is_write: true,
-            };
-            graph.add_node(write_set_node.clone());
-            grand_product_write_accumulation_nodes.push(write_set_node);
-        } else {
-            todo!();
-        }
+        let (
+            (grand_product_read_accumulation_nodes, grand_product_write_accumulation_nodes),
+            mut copied_predicate_for_grand_product_masking,
+        ) = layout_initial_grand_product_accumulation(
+            &mut graph,
+            executor_machine_state.execute,
+            &shuffle_ram_augmented_sets,
+            executor_machine_state.cycle_start_state.timestamp,
+            executor_machine_state.cycle_start_state.pc,
+            executor_machine_state.cycle_end_state.timestamp,
+            executor_machine_state.cycle_end_state.pc,
+        );
 
         // now we can follow up with lookup subarguments. We separate "hot" range check 16 and 19 bit
         // ones, and "generic" ones (that includes decoder)
@@ -774,194 +582,14 @@ impl<F: PrimeField> GKRCompiler<F> {
         }
 
         // Accumulate grand product - pairwise as much as we can
+        use crate::gkr_compiler::memory_like_grand_product::accumulate_memory_like_grand_product;
 
-        let (final_read_node, final_write_node) = {
-            let mut next_read_set = vec![];
-            let mut next_write_set = vec![];
-            copied_predicate_for_grand_product_masking =
-                graph.copy_intermediate_layer_variable(copied_predicate_for_grand_product_masking);
-
-            let mut placement_expected_layer = 2;
-            let GKRAddress::InnerLayer { layer, .. } = copied_predicate_for_grand_product_masking
-            else {
-                unreachable!()
-            };
-            assert_eq!(placement_expected_layer, layer);
-
-            assert!(grand_product_read_accumulation_nodes.len() > 1);
-            assert_eq!(
-                grand_product_read_accumulation_nodes.len(),
-                grand_product_write_accumulation_nodes.len()
-            );
-
-            println!(
-                "Continuing grand product accumulation at layer {} for {} contribution pairs",
-                placement_expected_layer,
-                grand_product_read_accumulation_nodes.len()
-            );
-
-            for [a, b] in grand_product_read_accumulation_nodes
-                .as_chunks::<2>()
-                .0
-                .iter()
-            {
-                let el = GrandProductAccumulationStep::Aggregation {
-                    lhs: Box::new(a.clone()),
-                    rhs: Box::new(b.clone()),
-                    is_write: false,
-                };
-                graph.add_node(el.clone());
-                next_read_set.push(el);
-            }
-
-            for [a, b] in grand_product_write_accumulation_nodes
-                .as_chunks::<2>()
-                .0
-                .iter()
-            {
-                let el = GrandProductAccumulationStep::Aggregation {
-                    lhs: Box::new(a.clone()),
-                    rhs: Box::new(b.clone()),
-                    is_write: true,
-                };
-                graph.add_node(el.clone());
-                next_write_set.push(el);
-            }
-
-            let mut current_read_set = next_read_set;
-            let mut current_write_set = next_write_set;
-            let mut current_read_remainder = None;
-            let mut current_write_remainder = None;
-
-            if grand_product_read_accumulation_nodes
-                .as_chunks::<2>()
-                .1
-                .len()
-                > 0
-            {
-                todo!();
-                current_read_remainder =
-                    Some(grand_product_read_accumulation_nodes.as_chunks::<2>().1[0].clone());
-            }
-            if grand_product_write_accumulation_nodes
-                .as_chunks::<2>()
-                .1
-                .len()
-                > 0
-            {
-                todo!();
-                current_write_remainder =
-                    Some(grand_product_write_accumulation_nodes.as_chunks::<2>().1[0].clone());
-            }
-
-            let mut next_read_set = vec![];
-            let mut next_write_set = vec![];
-            let mut next_read_remainder = None;
-            let mut next_write_remainder = None;
-
-            if current_read_set.len() > 1 || current_write_set.len() > 1 {
-                loop {
-                    copied_predicate_for_grand_product_masking = graph
-                        .copy_intermediate_layer_variable(
-                            copied_predicate_for_grand_product_masking,
-                        );
-
-                    placement_expected_layer += 1;
-                    let GKRAddress::InnerLayer { layer, .. } =
-                        copied_predicate_for_grand_product_masking
-                    else {
-                        unreachable!()
-                    };
-                    assert_eq!(placement_expected_layer, layer);
-
-                    println!("Continuing grand product accumulation at layer {} for {} contribution pairs", placement_expected_layer, next_read_set.len());
-
-                    for [a, b] in current_read_set.as_chunks::<2>().0.iter() {
-                        let el = GrandProductAccumulationStep::Aggregation {
-                            lhs: Box::new(a.clone()),
-                            rhs: Box::new(b.clone()),
-                            is_write: false,
-                        };
-                        graph.add_node(el.clone());
-                        next_read_set.push(el);
-                    }
-
-                    for [a, b] in current_write_set.as_chunks::<2>().0.iter() {
-                        let el = GrandProductAccumulationStep::Aggregation {
-                            lhs: Box::new(a.clone()),
-                            rhs: Box::new(b.clone()),
-                            is_write: true,
-                        };
-                        graph.add_node(el.clone());
-                        next_write_set.push(el);
-                    }
-
-                    if current_read_set.as_chunks::<2>().1.len() > 0 {
-                        if let Some(current_read_remainder) = current_read_remainder.take() {
-                            let el = GrandProductAccumulationStep::Aggregation {
-                                lhs: Box::new(current_read_set.as_chunks::<2>().1[0].clone()),
-                                rhs: Box::new(current_read_remainder),
-                                is_write: false,
-                            };
-                            graph.add_node(el.clone());
-                            next_read_set.push(el);
-                        } else {
-                            next_read_remainder =
-                                Some(current_read_set.as_chunks::<2>().1[0].clone());
-                        }
-                    }
-
-                    if current_write_set.as_chunks::<2>().1.len() > 0 {
-                        if let Some(current_write_remainder) = current_write_remainder.take() {
-                            let el = GrandProductAccumulationStep::Aggregation {
-                                lhs: Box::new(current_write_set.as_chunks::<2>().1[0].clone()),
-                                rhs: Box::new(current_write_remainder),
-                                is_write: false,
-                            };
-                            graph.add_node(el.clone());
-                            next_write_set.push(el);
-                        } else {
-                            next_write_remainder =
-                                Some(current_write_set.as_chunks::<2>().1[0].clone());
-                        }
-                    }
-
-                    current_read_set = next_read_set;
-                    current_write_set = next_write_set;
-                    current_read_remainder = next_read_remainder;
-                    current_write_remainder = next_write_remainder;
-
-                    next_read_set = vec![];
-                    next_write_set = vec![];
-                    next_read_remainder = None;
-                    next_write_remainder = None;
-                }
-            }
-
-            assert_eq!(current_read_set.len(), 1);
-            assert_eq!(current_write_set.len(), 1);
-            assert!(current_read_remainder.is_none());
-            assert!(current_write_remainder.is_none());
-
-            let read_node = current_read_set.pop().unwrap();
-            let write_node = current_write_set.pop().unwrap();
-
-            let read_mask = GrandProductAccumulationMaskingNode {
-                lhs: read_node,
-                mask: copied_predicate_for_grand_product_masking,
-                is_write: false,
-            };
-            graph.add_node(read_mask.clone());
-
-            let write_mask = GrandProductAccumulationMaskingNode {
-                lhs: write_node,
-                mask: copied_predicate_for_grand_product_masking,
-                is_write: true,
-            };
-            graph.add_node(write_mask.clone());
-
-            (read_mask, write_mask)
-        };
+        let (final_read_node, final_write_node) = accumulate_memory_like_grand_product(
+            &mut graph,
+            copied_predicate_for_grand_product_masking,
+            grand_product_read_accumulation_nodes,
+            grand_product_write_accumulation_nodes,
+        );
 
         // placing lookup is move involved
         let (final_lookup_numerator_nodes, final_lookup_denominator_nodes) = {
@@ -1016,19 +644,19 @@ impl<F: PrimeField> GKRCompiler<F> {
 
         let _ = layout_constraints_on_single_layer(&mut graph, constraints);
 
-        let graphviz_string = graph.make_graphviz(&variable_names);
-        println!("{}", &graphviz_string);
-        let gv_graph = ::layout::gv::DotParser::new(&graphviz_string)
-            .process()
-            .unwrap();
-        let mut builder = ::layout::gv::GraphBuilder::new();
-        builder.visit_graph(&gv_graph);
-        let mut svg = ::layout::backends::svg::SVGWriter::new();
-        let mut vg = builder.get();
-        vg.do_it(false, false, false, &mut svg);
-        let content = svg.finalize();
-        let filename = "gkr_layout.svg";
-        ::layout::core::utils::save_to_file(filename, &content).unwrap();
+        // let graphviz_string = graph.make_graphviz(&variable_names);
+        // println!("{}", &graphviz_string);
+        // let gv_graph = ::layout::gv::DotParser::new(&graphviz_string)
+        //     .process()
+        //     .unwrap();
+        // let mut builder = ::layout::gv::GraphBuilder::new();
+        // builder.visit_graph(&gv_graph);
+        // let mut svg = ::layout::backends::svg::SVGWriter::new();
+        // let mut vg = builder.get();
+        // vg.do_it(false, false, false, &mut svg);
+        // let content = svg.finalize();
+        // let filename = "gkr_layout.svg";
+        // ::layout::core::utils::save_to_file(filename, &content).unwrap();
 
         let _ = graph.layout_layers();
 
