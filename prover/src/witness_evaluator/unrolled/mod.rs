@@ -17,7 +17,7 @@ use riscv_transpiler::witness::delegation::bigint::BigintDelegationWitness;
 use riscv_transpiler::witness::delegation::blake2_round_function::Blake2sRoundFunctionDelegationWitness;
 use riscv_transpiler::witness::delegation::keccak_special5::KeccakSpecial5DelegationWitness;
 
-mod family_circuits;
+pub(crate) mod family_circuits;
 
 pub use self::family_circuits::*;
 

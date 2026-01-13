@@ -3,6 +3,7 @@
 // into the base layer.
 
 use crate::cs::circuit::CircuitOutput;
+use crate::definitions::gkr::GKRMemoryLayout;
 use crate::definitions::GKRAddress;
 use crate::definitions::REGISTER_SIZE;
 use crate::gkr_compiler::graph::GraphHolder;
@@ -48,6 +49,8 @@ pub struct GKRCircuitArtifact<F: PrimeField> {
     pub offset_for_decoder_table: usize,
     pub layers: Vec<GKRLayerDescription>,
 
+    pub memory_layout: GKRMemoryLayout,
+    pub scratch_space_size: usize,
     _marker: core::marker::PhantomData<F>,
 }
 

@@ -1,0 +1,437 @@
+use super::*;
+use cs::{
+    definitions::{gkr::*, GKRAddress},
+    gkr_compiler::GKRCircuitArtifact,
+    tables::TableDriver,
+    utils::*,
+};
+use field::PrimeField;
+use worker::WorkerGeometry;
+
+#[derive(Clone, Debug)]
+pub struct GKRMemoryOnlyWitnessTrace<F: PrimeField, A: Allocator + Clone, B: Allocator + Clone> {
+    pub column_major_trace: Vec<Vec<F, A>, B>,
+}
+
+impl<F: PrimeField, A: Allocator + Clone, B: Allocator + Clone> GKRMemoryOnlyWitnessTrace<F, A, B> {
+    pub fn new(
+        trace_len: usize,
+        num_columns: usize,
+        inner_allocator: A,
+        outer_allocator: B,
+    ) -> Self {
+        // We allocate, but do not initialize, as we will use all the rows, and default padding is not guaranteed
+        // to be zero one in general
+
+        let mut column_major_trace = Vec::with_capacity_in(num_columns, outer_allocator);
+        for _ in 0..num_columns {
+            column_major_trace.push(Vec::with_capacity_in(trace_len, inner_allocator.clone()));
+        }
+
+        Self { column_major_trace }
+    }
+
+    pub fn make_proxies_for_geometry<'a, O: Oracle<F> + 'a>(
+        &'a mut self,
+        oracle: &'a O,
+        geometry: WorkerGeometry,
+        table_driver: &'a TableDriver<F>,
+        scratch_space_size: usize,
+        trace_len: usize,
+    ) -> Vec<ColumnMajorWitnessProxy<'a, O, F>> {
+        let mut result = Vec::with_capacity(geometry.len());
+
+        let mut total_chunked = 0;
+        let mut start_pointers: Vec<_> = self
+            .column_major_trace
+            .iter_mut()
+            .map(|el| el.as_mut_ptr())
+            .collect();
+
+        for chunk_idx in 0..geometry.len() {
+            let chunk_size = geometry.get_chunk_size(chunk_idx);
+            let proxy = ColumnMajorWitnessProxy {
+                witness_rows_starts: vec![].into_boxed_slice(),
+                memory_rows_starts: start_pointers.clone().into_boxed_slice(),
+                scratch_space: vec![F::ZERO; scratch_space_size].into_boxed_slice(),
+                table_driver,
+                multiplicity_counting_scratch: &mut [],
+                lookup_mapping_rows_starts: &mut [],
+                oracle,
+                absolute_row_idx: total_chunked,
+            };
+            result.push(proxy);
+
+            for el in start_pointers.iter_mut() {
+                unsafe {
+                    *el = el.add(chunk_size);
+                }
+            }
+
+            total_chunked += chunk_size;
+        }
+
+        assert!(total_chunked <= trace_len);
+
+        result
+    }
+}
+
+pub fn evaluate_gkr_memory_witness_for_executor_family<
+    F: PrimeField,
+    O: Oracle<F>,
+    A: GoodAllocator,
+    B: GoodAllocator,
+>(
+    compiled_circuit: &GKRCircuitArtifact<F>,
+    num_cycles: usize,
+    oracle: &O,
+    worker: &Worker,
+    inner_allocator: A,
+    outer_allocator: B,
+) -> GKRMemoryOnlyWitnessTrace<F, A, B> {
+    let trace_len = compiled_circuit.trace_len;
+    assert!(trace_len.is_power_of_two());
+    assert!(num_cycles <= trace_len);
+    let num_memory_columns = compiled_circuit.memory_layout.total_width;
+
+    let mut memory_trace = GKRMemoryOnlyWitnessTrace::new(
+        trace_len,
+        num_memory_columns,
+        inner_allocator,
+        outer_allocator,
+    );
+    let table_driver = TableDriver::<F>::new();
+
+    // NOTE: we only evaluate memory and can not rely on the circuit's machinery to evaluate witness at all
+
+    worker.scope(num_cycles, |scope, geometry| {
+        let chunks = memory_trace.make_proxies_for_geometry(
+            oracle,
+            geometry,
+            &table_driver,
+            trace_len,
+            compiled_circuit.scratch_space_size,
+        );
+        for (thread_idx, chunk) in chunks.into_iter().enumerate() {
+            let chunk_size = geometry.get_chunk_size(thread_idx);
+            Worker::smart_spawn(scope, thread_idx == geometry.len() - 1, move |_| {
+                let mut chunk = chunk;
+                for _i in 0..chunk_size {
+                    unsafe {
+                        evaluate_memory_witness_for_executor_family_inner::<F, O, false>(
+                            &mut chunk,
+                            &compiled_circuit,
+                        );
+
+                        chunk.advance();
+                    }
+                }
+            });
+        }
+    });
+
+    // set filled rows
+    for el in memory_trace.column_major_trace.iter_mut() {
+        unsafe {
+            el.set_len(num_cycles);
+        }
+    }
+
+    // pad the last rows - so far it's all zeroes
+    if num_cycles < trace_len {
+        for el in memory_trace.column_major_trace.iter_mut() {
+            el.resize(trace_len, F::ZERO);
+        }
+    }
+
+    // we also do not care about multiplicities
+
+    memory_trace
+}
+
+#[inline]
+pub(crate) unsafe fn process_machine_state_assuming_preprocessed_decoder<
+    'a,
+    F: PrimeField,
+    O: Oracle<F> + 'a,
+    const COMPUTE_WITNESS: bool,
+>(
+    proxy: &mut ColumnMajorWitnessProxy<'a, O, F>,
+    compiled_circuit: &GKRCircuitArtifact<F>,
+) {
+    #[cfg(feature = "profiling")]
+    let t = std::time::Instant::now();
+
+    let machine_state = compiled_circuit
+        .memory_layout
+        .machine_state
+        .as_ref()
+        .unwrap();
+
+    // we need to assign execute flag, PCs, timestamps,
+    proxy.write_boolean_placeholder_into_columns::<true>(
+        machine_state.execute,
+        Placeholder::ExecuteOpcodeFamilyCycle,
+    );
+
+    // initial state
+    proxy.write_u32_placeholder_into_columns::<true>(
+        machine_state.initial_state.pc,
+        Placeholder::PcInit,
+    );
+    proxy.write_timestamp_placeholder_into_columns(
+        machine_state.initial_state.timestamp,
+        Placeholder::OpcodeFamilyCycleInitialTimestamp,
+    );
+    // final state
+    proxy.write_u32_placeholder_into_columns::<true>(
+        machine_state.final_state.pc,
+        Placeholder::PcFin,
+    );
+
+    let initial_ts = proxy.oracle.get_timestamp_witness_from_placeholder(
+        Placeholder::OpcodeFamilyCycleInitialTimestamp,
+        proxy.absolute_row_idx,
+    );
+    let (final_ts, intermediate_carry) = timestamp_increment(initial_ts);
+    proxy.write_timestamp_value_into_columns(machine_state.final_state.timestamp, final_ts);
+
+    // rare case when it's in memory
+    if let Some(decoder_input) = compiled_circuit.memory_layout.decoder_input.as_ref() {
+        if let Some(GKRAddress::BaseLayerMemory(circuit_family_extra_mask)) =
+            decoder_input.circuit_family_extra_mask
+        {
+            let decoder_data = proxy
+                .oracle
+                .get_executor_family_data(proxy.absolute_row_idx);
+
+            proxy.write_field_value_into_columns::<true>(
+                circuit_family_extra_mask,
+                F::from_u64_unchecked(decoder_data.opcode_family_bits as u64),
+            );
+        }
+    }
+
+    // if COMPUTE_WITNESS {
+    //     // also write timestamp intermediate carry
+    //     if let Some(executor_family_circuit_next_timestamp_aux_var) =
+    //         compiled_circuit.executor_family_circuit_next_timestamp_aux_var
+    //     {
+    //         write_boolean_value_into_columns(
+    //             ColumnSet::new(executor_family_circuit_next_timestamp_aux_var.offset(), 1),
+    //             intermediate_carry,
+    //             witness_row,
+    //         );
+    //     }
+
+    //     let decoder_data = oracle.get_executor_family_data(absolute_row_idx);
+
+    //     // and maybe some decoder values, that wouldn't end up as RS2/RD indexes and so on
+    //     if let ColumnAddress::WitnessSubtree(offset) = input_state_and_decoder_parts.rs2_index {
+    //         write_u8_value_into_columns(
+    //             ColumnSet::new(offset, 1),
+    //             decoder_data.rs2_index,
+    //             witness_row,
+    //         );
+    //     }
+
+    //     if let ColumnAddress::WitnessSubtree(offset) = input_state_and_decoder_parts.rd_index {
+    //         write_u8_value_into_columns(
+    //             ColumnSet::new(offset, 1),
+    //             decoder_data.rd_index,
+    //             witness_row,
+    //         );
+    //     }
+
+    //     if let ColumnAddress::WitnessSubtree(circuit_family_extra_mask) =
+    //         input_state_and_decoder_parts.circuit_family_extra_mask
+    //     {
+    //         debug_assert!(circuit_family_extra_mask < witness_row.len());
+    //         unsafe {
+    //             *witness_row.get_unchecked_mut(circuit_family_extra_mask) =
+    //                 Mersenne31Field(decoder_data.opcode_family_bits);
+    //         }
+    //     }
+
+    //     if input_state_and_decoder_parts.decoder_witness_is_in_memory == false {
+    //         // these variables are for sure in witness
+
+    //         // pub rd_is_zero: ColumnSet<1>,
+    //         // pub imm: ColumnSet<REGISTER_SIZE>,
+    //         // pub funct3: ColumnSet<1>,
+    //         // pub circuit_family_extra_mask: ColumnAddress,
+
+    //         write_boolean_value_into_columns(
+    //             input_state_and_decoder_parts.rd_is_zero,
+    //             decoder_data.rd_is_zero,
+    //             witness_row,
+    //         );
+
+    //         write_u32_value_into_columns(
+    //             input_state_and_decoder_parts.imm,
+    //             decoder_data.imm,
+    //             witness_row,
+    //         );
+
+    //         write_u8_value_into_columns(
+    //             input_state_and_decoder_parts.funct3,
+    //             decoder_data.funct3,
+    //             witness_row,
+    //         );
+
+    //         // and count multiplicity right away
+    //         if execute {
+    //             assert!(initial_pc % 4 == 0);
+    //             let idx = (initial_pc / 4) as usize;
+    //             assert!(idx < compiled_circuit.executor_family_decoder_table_size);
+    //             decoder_multiplicieties[idx] += 1;
+    //         }
+    //     }
+    // }
+
+    #[cfg(feature = "profiling")]
+    PROFILING_TABLE.with_borrow_mut(|el| {
+        *el.entry("Machine state processing").or_default() += t.elapsed();
+    });
+}
+
+#[inline]
+pub(crate) unsafe fn process_shuffle_ram_accesses_in_executor_family<
+    'a,
+    F: PrimeField,
+    O: Oracle<F> + 'a,
+    const COMPUTE_WITNESS: bool,
+>(
+    proxy: &mut ColumnMajorWitnessProxy<'a, O, F>,
+    compiled_circuit: &GKRCircuitArtifact<F>,
+) {
+    #[cfg(feature = "profiling")]
+    let t = std::time::Instant::now();
+
+    // debug_assert_eq!(
+    //     compiled_circuit
+    //         .memory_queries_timestamp_comparison_aux_vars
+    //         .len(),
+    //     compiled_circuit.memory_layout.shuffle_ram_access_sets.len()
+    // );
+
+    let cycle_ts = proxy.oracle.get_timestamp_witness_from_placeholder(
+        Placeholder::OpcodeFamilyCycleInitialTimestamp,
+        proxy.absolute_row_idx,
+    );
+
+    // We also must write down read timestamps, as those are pure witness values from the prover
+    for (access_idx, mem_query) in compiled_circuit
+        .memory_layout
+        .shuffle_ram_access_sets
+        .iter()
+        .enumerate()
+    {
+        match mem_query.get_address() {
+            RamAddress::RegisterOnly(RegisterOnlyAccessAddress { register_index }) => {
+                proxy.write_u8_placeholder_into_columns::<true>(
+                    register_index,
+                    Placeholder::ShuffleRamAddress(access_idx),
+                );
+            }
+            RamAddress::RegisterOrRam(RegisterOrRamAccessAddress {
+                is_register,
+                address,
+            }) => {
+                match is_register {
+                    IsRegisterAddress::Is(is_register) => {
+                        proxy.write_boolean_placeholder_into_columns::<true>(
+                            is_register,
+                            Placeholder::ShuffleRamIsRegisterAccess(access_idx),
+                        );
+                    }
+                    IsRegisterAddress::Not(is_register) => {
+                        let is_register_flag = Oracle::<F>::get_boolean_witness_from_placeholder(
+                            proxy.oracle,
+                            Placeholder::ShuffleRamIsRegisterAccess(access_idx),
+                            proxy.absolute_row_idx,
+                        );
+                        let not_register = !is_register_flag;
+
+                        proxy.write_boolean_value_into_columns::<true>(is_register, not_register);
+                    }
+                }
+                proxy.write_u32_placeholder_into_columns::<true>(
+                    address,
+                    Placeholder::ShuffleRamAddress(access_idx),
+                );
+            }
+        }
+
+        proxy.write_timestamp_placeholder_into_columns(
+            mem_query.get_read_timestamp_columns(),
+            Placeholder::ShuffleRamReadTimestamp(access_idx),
+        );
+
+        proxy.write_u32_placeholder_into_columns::<true>(
+            mem_query.get_read_value_columns(),
+            Placeholder::ShuffleRamReadValue(access_idx),
+        );
+
+        if let RamQuery::Write(query) = mem_query {
+            // also do write
+            proxy.write_u32_placeholder_into_columns::<true>(
+                query.write_value,
+                Placeholder::ShuffleRamWriteValue(access_idx),
+            );
+        }
+
+        // if COMPUTE_WITNESS {
+        //     let write_ts = cycle_ts + (access_idx as TimestampScalar);
+
+        //     let read_ts_split = split_timestamp(read_ts);
+        //     let write_ts_split = split_timestamp(write_ts);
+
+        //     let comparison_set = compiled_circuit
+        //         .memory_queries_timestamp_comparison_aux_vars
+        //         .get_unchecked(access_idx);
+        //     let borrow_place = *comparison_set;
+
+        //     // this - next is with borrow
+        //     let (((_aux_low, _aux_high), intermediate_borrow), final_borrow) =
+        //         timestamp_sub(read_ts_split, write_ts_split);
+        //     assert!(
+        //         final_borrow,
+        //         "failed to compare memory access timestamps at row {} for access {}: read is {}, write is {}. Cycle timestamp is {}",
+        //         absolute_row_idx,
+        //         access_idx,
+        //         read_ts,
+        //         write_ts,
+        //         cycle_ts,
+        //     );
+
+        //     write_boolean_value_into_columns(
+        //         ColumnSet::new(borrow_place.offset(), 1),
+        //         intermediate_borrow,
+        //         witness_row,
+        //     );
+        // }
+    }
+    #[cfg(feature = "profiling")]
+    PROFILING_TABLE.with_borrow_mut(|el| {
+        *el.entry("Shuffle RAM processing").or_default() += t.elapsed();
+    });
+}
+
+#[inline]
+pub(crate) unsafe fn evaluate_memory_witness_for_executor_family_inner<
+    'a,
+    F: PrimeField,
+    O: Oracle<F> + 'a,
+    const COMPUTE_WITNESS: bool,
+>(
+    proxy: &mut ColumnMajorWitnessProxy<'a, O, F>,
+    compiled_circuit: &GKRCircuitArtifact<F>,
+) {
+    process_machine_state_assuming_preprocessed_decoder::<F, O, false>(proxy, compiled_circuit);
+
+    process_shuffle_ram_accesses_in_executor_family::<F, O, false>(proxy, compiled_circuit);
+
+    // we can skip producing any other witness values, because none of them are placed into memory trace
+}

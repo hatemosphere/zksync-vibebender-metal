@@ -471,6 +471,7 @@ impl<F: PrimeField> GKRCompiler<F> {
             "{} variables were optimized out",
             optimized_out_variables.len()
         );
+        let scratch_space_size = optimized_out_variables.len();
 
         for var in optimized_out_variables.iter() {
             if let Some(c) = variables_from_constraints.remove(var) {
@@ -688,12 +689,150 @@ impl<F: PrimeField> GKRCompiler<F> {
             .map(|el| el as u32)
             .to_vec();
 
+        // make separation for memory layout
+        let initial_pc = executor_machine_state.cycle_start_state.pc.map(|el| {
+            let GKRAddress::BaseLayerMemory(offset) = graph.get_address_for_variable(el) else {
+                unreachable!()
+            };
+            offset
+        });
+        let initial_ts = executor_machine_state
+            .cycle_start_state
+            .timestamp
+            .map(|el| {
+                let GKRAddress::BaseLayerMemory(offset) = graph.get_address_for_variable(el) else {
+                    unreachable!()
+                };
+                offset
+            });
+
+        let final_pc = executor_machine_state.cycle_end_state.pc.map(|el| {
+            let GKRAddress::BaseLayerMemory(offset) = graph.get_address_for_variable(el) else {
+                unreachable!()
+            };
+            offset
+        });
+        let final_ts = executor_machine_state.cycle_end_state.timestamp.map(|el| {
+            let GKRAddress::BaseLayerMemory(offset) = graph.get_address_for_variable(el) else {
+                unreachable!()
+            };
+            offset
+        });
+
+        let machine_initial_state = GKRMachineState {
+            pc: initial_pc,
+            timestamp: initial_ts,
+        };
+
+        let machine_final_state = GKRMachineState {
+            pc: final_pc,
+            timestamp: final_ts,
+        };
+
+        let GKRAddress::BaseLayerMemory(execute) =
+            graph.get_address_for_variable(executor_machine_state.execute)
+        else {
+            unreachable!()
+        };
+        let machine_state = MachineStatePermutationDescription {
+            execute,
+            initial_state: machine_initial_state,
+            final_state: machine_final_state,
+        };
+
+        let decoder_input = {
+            let GKRAddress::BaseLayerMemory(rs1_index) =
+                graph.get_address_for_variable(executor_machine_state.decoder_data.rs1_index)
+            else {
+                unreachable!()
+            };
+
+            let rs2_index =
+                graph.get_address_for_variable(executor_machine_state.decoder_data.rs2_index);
+            let rd_index =
+                graph.get_address_for_variable(executor_machine_state.decoder_data.rd_index);
+
+            let rd_is_zero =
+                graph.get_address_for_variable(executor_machine_state.decoder_data.rd_is_zero);
+            let [imm_low, imm_high] = executor_machine_state
+                .decoder_data
+                .imm
+                .map(|el| graph.get_address_for_variable(el));
+            let funct3 = if executor_machine_state.decoder_data.funct3.is_placeholder() == false {
+                Some(graph.get_address_for_variable(executor_machine_state.decoder_data.funct3))
+            } else {
+                None
+            };
+            let circuit_family_extra_mask = if circuit_family_bitmask.is_empty() {
+                None
+            } else {
+                if circuit_family_bitmask.len() == 1 {
+                    // just variable itself
+                    Some(graph.get_address_for_variable(circuit_family_bitmask[0]))
+                } else {
+                    None
+                }
+            };
+
+            let (decoder_witness_is_in_memory, (rd_is_zero, imm_low, imm_high, funct3)) =
+                match (rd_is_zero, imm_low, imm_high, funct3) {
+                    (
+                        GKRAddress::BaseLayerMemory(rd_is_zero),
+                        GKRAddress::BaseLayerMemory(imm_low),
+                        GKRAddress::BaseLayerMemory(imm_high),
+                        Some(GKRAddress::BaseLayerMemory(funct3)),
+                    ) => (true, (rd_is_zero, imm_low, imm_high, Some(funct3))),
+                    (
+                        GKRAddress::BaseLayerMemory(rd_is_zero),
+                        GKRAddress::BaseLayerMemory(imm_low),
+                        GKRAddress::BaseLayerMemory(imm_high),
+                        None,
+                    ) => (true, (rd_is_zero, imm_low, imm_high, None)),
+                    (
+                        GKRAddress::BaseLayerWitness(rd_is_zero),
+                        GKRAddress::BaseLayerWitness(imm_low),
+                        GKRAddress::BaseLayerWitness(imm_high),
+                        Some(GKRAddress::BaseLayerWitness(funct3)),
+                    ) => (false, (rd_is_zero, imm_low, imm_high, Some(funct3))),
+                    (
+                        GKRAddress::BaseLayerWitness(rd_is_zero),
+                        GKRAddress::BaseLayerWitness(imm_low),
+                        GKRAddress::BaseLayerWitness(imm_high),
+                        None,
+                    ) => (false, (rd_is_zero, imm_low, imm_high, None)),
+                    _ => {
+                        unreachable!()
+                    }
+                };
+
+            DecoderPlacementDescription {
+                rs1_index,
+                rs2_index,
+                rd_index,
+                circuit_family_extra_mask,
+                decoder_witness_is_in_memory,
+                rd_is_zero,
+                imm: [imm_low, imm_high],
+                funct3,
+            }
+        };
+
+        let memory_layout = GKRMemoryLayout {
+            shuffle_ram_access_sets,
+            machine_state: Some(machine_state),
+            register_and_indirect_accesses: vec![],
+            total_width: graph.base_layer_memory.len(),
+            decoder_input: Some(decoder_input),
+        };
+
         GKRCircuitArtifact {
             trace_len,
             table_offsets,
             total_tables_size,
             offset_for_decoder_table,
             layers,
+            memory_layout,
+            scratch_space_size,
             _marker: std::marker::PhantomData,
         }
     }

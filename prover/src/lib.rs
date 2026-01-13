@@ -55,6 +55,9 @@ pub mod tracers;
 pub mod witness_evaluator;
 
 #[cfg(feature = "prover")]
+pub mod gkr;
+
+#[cfg(feature = "prover")]
 pub use self::quotient_evaluator::*;
 #[cfg(feature = "prover")]
 pub use self::tracer::*;
