@@ -10,12 +10,16 @@ pub trait BatchGKRRelation<F: PrimeField, E: FieldExtension<F> + PrimeField> {
         Self: 'a;
     fn prepare_first_step<'a>(&'a self, storage: &'a mut PolysStorage<F, E>)
         -> Self::FirstStep<'a>;
+    fn finish_first_step(&self, storage: &mut PolysStorage<F, E>);
 
     type NextSteps<'a>: BatchGKREvaluationKernel<F, E>
     where
         Self: 'a;
-    fn prepare_next_steps<'a>(&'a self, storage: &'a mut PolysStorage<F, E>)
-        -> Self::NextSteps<'a>;
+    fn prepare_next_steps<'a>(
+        &'a self,
+        storage: &'a mut PolysStorage<F, E>,
+        step: usize,
+    ) -> Self::NextSteps<'a>;
 }
 
 pub trait BatchGKREvaluationKernel<F: PrimeField, E: FieldExtension<F> + PrimeField> {
@@ -42,11 +46,15 @@ impl<F: PrimeField, E: FieldExtension<F> + PrimeField> BatchGKRRelation<F, E>
     ) -> Self::FirstStep<'a> {
         todo!()
     }
+    fn finish_first_step(&self, storage: &mut PolysStorage<F, E>) {
+        todo!()
+    }
 
     type NextSteps<'a> = SameSizeProductEvaluationKernelFirstStep<'a, F, E>;
     fn prepare_next_steps<'a>(
         &'a self,
         storage: &'a mut PolysStorage<F, E>,
+        step: usize,
     ) -> Self::NextSteps<'a> {
         todo!()
     }
