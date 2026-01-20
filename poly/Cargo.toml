@@ -1,0 +1,18 @@
+[package]
+name = "poly"
+version.workspace = true
+edition.workspace = true
+authors.workspace = true
+homepage.workspace = true
+repository.workspace = true
+license.workspace = true
+keywords.workspace = true
+categories.workspace = true
+
+[dependencies]
+field = { workspace = true }
+rayon = "1.10"
+
+[dev-dependencies]
+proptest = "1.4"
+rand = { workspace = true }
