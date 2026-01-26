@@ -12,6 +12,10 @@ pub struct SameSizeProductGKRRelation {
 impl<F: PrimeField, E: FieldExtension<F> + Field> BatchedGKRKernel<F, E>
     for SameSizeProductGKRRelation
 {
+    fn num_challenges(&self) -> usize {
+        1
+    }
+
     fn get_inputs(&self) -> GKRInputs {
         GKRInputs {
             inputs_in_base: Vec::new(),
@@ -25,12 +29,16 @@ impl<F: PrimeField, E: FieldExtension<F> + Field> BatchedGKRKernel<F, E>
         &self,
         storage: &mut GKRStorage<F, E>,
         step: usize,
-        batch_challenge: &E,
+        batch_challenges: &[E],
         folding_challenges: &[E],
         accumulator: &mut [[E; 2]],
         total_sumcheck_rounds: usize,
         last_evaluations: &mut BTreeMap<GKRAddress, [E; 2]>,
     ) {
+        assert_eq!(
+            batch_challenges.len(),
+            <Self as BatchedGKRKernel<F, E>>::num_challenges(self)
+        );
         let kernel = SameSizeProductGKRRelationKernel {
             _marker: core::marker::PhantomData,
         };
@@ -40,7 +48,7 @@ impl<F: PrimeField, E: FieldExtension<F> + Field> BatchedGKRKernel<F, E>
             &inputs,
             storage,
             step,
-            batch_challenge,
+            batch_challenges,
             folding_challenges,
             accumulator,
             total_sumcheck_rounds,
@@ -57,6 +65,9 @@ pub struct SameSizeProductGKRRelationKernel<F: PrimeField, E: FieldExtension<F> 
 impl<F: PrimeField, E: FieldExtension<F> + Field> SingleInputTypeBatchSumcheckEvaluationKernel<F, E>
     for SameSizeProductGKRRelationKernel<F, E>
 {
+    fn num_challenges(&self) -> usize {
+        1
+    }
     fn evaluate_first_round<
         R0: EvaluationRepresentation<F, E>,
         S0: EvaluationFormStorage<F, E, R0>,
@@ -67,8 +78,10 @@ impl<F: PrimeField, E: FieldExtension<F> + Field> SingleInputTypeBatchSumcheckEv
         index: usize,
         r0_sources: &[S0],
         output_sources: &[SOUT],
-        batch_challenge: &E,
+        batch_challenges: &[E],
     ) -> [E; 2] {
+        debug_assert_eq!(batch_challenges.len(), self.num_challenges());
+
         unsafe {
             let [lhs, rhs] = r0_sources
                 .as_chunks::<2>()
@@ -85,12 +98,12 @@ impl<F: PrimeField, E: FieldExtension<F> + Field> SingleInputTypeBatchSumcheckEv
             let mut result = [const { MaybeUninit::uninit() }; 2];
             // we have access to output
             {
-                result[0].write(output.collapse_for_batch_eval(out_ctx, batch_challenge));
+                result[0].write(output.collapse_for_batch_eval(out_ctx, &batch_challenges[0]));
             }
             {
                 let mut product = lhs;
                 product.repr_mul_assign::<true>(&rhs);
-                result[1].write(product.collapse_for_batch_eval(ctx, batch_challenge));
+                result[1].write(product.collapse_for_batch_eval(ctx, &batch_challenges[0]));
             }
 
             result.map(|el| el.assume_init())
@@ -105,8 +118,9 @@ impl<F: PrimeField, E: FieldExtension<F> + Field> SingleInputTypeBatchSumcheckEv
         &self,
         index: usize,
         r0_sources: &[S0],
-        batch_challenge: &E,
+        batch_challenges: &[E],
     ) -> [E; 2] {
+        debug_assert_eq!(batch_challenges.len(), self.num_challenges());
         unsafe {
             let [lhs, rhs] = r0_sources
                 .as_chunks::<2>()
@@ -121,7 +135,7 @@ impl<F: PrimeField, E: FieldExtension<F> + Field> SingleInputTypeBatchSumcheckEv
             for i in 0..2 {
                 let mut product = lhs[i];
                 product.repr_mul_assign::<true>(&rhs[i]);
-                result[i].write(product.collapse_for_batch_eval(ctx, batch_challenge));
+                result[i].write(product.collapse_for_batch_eval(ctx, &batch_challenges[0]));
             }
 
             result.map(|el| el.assume_init())

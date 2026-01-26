@@ -68,6 +68,9 @@ impl<F: PrimeField, E: FieldExtension<F> + PrimeField>
     SingleInputTypeBatchSumcheckEvaluationKernel<F, E>
     for BatchConstraintEvalGKRRelationKernel<F, E>
 {
+    fn num_challenges(&self) -> usize {
+        1
+    }
     fn evaluate_first_round<
         R0: EvaluationRepresentation<F, E>,
         S0: EvaluationFormStorage<F, E, R0>,
@@ -78,7 +81,7 @@ impl<F: PrimeField, E: FieldExtension<F> + PrimeField>
         index: usize,
         r0_sources: &[S0],
         _output_sources: &[SOUT],
-        batch_challenge: &E,
+        batch_challenges: &[E],
     ) -> [E; 2] {
         let mut result = [E::ZERO; 2];
         let ctx = r0_sources[0].get_collapse_context();
@@ -96,8 +99,8 @@ impl<F: PrimeField, E: FieldExtension<F> + PrimeField>
         for (a, _challenge) in self.linear_parts.iter() {
             let _a = r0_sources[*a].get_f0_and_f1_minus_f0(index);
         }
-        result[0].mul_assign(batch_challenge);
-        result[1].mul_assign(batch_challenge);
+        result[0].mul_assign(&batch_challenges[0]);
+        result[1].mul_assign(&batch_challenges[0]);
 
         result
     }
@@ -110,7 +113,7 @@ impl<F: PrimeField, E: FieldExtension<F> + PrimeField>
         &self,
         index: usize,
         r0_sources: &[S0],
-        batch_challenge: &E,
+        batch_challenges: &[E],
     ) -> [E; 2] {
         let mut result = [E::ZERO; 2];
         let ctx = r0_sources[0].get_collapse_context();
@@ -134,8 +137,8 @@ impl<F: PrimeField, E: FieldExtension<F> + PrimeField>
                 result[0].add_assign(&contribution);
             }
         }
-        result[0].mul_assign(batch_challenge);
-        result[1].mul_assign(batch_challenge);
+        result[0].mul_assign(&batch_challenges[0]);
+        result[1].mul_assign(&batch_challenges[0]);
 
         result
     }

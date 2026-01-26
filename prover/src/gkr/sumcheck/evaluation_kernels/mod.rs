@@ -3,8 +3,17 @@ use std::collections::BTreeMap;
 use crate::gkr::sumcheck::access_and_fold::GKRStorage;
 use cs::definitions::GKRAddress;
 use field::{Field, FieldExtension, PrimeField};
+
 pub mod batch_constraint_eval_example;
 pub mod trivial_product_in_extension;
+
+pub mod generic_kernel;
+pub mod simple_in_base;
+pub mod simple_in_extension;
+
+pub use self::generic_kernel::*;
+pub use self::simple_in_base::*;
+pub use self::simple_in_extension::*;
 
 pub trait EvaluationRepresentation<F: PrimeField, E: FieldExtension<F> + Field>:
     'static + Clone + Copy + core::fmt::Debug + Send + Sync
@@ -258,6 +267,7 @@ impl<F: PrimeField, E: FieldExtension<F> + Field, R: EvaluationRepresentation<F,
 
 pub trait SingleInputTypeBatchSumcheckEvaluationKernel<F: PrimeField, E: FieldExtension<F> + Field>
 {
+    fn num_challenges(&self) -> usize;
     fn evaluate_first_round<
         R0: EvaluationRepresentation<F, E>,
         S0: EvaluationFormStorage<F, E, R0>,
@@ -268,9 +278,9 @@ pub trait SingleInputTypeBatchSumcheckEvaluationKernel<F: PrimeField, E: FieldEx
         index: usize,
         r0_sources: &[S0],
         _output_sources: &[SOUT],
-        batch_challenge: &E,
+        batch_challenges: &[E],
     ) -> [E; 2] {
-        self.evaluate::<R0, S0, false>(index, r0_sources, batch_challenge)
+        self.evaluate::<R0, S0, false>(index, r0_sources, batch_challenges)
     }
 
     fn evaluate<
@@ -281,11 +291,13 @@ pub trait SingleInputTypeBatchSumcheckEvaluationKernel<F: PrimeField, E: FieldEx
         &self,
         index: usize,
         r0_sources: &[S0],
-        batch_challenge: &E,
+        batch_challenges: &[E],
     ) -> [E; 2];
 }
 
 pub trait TwoInputTypesBatchSumcheckEvaluationKernel<F: PrimeField, E: FieldExtension<F> + Field> {
+    fn num_challenges(&self) -> usize;
+
     fn evaluate_first_round<
         R0: EvaluationRepresentation<F, E>,
         S0: EvaluationFormStorage<F, E, R0>,
@@ -299,9 +311,9 @@ pub trait TwoInputTypesBatchSumcheckEvaluationKernel<F: PrimeField, E: FieldExte
         r0_sources: &[S0],
         r1_sources: &[S1],
         _output_sources: &[SOUT],
-        batch_challenge: &E,
+        batch_challenges: &[E],
     ) -> [E; 2] {
-        self.evaluate::<R0, S0, R1, S1, false>(index, r0_sources, r1_sources, batch_challenge)
+        self.evaluate::<R0, S0, R1, S1, false>(index, r0_sources, r1_sources, batch_challenges)
     }
 
     fn evaluate<
@@ -315,206 +327,6 @@ pub trait TwoInputTypesBatchSumcheckEvaluationKernel<F: PrimeField, E: FieldExte
         index: usize,
         r0_sources: &[S0],
         r1_sources: &[S1],
-        batch_challenge: &E,
+        batch_challenges: &[E],
     ) -> [E; 2];
-}
-
-#[derive(Clone, Debug, Hash, PartialEq, Eq)]
-pub struct GKRInputs {
-    pub inputs_in_base: Vec<GKRAddress>,
-    pub inputs_in_extension: Vec<GKRAddress>,
-    pub outputs_in_base: Vec<GKRAddress>,
-    pub outputs_in_extension: Vec<GKRAddress>,
-}
-
-pub trait BatchedGKRKernel<F: PrimeField, E: FieldExtension<F> + Field> {
-    fn get_inputs(&self) -> GKRInputs;
-    fn evaluate_over_storage(
-        &self,
-        storage: &mut GKRStorage<F, E>,
-        step: usize,
-        batch_challenge: &E,
-        folding_challenges: &[E],
-        accumulator: &mut [[E; 2]],
-        total_sumcheck_rounds: usize,
-        last_evaluations: &mut BTreeMap<GKRAddress, [E; 2]>,
-    );
-}
-
-pub fn evaluate_single_input_kernel_with_base_inputs<
-    F: PrimeField,
-    E: FieldExtension<F> + Field,
-    K: SingleInputTypeBatchSumcheckEvaluationKernel<F, E>,
->(
-    kernel: &K,
-    inputs: &GKRInputs,
-    storage: &mut GKRStorage<F, E>,
-    step: usize,
-    batch_challenge: &E,
-    folding_challenges: &[E],
-    accumulator: &mut [[E; 2]],
-    total_sumcheck_rounds: usize,
-    last_evaluations: &mut BTreeMap<GKRAddress, [E; 2]>,
-) {
-    // parallelize eventually
-    match step {
-        0 => {
-            let sources = storage.select_for_first_round(inputs);
-            assert!(sources.extension_field_inputs.is_empty());
-            if sources.base_field_outputs.is_empty() == false {
-                for index in 0..accumulator.len() {
-                    let value = kernel.evaluate_first_round(
-                        index,
-                        &sources.base_field_inputs,
-                        &sources.base_field_outputs,
-                        batch_challenge,
-                    );
-                    for i in 0..2 {
-                        accumulator[index][i].add_assign(&value[i]);
-                    }
-                }
-            } else if sources.extension_field_outputs.is_empty() == false {
-                for index in 0..accumulator.len() {
-                    let value = kernel.evaluate_first_round(
-                        index,
-                        &sources.base_field_inputs,
-                        &sources.extension_field_outputs,
-                        batch_challenge,
-                    );
-                    for i in 0..2 {
-                        accumulator[index][i].add_assign(&value[i]);
-                    }
-                }
-            } else {
-                for index in 0..accumulator.len() {
-                    let value = kernel.evaluate::<_, _, false>(
-                        index,
-                        &sources.base_field_inputs,
-                        batch_challenge,
-                    );
-                    for i in 0..2 {
-                        accumulator[index][i].add_assign(&value[i]);
-                    }
-                }
-            }
-        }
-        i if i + 1 == total_sumcheck_rounds => {
-            todo!();
-        }
-        1 => {
-            let sources = storage.select_for_second_round(inputs, folding_challenges);
-            assert!(sources.base_field_inputs.is_empty());
-            for index in 0..accumulator.len() {
-                let value = kernel.evaluate::<_, _, false>(
-                    index,
-                    &sources.base_field_inputs,
-                    batch_challenge,
-                );
-                for i in 0..2 {
-                    accumulator[index][i].add_assign(&value[i]);
-                }
-            }
-        }
-        2 => {
-            todo!()
-        }
-        3.. => {
-            todo!()
-        }
-    }
-}
-
-pub fn evaluate_single_input_kernel_with_extension_inputs<
-    F: PrimeField,
-    E: FieldExtension<F> + Field,
-    K: SingleInputTypeBatchSumcheckEvaluationKernel<F, E>,
->(
-    kernel: &K,
-    inputs: &GKRInputs,
-    storage: &mut GKRStorage<F, E>,
-    step: usize,
-    batch_challenge: &E,
-    folding_challenges: &[E],
-    accumulator: &mut [[E; 2]],
-    total_sumcheck_rounds: usize,
-    last_evaluations: &mut BTreeMap<GKRAddress, [E; 2]>,
-) {
-    // parallelize eventually
-    match step {
-        0 => {
-            let sources = storage.select_for_first_round(inputs);
-            assert!(sources.base_field_inputs.is_empty());
-            assert!(sources.base_field_outputs.is_empty());
-            if sources.extension_field_outputs.is_empty() == false {
-                for index in 0..accumulator.len() {
-                    let value = kernel.evaluate_first_round(
-                        index,
-                        &sources.extension_field_inputs,
-                        &sources.extension_field_outputs,
-                        batch_challenge,
-                    );
-                    for i in 0..2 {
-                        accumulator[index][i].add_assign(&value[i]);
-                    }
-                }
-            } else {
-                for index in 0..accumulator.len() {
-                    let value = kernel.evaluate::<_, _, false>(
-                        index,
-                        &sources.extension_field_inputs,
-                        batch_challenge,
-                    );
-                    for i in 0..2 {
-                        accumulator[index][i].add_assign(&value[i]);
-                    }
-                }
-            }
-            // for input in sources.extension_field_inputs.iter() {
-            //     dbg!(input.current_values());
-            // }
-            // for output in sources.extension_field_outputs.iter() {
-            //     dbg!(output.current_values());
-            // }
-        }
-        i if i + 1 == total_sumcheck_rounds => {
-            let sources = storage.select_for_second_round(inputs, folding_challenges);
-            assert!(sources.base_field_inputs.is_empty());
-            for index in 0..accumulator.len() {
-                let value = kernel.evaluate::<_, _, true>(
-                    index,
-                    &sources.extension_field_inputs,
-                    batch_challenge,
-                );
-                for i in 0..2 {
-                    accumulator[index][i].add_assign(&value[i]);
-                }
-            }
-            println!("COLLECTING LAST LAYER VALUES");
-
-            for source in sources.extension_field_inputs.iter() {
-                dbg!(source.current_values());
-            }
-
-            // Fill the storage
-            sources.collect_last_values(inputs, last_evaluations);
-        }
-        1.. => {
-            let sources = storage.select_for_second_round(inputs, folding_challenges);
-            assert!(sources.base_field_inputs.is_empty());
-            for index in 0..accumulator.len() {
-                let value = kernel.evaluate::<_, _, false>(
-                    index,
-                    &sources.extension_field_inputs,
-                    batch_challenge,
-                );
-                for i in 0..2 {
-                    accumulator[index][i].add_assign(&value[i]);
-                }
-            }
-            for source in sources.extension_field_inputs.iter() {
-                dbg!(source.previous_values());
-                dbg!(source.current_values());
-            }
-        }
-    }
 }

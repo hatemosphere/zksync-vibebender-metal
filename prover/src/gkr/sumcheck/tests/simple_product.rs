@@ -141,6 +141,7 @@ fn test_simple_product() {
     }
 
     let batch_challenge = E::from_base(F::ONE);
+    let mut batch_challenges = vec![batch_challenge];
 
     let mut folding_challenges = vec![];
 
@@ -192,7 +193,7 @@ fn test_simple_product() {
             kernel.evaluate_over_storage(
                 &mut storage,
                 step,
-                &batch_challenge,
+                &batch_challenges,
                 &folding_challenges,
                 &mut accumulator[..],
                 FOLDING_STEPS,
@@ -258,7 +259,7 @@ fn test_simple_product() {
             kernel.evaluate_over_storage(
                 &mut storage,
                 step,
-                &batch_challenge,
+                &batch_challenges,
                 &folding_challenges,
                 &mut accumulator[..],
                 FOLDING_STEPS,
