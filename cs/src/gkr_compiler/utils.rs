@@ -394,11 +394,11 @@ pub(crate) fn mem_permutation_expr_into_cached_expr(
         },
     };
     let address = match mem.address {
-        AddressSpaceAddress::Empty => CompliedAddressStrict::Constant(0),
+        AddressSpaceAddress::Empty => CompiledAddressStrict::Constant(0),
         AddressSpaceAddress::SingleLimb(v) => {
-            CompliedAddressStrict::U16Space(graph.get_address_for_variable(v).as_memory())
+            CompiledAddressStrict::U16Space(graph.get_address_for_variable(v).as_memory())
         }
-        AddressSpaceAddress::U32Space(s) => CompliedAddressStrict::U32Space(
+        AddressSpaceAddress::U32Space(s) => CompiledAddressStrict::U32Space(
             s.map(|v| graph.get_address_for_variable(v).as_memory()),
         ),
         AddressSpaceAddress::U32SpaceSpecialIndirect {
@@ -411,7 +411,7 @@ pub(crate) fn mem_permutation_expr_into_cached_expr(
             let low_dynamic_offset =
                 low_dynamic_offset.map(|el| graph.get_address_for_variable(el).as_memory());
             let high = graph.get_address_for_variable(high).as_memory();
-            CompliedAddressStrict::U32SpaceSpecialIndirect {
+            CompiledAddressStrict::U32SpaceSpecialIndirect {
                 low_base,
                 low_dynamic_offset,
                 low_offset: offset as u64,
@@ -439,6 +439,7 @@ pub(crate) fn mem_permutation_expr_into_cached_expr(
 
 pub(crate) fn lookup_input_into_relation<F: PrimeField, const SINGLE_COLUMN: bool>(
     lookup: &LookupInputRelation<F>,
+    lookup_set_index: usize,
     graph: &dyn GraphHolder,
 ) -> NoFieldVectorLookupRelation {
     if SINGLE_COLUMN {
@@ -457,15 +458,19 @@ pub(crate) fn lookup_input_into_relation<F: PrimeField, const SINGLE_COLUMN: boo
         };
         dst.push(rel);
     }
-    NoFieldVectorLookupRelation(dst.into_boxed_slice())
+    NoFieldVectorLookupRelation {
+        columns: dst.into_boxed_slice(),
+        lookup_set_index,
+    }
 }
 
 pub(crate) fn lookup_input_into_cached_expr<F: PrimeField, const SINGLE_COLUMN: bool>(
     lookup: &LookupInputRelation<F>,
+    lookup_set_index: usize,
     graph: &dyn GraphHolder,
 ) -> NoFieldGKRCacheRelation {
     NoFieldGKRCacheRelation::VectorizedLookup(lookup_input_into_relation::<F, SINGLE_COLUMN>(
-        lookup, graph,
+        lookup, lookup_set_index, graph,
     ))
 }
 
@@ -473,8 +478,12 @@ pub(crate) fn vector_or_single_input<const SINGLE_COLUMN: bool>(
     input: NoFieldVectorLookupRelation,
 ) -> LookupDenominator {
     if SINGLE_COLUMN {
-        assert_eq!(input.0.len(), 1);
-        lookup_nodes::LookupDenominator::UseInput(input.0[0].clone())
+        assert_eq!(input.columns.len(), 1);
+        let input = NoFieldSingleColumnLookupRelation {
+            input: input.columns[0].clone(),
+            lookup_set_index: input.lookup_set_index,
+        };
+        lookup_nodes::LookupDenominator::UseInput(input)
     } else {
         lookup_nodes::LookupDenominator::UseVectorInput(input)
     }
@@ -506,14 +515,18 @@ pub(crate) fn copy_single_base_input_or_materialize_vector<const SINGLE_COLUMN: 
     input: NoFieldVectorLookupRelation,
 ) -> LookupDenominator {
     if SINGLE_COLUMN {
-        assert_eq!(input.0.len(), 1);
-        if input.0[0].constant == 0
-            && input.0[0].linear_terms.len() == 1
-            && input.0[0].linear_terms[0].0 == 1
+        assert_eq!(input.columns.len(), 1);
+        if input.columns[0].constant == 0
+            && input.columns[0].linear_terms.len() == 1
+            && input.columns[0].linear_terms[0].0 == 1
         {
-            lookup_nodes::LookupDenominator::UseInputViaCopy(input.0[0].linear_terms[0].1)
+            lookup_nodes::LookupDenominator::UseInputViaCopy(input.columns[0].linear_terms[0].1)
         } else {
-            lookup_nodes::LookupDenominator::MaterializeBaseInput(input.0[0].clone())
+            let input = NoFieldSingleColumnLookupRelation {
+                input: input.columns[0].clone(),
+                lookup_set_index: input.lookup_set_index,
+            };
+            lookup_nodes::LookupDenominator::MaterializeBaseInput(input)
         }
     } else {
         lookup_nodes::LookupDenominator::MaterializeVectorInput(input)

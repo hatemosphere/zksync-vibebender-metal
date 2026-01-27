@@ -32,6 +32,45 @@ pub struct GKRStorage<F: PrimeField, E: FieldExtension<F> + Field> {
 }
 
 impl<F: PrimeField, E: FieldExtension<F> + Field> GKRStorage<F, E> {
+    pub(crate) fn get_base_layer_mem(&self, offset: usize) -> &[F] {
+        unsafe {
+            debug_assert!(self.layers.len() > 0);
+            let layer = self.layers.get_unchecked(0);
+            debug_assert!(layer
+                .base_field_inputs
+                .contains_key(&GKRAddress::BaseLayerMemory(offset)));
+            &layer
+                .base_field_inputs
+                .get(&GKRAddress::BaseLayerMemory(offset))
+                .unwrap_unchecked()
+                .values[..]
+        }
+    }
+
+    pub(crate) fn insert_base_field_at_layer(
+        &mut self,
+        layer: usize,
+        address: GKRAddress,
+        value: BaseFieldPoly<F>,
+    ) {
+        if layer >= self.layers.len() {
+            self.layers.resize_with(layer + 1, || GKRLayerSource::default());
+        }
+        self.layers[layer].base_field_inputs.insert(address, value);
+    }
+
+    pub(crate) fn insert_extension_at_layer(
+        &mut self,
+        layer: usize,
+        address: GKRAddress,
+        value: ExtensionFieldPoly<F, E>,
+    ) {
+        if layer >= self.layers.len() {
+            self.layers.resize_with(layer + 1, || GKRLayerSource::default());
+        }
+        self.layers[layer].extension_field_inputs.insert(address, value);
+    }
+
     pub(crate) fn make_ext_source_for_rounds_two_and_beyond(
         &mut self,
         poly: GKRAddress,

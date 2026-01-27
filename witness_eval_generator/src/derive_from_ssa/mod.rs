@@ -446,12 +446,13 @@ pub fn derive_from_gkr_ssa<F: PrimeField + ToTokens>(
     ssa: &[Vec<RawExpression<F>>],
     gkr_layout: &GKRCircuitArtifact<F>,
     perform_assignments_to_memory: bool,
+    field_name_str: &str,
 ) -> TokenStream {
     let num_lookup_mappings = gkr_layout.witness_layout.generic_lookups.len();
 
     let witness_proxy_ident = Ident::new("witness_proxy", Span::call_site());
     let witness_placer_ident = Ident::new("W", Span::call_site());
-    let field_ident = Ident::new("Mersenne31Field", Span::call_site());
+    let field_ident = Ident::new(field_name_str, Span::call_site());
     let mut layout = BTreeMap::new();
     for (var, pos) in gkr_layout.placement_data.iter() {
         match pos {
@@ -619,6 +620,8 @@ mod test {
 
     #[test]
     fn gen_for_unrolled_gkr_tests() {
+        use ::field::baby_bear::base::BabyBearField;
+
         for prefix in [
             "add_sub_lui_auipc_mop_preprocessed",
             // "jump_branch_slt_preprocessed",
@@ -631,11 +634,11 @@ mod test {
             // "inits_and_teardowns_preprocessed",
             // "reduced_machine_preprocessed",
         ] {
-            let compiled_circuit: GKRCircuitArtifact<Mersenne31Field> =
+            let compiled_circuit: GKRCircuitArtifact<BabyBearField> =
                 deserialize_from_file(&format!("../cs/{}_layout_gkr.json", prefix));
-            let compiled_graph: Vec<Vec<RawExpression<Mersenne31Field>>> =
+            let compiled_graph: Vec<Vec<RawExpression<BabyBearField>>> =
                 deserialize_from_file(&format!("../cs/{}_ssa_gkr.json", prefix));
-            let full_stream = derive_from_gkr_ssa(&compiled_graph, &compiled_circuit, false);
+            let full_stream = derive_from_gkr_ssa(&compiled_graph, &compiled_circuit, false, "BabyBearField");
 
             std::fs::File::create(&format!("../prover/{}_generated_gkr.rs", prefix))
                 .unwrap()

@@ -40,6 +40,8 @@ impl<F: PrimeField, E: FieldExtension<F> + Field>
     EvaluationFormStorage<F, E, ExtensionFieldRepresentation<F, E>>
     for ExtensionFieldPolyInitialSource<F, E>
 {
+    const SHOULD_ACCESS_TO_PREPARE_FOR_NEXT_STEP: bool = false;
+
     fn dummy() -> Self {
         todo!();
     }
@@ -151,6 +153,8 @@ impl<F: PrimeField, E: FieldExtension<F> + Field>
     EvaluationFormStorage<F, E, ExtensionFieldRepresentation<F, E>>
     for ExtensionFieldPolyContinuingSource<F, E>
 {
+    const SHOULD_ACCESS_TO_PREPARE_FOR_NEXT_STEP: bool = true;
+
     fn dummy() -> Self {
         todo!();
     }

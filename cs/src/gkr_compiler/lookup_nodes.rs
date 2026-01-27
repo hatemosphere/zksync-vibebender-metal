@@ -1,4 +1,5 @@
 use crate::cs::circuit::LookupQueryTableTypeExt;
+use crate::definitions::gkr::NoFieldSingleColumnLookupRelation;
 use crate::definitions::{Degree1Constraint, GKRAddress, Variable};
 use crate::gkr_compiler::graph::{CopyNode, GKRGraph, GraphHolder, NodeIndex};
 use crate::one_row_compiler::LookupInput;
@@ -19,11 +20,11 @@ pub enum LookupNumerator {
 pub enum LookupDenominator {
     CopiedBaseInput(GKRAddress),
     CopiedCopiedBaseInput(GKRAddress),
-    UseInput(NoFieldLinearRelation),
+    UseInput(NoFieldSingleColumnLookupRelation),
     UseInputViaCopy(GKRAddress),
     UseVectorInput(NoFieldVectorLookupRelation),
     CopyMaterializedVectorInput(GKRAddress),
-    MaterializeBaseInput(NoFieldLinearRelation),
+    MaterializeBaseInput(NoFieldSingleColumnLookupRelation),
     MaterializeVectorInput(NoFieldVectorLookupRelation),
     Setup(GKRAddress),
     VectorSetup(Box<[GKRAddress]>),
@@ -283,9 +284,8 @@ impl LookupRationalPair {
                 assert!(a.den_node.is_some());
                 assert!(b.num_node.is_none());
                 assert!(b.den_node.is_some());
-                let input = NoFieldLinearRelation::from_single_input(input);
 
-                let node = LookupExplicitPairWithSingleColumnInputAggregationNode {
+                let node = LookupExplicitPairWithSingleColumnMaterializedInputAggregationNode {
                     lhs_num: a_num,
                     lhs_den: a_den,
                     base_input: input,
@@ -313,7 +313,7 @@ impl LookupRationalPair {
 }
 
 #[derive(Clone, Hash, Debug, PartialEq, Eq, serde::Serialize, serde::Deserialize)]
-pub struct MaterializeSingleInputNode(pub(crate) NoFieldLinearRelation);
+pub struct MaterializeSingleInputNode(pub(crate) NoFieldSingleColumnLookupRelation);
 
 impl GKRGate for MaterializeSingleInputNode {
     type Output = GKRAddress;
@@ -407,7 +407,7 @@ impl GKRGate for LookupMaskedWitnessMinusSetupInputNode {
 
 #[derive(Clone, Hash, Debug, PartialEq, Eq, serde::Serialize, serde::Deserialize)]
 pub struct LookupSingleColumnWitnessMinusSetupInputNode {
-    pub input: NoFieldLinearRelation,
+    pub input: NoFieldSingleColumnLookupRelation,
     pub multiplicity: GKRAddress,
     pub setup: GKRAddress,
 }
@@ -440,8 +440,8 @@ impl GKRGate for LookupSingleColumnWitnessMinusSetupInputNode {
 
 #[derive(Clone, Hash, Debug, PartialEq, Eq, serde::Serialize, serde::Deserialize)]
 pub struct LookupSingleColumnWitnessPairAggregationNode {
-    pub lhs: NoFieldLinearRelation,
-    pub rhs: NoFieldLinearRelation,
+    pub lhs: NoFieldSingleColumnLookupRelation,
+    pub rhs: NoFieldSingleColumnLookupRelation,
 }
 
 impl GKRGate for LookupSingleColumnWitnessPairAggregationNode {
@@ -508,7 +508,7 @@ impl GKRGate for LookupExplicitPairAggregationNode {
 pub struct LookupExplicitPairWithSingleColumnInputAggregationNode {
     pub lhs_num: GKRAddress,
     pub lhs_den: GKRAddress,
-    pub base_input: NoFieldLinearRelation,
+    pub base_input: NoFieldSingleColumnLookupRelation,
 }
 
 impl GKRGate for LookupExplicitPairWithSingleColumnInputAggregationNode {
@@ -528,6 +528,39 @@ impl GKRGate for LookupExplicitPairWithSingleColumnInputAggregationNode {
         let relation = NoFieldGKRRelation::LookupUnbalancedPairWithBaseInputs {
             input: [self.lhs_num, self.lhs_den],
             remainder: self.base_input.clone(),
+            output,
+        };
+
+        graph.add_enforced_relation(relation.clone(), output_layer);
+
+        (output, relation)
+    }
+}
+
+#[derive(Clone, Hash, Debug, PartialEq, Eq, serde::Serialize, serde::Deserialize)]
+pub struct LookupExplicitPairWithSingleColumnMaterializedInputAggregationNode {
+    pub lhs_num: GKRAddress,
+    pub lhs_den: GKRAddress,
+    pub base_input: GKRAddress,
+}
+
+impl GKRGate for LookupExplicitPairWithSingleColumnMaterializedInputAggregationNode {
+    type Output = [GKRAddress; 2];
+
+    fn short_name(&self) -> String {
+        "a/b + 1/single_input".to_string()
+    }
+
+    fn add_at_layer(
+        &self,
+        graph: &mut impl GraphHolder,
+        output_layer: usize,
+    ) -> (Self::Output, NoFieldGKRRelation) {
+        let output = [(); 2].map(|_| graph.add_intermediate_variable_at_layer(output_layer));
+
+        let relation = NoFieldGKRRelation::LookupUnbalancedPairWithMaterializedBaseInputs {
+            input: [self.lhs_num, self.lhs_den],
+            remainder: self.base_input,
             output,
         };
 

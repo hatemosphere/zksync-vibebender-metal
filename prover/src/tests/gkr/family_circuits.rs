@@ -1,4 +1,6 @@
 use super::*;
+use ::field::baby_bear::base::BabyBearField;
+use ::field::baby_bear::ext4::BabyBearExt4;
 use risc_v_simulator::abstractions::non_determinism::QuasiUARTSource;
 use risc_v_simulator::machine_mode_only_unrolled::*;
 use riscv_transpiler::replayer::*;
@@ -9,6 +11,9 @@ use cs::machine::ops::unrolled::compile_unrolled_circuit_state_transition_into_g
 use cs::machine::ops::unrolled::opcodes_for_full_machine_with_mem_word_access_specialization;
 use cs::machine::ops::unrolled::opcodes_for_full_machine_with_unsigned_mul_div_only_with_mem_word_access_specialization;
 
+use crate::gkr::prover::GKRExternalChallenges;
+use crate::gkr::prover::prove_configured_with_gkr;
+use crate::gkr::prover::setup::GKRSetupPrecomputations;
 use crate::gkr::witness_gen::family_circuits::evaluate_gkr_memory_witness_for_executor_family;
 use crate::gkr::witness_gen::family_circuits::evaluate_gkr_witness_for_executor_family;
 use crate::unrolled::NonMemoryCircuitOracle;
@@ -172,20 +177,20 @@ pub fn gkr_run_basic_unrolled_test_impl(
         current_value: el.value,
     });
 
-    let memory_argument_alpha = Mersenne31Quartic::from_array_of_base([
-        Mersenne31Field(2),
-        Mersenne31Field(5),
-        Mersenne31Field(42),
-        Mersenne31Field(123),
+    let memory_argument_alpha = BabyBearExt4::from_array_of_base([
+        BabyBearField::new(2),
+        BabyBearField::new(5),
+        BabyBearField::new(42),
+        BabyBearField::new(123),
     ]);
-    let memory_argument_gamma = Mersenne31Quartic::from_array_of_base([
-        Mersenne31Field(11),
-        Mersenne31Field(7),
-        Mersenne31Field(1024),
-        Mersenne31Field(8000),
+    let permutation_argument_additive_part = BabyBearExt4::from_array_of_base([
+        BabyBearField::new(7),
+        BabyBearField::new(11),
+        BabyBearField::new(1024),
+        BabyBearField::new(8000),
     ]);
 
-    let memory_argument_linearization_challenges_powers: [Mersenne31Quartic;
+    let permutation_argument_linearization_challenges: [BabyBearExt4;
         NUM_MEM_ARGUMENT_KEY_PARTS - 1] =
         materialize_powers_serial_starting_with_elem::<_, Global>(
             memory_argument_alpha,
@@ -194,70 +199,17 @@ pub fn gkr_run_basic_unrolled_test_impl(
         .try_into()
         .unwrap();
 
-    let delegation_argument_alpha = Mersenne31Quartic::from_array_of_base([
-        Mersenne31Field(5),
-        Mersenne31Field(8),
-        Mersenne31Field(32),
-        Mersenne31Field(16),
-    ]);
-    let delegation_argument_gamma = Mersenne31Quartic::from_array_of_base([
-        Mersenne31Field(200),
-        Mersenne31Field(100),
-        Mersenne31Field(300),
-        Mersenne31Field(400),
-    ]);
-
-    let state_permutation_argument_alpha = Mersenne31Quartic::from_array_of_base([
-        Mersenne31Field(41),
-        Mersenne31Field(42),
-        Mersenne31Field(43),
-        Mersenne31Field(44),
-    ]);
-    let state_permutation_argument_gamma = Mersenne31Quartic::from_array_of_base([
-        Mersenne31Field(80),
-        Mersenne31Field(90),
-        Mersenne31Field(100),
-        Mersenne31Field(110),
-    ]);
-
-    let delegation_argument_linearization_challenges: [Mersenne31Quartic;
-        NUM_DELEGATION_ARGUMENT_KEY_PARTS - 1] =
-        materialize_powers_serial_starting_with_elem::<_, Global>(
-            delegation_argument_alpha,
-            NUM_DELEGATION_ARGUMENT_KEY_PARTS - 1,
-        )
-        .try_into()
-        .unwrap();
-
-    let linearization_challenges: [Mersenne31Quartic; NUM_MACHINE_STATE_LINEARIZATION_CHALLENGES] =
-        materialize_powers_serial_starting_with_elem::<_, Global>(
-            state_permutation_argument_alpha,
-            NUM_MACHINE_STATE_LINEARIZATION_CHALLENGES,
-        )
-        .try_into()
-        .unwrap();
-
-    let external_challenges = ExternalChallenges {
-        memory_argument: ExternalMemoryArgumentChallenges {
-            memory_argument_linearization_challenges:
-                memory_argument_linearization_challenges_powers,
-            memory_argument_gamma,
-        },
-        delegation_argument: Some(ExternalDelegationArgumentChallenges {
-            delegation_argument_linearization_challenges,
-            delegation_argument_gamma,
-        }),
-        machine_state_permutation_argument: Some(ExternalMachineStateArgumentChallenges {
-            linearization_challenges,
-            additive_term: state_permutation_argument_gamma,
-        }),
+    let external_challenges = GKRExternalChallenges {
+        permutation_argument_linearization_challenges,
+        permutation_argument_additive_part,
+        _marker: std::marker::PhantomData,
     };
 
     // evaluate memory witness
     use crate::cs::machine::ops::unrolled::process_binary_into_separate_tables_ext;
 
     let preprocessing_data = if SUPPORT_SIGNED {
-        process_binary_into_separate_tables_ext::<Mersenne31Field, true, Global>(
+        process_binary_into_separate_tables_ext::<BabyBearField, true, Global>(
             &text_section,
             &opcodes_for_full_machine_with_mem_word_access_specialization(),
             1 << 20,
@@ -269,7 +221,7 @@ pub fn gkr_run_basic_unrolled_test_impl(
             ],
         )
     } else {
-        process_binary_into_separate_tables_ext::<Mersenne31Field, true, Global>(
+        process_binary_into_separate_tables_ext::<BabyBearField, true, Global>(
             &text_section,
             &opcodes_for_full_machine_with_unsigned_mul_div_only_with_mem_word_access_specialization(),
             1 << 20,
@@ -282,32 +234,30 @@ pub fn gkr_run_basic_unrolled_test_impl(
         )
     };
 
-    let mut delegation_argument_accumulator = Mersenne31Quartic::ZERO;
-
-    let mut permutation_argument_accumulator = produce_pc_into_permutation_accumulator_raw(
-        INITIAL_PC,
-        split_timestamp(INITIAL_TIMESTAMP),
-        final_pc,
-        split_timestamp(final_timestamp),
-        &external_challenges
-            .machine_state_permutation_argument
-            .as_ref()
-            .unwrap()
-            .linearization_challenges,
-        &external_challenges
-            .machine_state_permutation_argument
-            .as_ref()
-            .unwrap()
-            .additive_term,
-    );
-    let t = produce_register_contribution_into_memory_accumulator(
-        &register_final_state,
-        external_challenges
-            .memory_argument
-            .memory_argument_linearization_challenges,
-        external_challenges.memory_argument.memory_argument_gamma,
-    );
-    permutation_argument_accumulator.mul_assign(&t);
+    // let mut permutation_argument_accumulator = produce_pc_into_permutation_accumulator_raw(
+    //     INITIAL_PC,
+    //     split_timestamp(INITIAL_TIMESTAMP),
+    //     final_pc,
+    //     split_timestamp(final_timestamp),
+    //     &external_challenges
+    //         .machine_state_permutation_argument
+    //         .as_ref()
+    //         .unwrap()
+    //         .linearization_challenges,
+    //     &external_challenges
+    //         .machine_state_permutation_argument
+    //         .as_ref()
+    //         .unwrap()
+    //         .additive_term,
+    // );
+    // let t = produce_register_contribution_into_memory_accumulator(
+    //     &register_final_state,
+    //     external_challenges
+    //         .memory_argument
+    //         .memory_argument_linearization_challenges,
+    //     external_challenges.memory_argument.memory_argument_gamma,
+    // );
+    // permutation_argument_accumulator.mul_assign(&t);
 
     let mut write_set = BTreeSet::<(u32, TimestampScalar)>::new();
     let mut read_set = BTreeSet::<(u32, TimestampScalar)>::new();
@@ -357,7 +307,7 @@ pub fn gkr_run_basic_unrolled_test_impl(
 
         let add_sub_circuit = {
             use crate::cs::machine::ops::unrolled::add_sub_lui_auipc_mop::*;
-            compile_unrolled_circuit_state_transition_into_gkr::<Mersenne31Field>(
+            compile_unrolled_circuit_state_transition_into_gkr::<BabyBearField>(
                 &|cs| add_sub_lui_auipc_mop_table_addition_fn(cs),
                 &|cs| add_sub_lui_auipc_mop_circuit_with_preprocessed_bytecode_for_gkr(cs),
                 1 << 20,
@@ -398,11 +348,9 @@ pub fn gkr_run_basic_unrolled_test_impl(
         let (decoder_table_data, witness_gen_data) =
             &preprocessing_data[&ADD_SUB_LUI_AUIPC_MOP_CIRCUIT_FAMILY_IDX];
 
-        // let decoder_table_data = materialize_flattened_decoder_table(decoder_table_data);
-
-        let row = 6;
-        dbg!(buffer[row]);
-        dbg!(witness_gen_data[(buffer[row].opcode_data.initial_pc / 4) as usize]);
+        // let row = 6;
+        // dbg!(buffer[row]);
+        // dbg!(witness_gen_data[(buffer[row].opcode_data.initial_pc / 4) as usize]);
 
         let oracle = NonMemoryCircuitOracle {
             inner: &buffer[..],
@@ -413,7 +361,7 @@ pub fn gkr_run_basic_unrolled_test_impl(
         let is_empty = oracle.inner.is_empty();
 
         let memory_trace =
-            evaluate_gkr_memory_witness_for_executor_family::<Mersenne31Field, _, _, _>(
+            evaluate_gkr_memory_witness_for_executor_family::<BabyBearField, _, _, _>(
                 &add_sub_circuit,
                 NUM_CYCLES_PER_CHUNK,
                 &oracle,
@@ -422,7 +370,7 @@ pub fn gkr_run_basic_unrolled_test_impl(
                 Global,
             );
 
-        let full_trace = evaluate_gkr_witness_for_executor_family::<Mersenne31Field, _, _, _>(
+        let full_trace = evaluate_gkr_witness_for_executor_family::<BabyBearField, _, _, _>(
             &add_sub_circuit,
             add_sub_lui_auipc_mod::witness_eval_fn,
             NUM_CYCLES_PER_CHUNK,
@@ -453,20 +401,19 @@ pub fn gkr_run_basic_unrolled_test_impl(
             let is_satisfied = check_satisfied(&add_sub_circuit, &full_trace);
             assert!(is_satisfied);
 
-            // let twiddles: Twiddles<_, Global> = Twiddles::new(trace_len, &worker);
+            let twiddles: Twiddles<_, Global> = Twiddles::new(trace_len, &worker);
             // let lde_precomputations =
             //     LdePrecomputations::new(trace_len, lde_factor, &[0, 1], &worker);
-            // let setup = SetupPrecomputations::from_tables_and_trace_len_with_decoder_table(
-            //     &TableDriver::new(),
-            //     &decoder_table_data,
-            //     trace_len,
-            //     &add_sub_circuit.setup_layout,
-            //     &twiddles,
-            //     &lde_precomputations,
-            //     lde_factor,
-            //     tree_cap_size,
-            //     &worker,
-            // );
+            let setup = GKRSetupPrecomputations::from_tables_and_trace_len_with_decoder_table(
+                &TableDriver::new(),
+                &decoder_table_data,
+                trace_len,
+                &add_sub_circuit,
+                &twiddles,
+                lde_factor,
+                tree_cap_size,
+                &worker,
+            );
 
             // let lookup_mapping_for_gpu = if maybe_gpu_unrolled_comparison_hook.is_some() {
             //     Some(full_trace.lookup_mapping.clone())
@@ -474,35 +421,31 @@ pub fn gkr_run_basic_unrolled_test_impl(
             //     None
             // };
 
-            // println!("Trying to prove");
+            println!("Trying to prove");
 
-            // let now = std::time::Instant::now();
-            // let (prover_data, proof) = prove_configured_for_unrolled_circuits::<
-            //     DEFAULT_TRACE_PADDING_MULTIPLE,
-            //     _,
-            //     DefaultTreeConstructor,
-            // >(
-            //     &add_sub_circuit,
-            //     &vec![],
-            //     &external_challenges,
-            //     full_trace,
-            //     &[],
-            //     &setup,
-            //     &twiddles,
-            //     &lde_precomputations,
-            //     None,
-            //     lde_factor,
-            //     tree_cap_size,
-            //     53,
-            //     28,
-            //     &worker,
-            // );
-            // println!("Proving time is {:?}", now.elapsed());
+            let now = std::time::Instant::now();
+            let (prover_data, proof) = prove_configured_with_gkr::<
+                BabyBearField,
+                BabyBearExt4,
+                DefaultTreeConstructor,
+            >(
+                &add_sub_circuit,
+                &external_challenges,
+                full_trace,
+                &setup,
+                &twiddles,
+                lde_factor,
+                tree_cap_size,
+                53,
+                28,
+                &worker,
+            );
+            println!("Proving time is {:?}", now.elapsed());
 
             // if is_empty {
             //     assert_eq!(
             //         proof.permutation_grand_product_accumulator,
-            //         Mersenne31Quartic::ONE
+            //         BabyBearExt4::ONE
             //     );
             // }
             // assert!(proof.delegation_argument_accumulator.is_none());
@@ -547,7 +490,7 @@ pub fn gkr_run_basic_unrolled_test_impl(
     //     use crate::cs::machine::ops::unrolled::jump_branch_slt::*;
 
     //     let jump_branch_circuit = {
-    //         compile_unrolled_circuit_state_transition::<Mersenne31Field>(
+    //         compile_unrolled_circuit_state_transition::<BabyBearField>(
     //             &|cs| jump_branch_slt_table_addition_fn(cs),
     //             &|cs| jump_branch_slt_circuit_with_preprocessed_bytecode::<_, _, true>(cs),
     //             1 << 20,
@@ -555,7 +498,7 @@ pub fn gkr_run_basic_unrolled_test_impl(
     //         )
     //     };
 
-    //     let mut table_driver = TableDriver::<Mersenne31Field>::new();
+    //     let mut table_driver = TableDriver::<BabyBearField>::new();
     //     jump_branch_slt_table_driver_fn(&mut table_driver);
 
     //     let num_calls =
@@ -689,7 +632,7 @@ pub fn gkr_run_basic_unrolled_test_impl(
     //         if is_empty {
     //             assert_eq!(
     //                 proof.permutation_grand_product_accumulator,
-    //                 Mersenne31Quartic::ONE
+    //                 BabyBearExt4::ONE
     //             );
     //         }
     //         assert!(proof.delegation_argument_accumulator.is_none());
@@ -720,7 +663,7 @@ pub fn gkr_run_basic_unrolled_test_impl(
     //     }
     // }
 
-    // let csr_table = create_csr_table_for_delegation::<Mersenne31Field>(
+    // let csr_table = create_csr_table_for_delegation::<BabyBearField>(
     //     true,
     //     &[
     //         BLAKE2S_DELEGATION_CSR_REGISTER,
@@ -734,7 +677,7 @@ pub fn gkr_run_basic_unrolled_test_impl(
     //     use crate::cs::machine::ops::unrolled::shift_binary_csr::*;
 
     //     let shift_binop_csrrw_circuit = {
-    //         compile_unrolled_circuit_state_transition::<Mersenne31Field>(
+    //         compile_unrolled_circuit_state_transition::<BabyBearField>(
     //             &|cs| {
     //                 shift_binop_csrrw_table_addition_fn(cs);
     //                 // and we need to add CSR table
@@ -749,7 +692,7 @@ pub fn gkr_run_basic_unrolled_test_impl(
     //         )
     //     };
 
-    //     let mut table_driver = TableDriver::<Mersenne31Field>::new();
+    //     let mut table_driver = TableDriver::<BabyBearField>::new();
     //     shift_binop_csrrw_table_driver_fn(&mut table_driver);
     //     table_driver.add_table_with_content(
     //         TableType::SpecialCSRProperties,
@@ -886,11 +829,11 @@ pub fn gkr_run_basic_unrolled_test_impl(
     //         if is_empty {
     //             assert_eq!(
     //                 proof.permutation_grand_product_accumulator,
-    //                 Mersenne31Quartic::ONE
+    //                 BabyBearExt4::ONE
     //             );
     //             assert_eq!(
     //                 proof.delegation_argument_accumulator.unwrap(),
-    //                 Mersenne31Quartic::ZERO
+    //                 BabyBearExt4::ZERO
     //             );
     //         }
 
@@ -939,7 +882,7 @@ pub fn gkr_run_basic_unrolled_test_impl(
     //     };
 
     //     let mul_div_circuit = {
-    //         compile_unrolled_circuit_state_transition::<Mersenne31Field>(
+    //         compile_unrolled_circuit_state_transition::<BabyBearField>(
     //             &|cs| {
     //                 mul_div_table_addition_fn(cs);
     //             },
@@ -949,7 +892,7 @@ pub fn gkr_run_basic_unrolled_test_impl(
     //         )
     //     };
 
-    //     let mut table_driver = TableDriver::<Mersenne31Field>::new();
+    //     let mut table_driver = TableDriver::<BabyBearField>::new();
     //     mul_div_table_driver_fn(&mut table_driver);
 
     //     let num_calls = counters.get_calls_to_circuit_family::<MUL_DIV_CIRCUIT_FAMILY_IDX>();
@@ -1082,7 +1025,7 @@ pub fn gkr_run_basic_unrolled_test_impl(
     //         if is_empty {
     //             assert_eq!(
     //                 proof.permutation_grand_product_accumulator,
-    //                 Mersenne31Quartic::ONE
+    //                 BabyBearExt4::ONE
     //             );
     //         }
     //         assert!(proof.delegation_argument_accumulator.is_none());
@@ -1128,7 +1071,7 @@ pub fn gkr_run_basic_unrolled_test_impl(
     //         { common_constants::ROM_SECOND_WORD_BITS },
     //     >(&binary);
     //     let word_load_store_circuit = {
-    //         compile_unrolled_circuit_state_transition::<Mersenne31Field>(
+    //         compile_unrolled_circuit_state_transition::<BabyBearField>(
     //             &|cs| {
     //                 word_only_load_store_table_addition_fn(cs);
     //                 for (table_type, table) in extra_tables.clone() {
@@ -1147,7 +1090,7 @@ pub fn gkr_run_basic_unrolled_test_impl(
     //         )
     //     };
 
-    //     let mut table_driver = TableDriver::<Mersenne31Field>::new();
+    //     let mut table_driver = TableDriver::<BabyBearField>::new();
     //     word_only_load_store_table_driver_fn(&mut table_driver);
     //     for (table_type, table) in extra_tables.clone() {
     //         table_driver.add_table_with_content(table_type, table);
@@ -1283,7 +1226,7 @@ pub fn gkr_run_basic_unrolled_test_impl(
     //         if is_empty {
     //             assert_eq!(
     //                 proof.permutation_grand_product_accumulator,
-    //                 Mersenne31Quartic::ONE
+    //                 BabyBearExt4::ONE
     //             );
     //         }
     //         assert!(proof.delegation_argument_accumulator.is_none());
@@ -1327,7 +1270,7 @@ pub fn gkr_run_basic_unrolled_test_impl(
     //         { common_constants::ROM_SECOND_WORD_BITS },
     //     >(&binary);
     //     let subword_load_store_circuit = {
-    //         compile_unrolled_circuit_state_transition::<Mersenne31Field>(
+    //         compile_unrolled_circuit_state_transition::<BabyBearField>(
     //             &|cs| {
     //                 subword_only_load_store_table_addition_fn(cs);
     //                 for (table_type, table) in extra_tables.clone() {
@@ -1346,7 +1289,7 @@ pub fn gkr_run_basic_unrolled_test_impl(
     //         )
     //     };
 
-    //     let mut table_driver = TableDriver::<Mersenne31Field>::new();
+    //     let mut table_driver = TableDriver::<BabyBearField>::new();
     //     subword_only_load_store_table_driver_fn(&mut table_driver);
     //     for (table_type, table) in extra_tables.clone() {
     //         table_driver.add_table_with_content(table_type, table);
@@ -1486,7 +1429,7 @@ pub fn gkr_run_basic_unrolled_test_impl(
     //         if is_empty {
     //             assert_eq!(
     //                 proof.permutation_grand_product_accumulator,
-    //                 Mersenne31Quartic::ONE
+    //                 BabyBearExt4::ONE
     //             );
     //         }
     //         assert!(proof.delegation_argument_accumulator.is_none());
@@ -1538,11 +1481,11 @@ pub fn gkr_run_basic_unrolled_test_impl(
     // if true {
     //     println!("Will try to prove memory inits and teardowns circuit");
 
-    //     let compiler = OneRowCompiler::<Mersenne31Field>::default();
+    //     let compiler = OneRowCompiler::<BabyBearField>::default();
     //     let inits_and_teardowns_circuit =
     //         compiler.compile_init_and_teardown_circuit(NUM_INIT_AND_TEARDOWN_SETS, TRACE_LEN_LOG2);
 
-    //     let table_driver = TableDriver::<Mersenne31Field>::new();
+    //     let table_driver = TableDriver::<BabyBearField>::new();
 
     //     let inits_data = &inits_and_teardowns[0];
 
@@ -1669,7 +1612,7 @@ pub fn gkr_run_basic_unrolled_test_impl(
     //     let (circuit, table_driver) = {
     //         use crate::cs::cs::cs_reference::BasicAssembly;
     //         use cs::delegation::blake2_round_with_extended_control::define_blake2_with_extended_control_delegation_circuit;
-    //         let mut cs = BasicAssembly::<Mersenne31Field>::new();
+    //         let mut cs = BasicAssembly::<BabyBearField>::new();
     //         define_blake2_with_extended_control_delegation_circuit(&mut cs);
     //         let (circuit_output, _) = cs.finalize();
     //         let table_driver = circuit_output.table_driver.clone();
@@ -1851,7 +1794,7 @@ pub fn gkr_run_basic_unrolled_test_impl(
     //     let (circuit, table_driver) = {
     //         use crate::cs::cs::cs_reference::BasicAssembly;
     //         use cs::delegation::keccak_special5::define_keccak_special5_delegation_circuit;
-    //         let mut cs = BasicAssembly::<Mersenne31Field>::new();
+    //         let mut cs = BasicAssembly::<BabyBearField>::new();
     //         define_keccak_special5_delegation_circuit::<_, _, false>(&mut cs);
     //         let (circuit_output, _) = cs.finalize();
     //         let table_driver = circuit_output.table_driver.clone();
@@ -2129,6 +2072,6 @@ pub fn gkr_run_basic_unrolled_test_impl(
     //     assert_eq!(total_unique_teardowns, expected_teardown_set.len());
     // }
 
-    // assert_eq!(permutation_argument_accumulator, Mersenne31Quartic::ONE);
-    // assert_eq!(delegation_argument_accumulator, Mersenne31Quartic::ZERO);
+    // assert_eq!(permutation_argument_accumulator, BabyBearExt4::ONE);
+    // assert_eq!(delegation_argument_accumulator, BabyBearExt4::ZERO);
 }

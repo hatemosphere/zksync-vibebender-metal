@@ -6,6 +6,7 @@ const USE_REDUCED_BLAKE2_ROUNDS: bool = true;
 use fft::GoodAllocator;
 use field::Mersenne31Field;
 use field::Mersenne31Quartic;
+use field::PrimeField;
 use poseidon2::m31::HASH_SIZE_U32_WORDS;
 use trace_holder::ColumnMajorTrace;
 use trace_holder::RowMajorTrace;
@@ -82,30 +83,50 @@ pub trait MerkleTreeConstructor: Sized + Send + Sync {
         [u32; HASH_SIZE_U32_WORDS],
         Vec<[u32; HASH_SIZE_U32_WORDS], C>,
     );
+}
 
-    // pub fn verify_proof_over_cap(
-    //     _proof: &[[u32; BLAKE2S_DIGEST_SIZE_U32_WORDS]],
-    //     _cap: &[[u32; BLAKE2S_DIGEST_SIZE_U32_WORDS]],
-    //     _leaf_hash: [u32; BLAKE2S_DIGEST_SIZE_U32_WORDS],
-    //     _idx: usize,
-    // ) -> bool {
-    //     todo!();
+pub trait ColumnMajorMerkleTreeConstructor<F: PrimeField>: Sized + Send + Sync {
+    type Verifier: LeafInclusionVerifier;
 
-    //     // let mut idx = idx;
-    //     // let mut current = leaf_hash;
-    //     // for proof_el in proof.iter() {
-    //     //     if idx & 1 == 0 {
-    //     //         current = H::hash_into_node(&current, proof_el, 0);
-    //     //     } else {
-    //     //         current = H::hash_into_node(proof_el, &current, 0);
-    //     //     }
+    // fn construct_for_coset<A: GoodAllocator, const N: usize>(
+    //     trace: &RowMajorTrace<Mersenne31Field, N, A>,
+    //     cap_size: usize,
+    //     bitreverse: bool,
+    //     worker: &Worker,
+    // ) -> Self;
 
-    //     //     idx >>= 1;
-    //     // }
+    // fn construct_separated_for_coset<A: GoodAllocator, const N: usize>(
+    //     trace: &RowMajorTrace<Mersenne31Field, N, A>,
+    //     separators: &[usize],
+    //     cap_size: usize,
+    //     bitreverse: bool,
+    //     worker: &Worker,
+    // ) -> Vec<Self>;
 
-    //     // let cap_el = &cap[idx];
-    //     // H::normalize_output(&mut current);
+    // fn construct_for_column_major_coset<A: GoodAllocator>(
+    //     trace: &ColumnMajorTrace<Mersenne31Quartic, A>,
+    //     combine_by: usize,
+    //     cap_size: usize,
+    //     bitreverse: bool,
+    //     worker: &Worker,
+    // ) -> Self;
 
-    //     // cap_el == &current
+    // fn get_cap(&self) -> MerkleTreeCapVarLength;
+
+    // fn dump_caps(caps: &[Self]) -> Vec<MerkleTreeCapVarLength> {
+    //     let mut result = Vec::with_capacity(caps.len());
+    //     for el in caps.iter() {
+    //         result.push(el.get_cap());
+    //     }
+
+    //     result
     // }
+
+    // fn get_proof<C: GoodAllocator>(
+    //     &self,
+    //     idx: usize,
+    // ) -> (
+    //     [u32; HASH_SIZE_U32_WORDS],
+    //     Vec<[u32; HASH_SIZE_U32_WORDS], C>,
+    // );
 }

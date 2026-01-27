@@ -53,4 +53,18 @@ impl GKRAddress {
             Self::Cached { layer, .. } => assert_eq!(output_layer, *layer + 1),
         }
     }
+
+    #[track_caller]
+    pub fn assert_as_layer(&self, output_layer: usize) {
+        match self {
+            Self::BaseLayerWitness(..) | Self::BaseLayerMemory(..) => {
+                assert_eq!(output_layer, 0)
+            }
+            Self::InnerLayer { .. } | Self::Setup(..) | Self::OptimizedOut(..)  => {
+                unreachable!();
+            },
+
+            Self::Cached { layer, .. } => assert_eq!(output_layer, *layer),
+        }
+    }
 }

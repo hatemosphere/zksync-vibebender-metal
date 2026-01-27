@@ -261,6 +261,44 @@ pub fn materialize_flattened_decoder_table<F: PrimeField>(
     result
 }
 
+pub fn materialize_flattened_decoder_table_with_bitmask<F: PrimeField>(
+    supported_entries_for_family: &[Option<DecoderTableEntry<F>>],
+    fields_bitmask: &[bool],
+) -> Vec<arrayvec::ArrayVec<F, EXECUTOR_FAMILY_CIRCUIT_DECODER_TABLE_WIDTH>> {
+    assert!(supported_entries_for_family.len().is_power_of_two());
+    assert_eq!(fields_bitmask.len(), EXECUTOR_FAMILY_CIRCUIT_DECODER_TABLE_WIDTH);
+    assert!(fields_bitmask[0]); // at least PCs should be there
+    assert!(fields_bitmask[1]);
+
+    // log-derivative based lookup argument doesn't require any special ordering of the table entries,
+    // so we are free to pad "unsupported" entries with just all zeroes - the only requirement is that
+    // "unsupported" PC values must not be in the table
+
+    let mut result = Vec::with_capacity(supported_entries_for_family.len());
+    for el in supported_entries_for_family.iter() {
+        if let Some(supported) = el {
+            let row = supported.flatten();
+            let mut selected_row = arrayvec::ArrayVec::new();
+            for (mask, value) in fields_bitmask.iter().zip(row.into_iter()) {
+                if *mask {
+                    selected_row.push(value);
+                }
+            }
+            result.push(selected_row);
+        } else {
+            // NOTE: we do not use 0 here, but instead some value that doesn't pass range check and so can not be
+            // a valid PC
+            let mut selected_row = arrayvec::ArrayVec::new();
+            for _ in 0..fields_bitmask.len() {
+                selected_row.push(F::MINUS_ONE);
+            }
+            result.push(selected_row);
+        }
+    }
+
+    result
+}
+
 #[cfg(test)]
 mod test {
     use std::{alloc::Global, io::Read};

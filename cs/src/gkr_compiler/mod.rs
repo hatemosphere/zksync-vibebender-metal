@@ -11,10 +11,11 @@ use crate::definitions::GKRAddress;
 use crate::definitions::Variable;
 use crate::definitions::REGISTER_SIZE;
 use crate::gkr_compiler::graph::GraphHolder;
-use crate::gkr_compiler::layout::GKRAuxLayoutData;
-use crate::gkr_compiler::layout::GKRLayerDescription;
+pub use crate::gkr_compiler::layout::GKRAuxLayoutData;
+pub use crate::gkr_compiler::layout::GKRLayerDescription;
 use crate::one_row_compiler::gkr::NoFieldLinearRelation;
 use crate::one_row_compiler::gkr::NoFieldVectorLookupRelation;
+use crate::one_row_compiler::gkr::NoFieldSingleColumnLookupRelation;
 use common_constants::*;
 use field::PrimeField;
 use std::collections::*;
@@ -54,6 +55,7 @@ pub struct GKRCircuitArtifact<F: PrimeField> {
     pub table_offsets: Vec<u32>,
     pub total_tables_size: usize,
     pub offset_for_decoder_table: usize,
+    pub has_decoder_lookup: bool,
     pub layers: Vec<GKRLayerDescription>,
 
     pub memory_layout: GKRMemoryLayout,
@@ -61,6 +63,7 @@ pub struct GKRCircuitArtifact<F: PrimeField> {
     pub scratch_space_size: usize,
     pub placement_data: BTreeMap<Variable, GKRAddress>,
     pub generic_lookup_tables_width: usize,
+    pub decode_table_columns_mask: Vec<bool>,
     pub tables_ids_in_generic_lookups: bool,
 
     pub degree_2_constraints: Vec<Degree2Constraint<F>>,
@@ -128,7 +131,7 @@ pub enum CompiledAddressSpaceRelation {
 }
 
 #[derive(Clone, Debug, Hash, PartialEq, Eq, serde::Serialize, serde::Deserialize)]
-pub enum CompliedAddress {
+pub enum CompiledAddress {
     Constant(u32),
     U16Space(GKRAddress),
     U32Space([GKRAddress; 2]),
@@ -158,7 +161,7 @@ impl CompiledAddressSpaceRelationStrict {
 }
 
 #[derive(Clone, Debug, Hash, PartialEq, Eq, serde::Serialize, serde::Deserialize)]
-pub enum CompliedAddressStrict {
+pub enum CompiledAddressStrict {
     Constant(u32),
     U16Space(usize),
     U32Space([usize; 2]),
@@ -171,7 +174,7 @@ pub enum CompliedAddressStrict {
     U32SpaceGeneric([(Box<[(u64, usize)]>, u64); 2]),
 }
 
-impl CompliedAddressStrict {
+impl CompiledAddressStrict {
     pub(crate) fn dependencies(&self) -> Vec<GKRAddress> {
         match self {
             Self::Constant(..) => vec![],
@@ -203,7 +206,7 @@ impl CompliedAddressStrict {
 #[derive(Clone, Debug, Hash, PartialEq, Eq, serde::Serialize, serde::Deserialize)]
 pub struct NoFieldSpecialMemoryContributionRelation {
     pub address_space: CompiledAddressSpaceRelationStrict,
-    pub address: CompliedAddressStrict,
+    pub address: CompiledAddressStrict,
     pub timestamp: [usize; NUM_TIMESTAMP_COLUMNS_FOR_RAM],
     pub value: [usize; REGISTER_SIZE],
     pub timestamp_offset: u32,
@@ -298,7 +301,7 @@ pub enum NoFieldGKRRelation {
     // Lookup argument related
     // Computes linear relation and places it into variable in base field
     MaterializedSingleLookupInput {
-        input: NoFieldLinearRelation,
+        input: NoFieldSingleColumnLookupRelation,
         output: GKRAddress,
     },
     // Computes linear relation for vector lookup and places it into variable in extension field
@@ -323,19 +326,26 @@ pub enum NoFieldGKRRelation {
 
     // 1/(a+gamma) + 1/(b + gamma) where a, b are in base field
     LookupPairFromBaseInputs {
-        input: [NoFieldLinearRelation; 2],
+        input: [NoFieldSingleColumnLookupRelation; 2],
         output: [GKRAddress; 2],
     },
     // a/b + 1/(c + gamma) where `c`` is in the base field
     LookupUnbalancedPairWithBaseInputs {
         input: [GKRAddress; 2],
-        remainder: NoFieldLinearRelation,
+        remainder: NoFieldSingleColumnLookupRelation,
         output: [GKRAddress; 2],
     },
     // 1/(a+gamma) + multiplicity/(setup + gamma) where a is in base field
     LookupFromBaseInputsWithSetup {
-        input: NoFieldLinearRelation,
+        input: NoFieldSingleColumnLookupRelation,
         setup: [GKRAddress; 2],
+        output: [GKRAddress; 2],
+    },
+
+    // a/b + 1/(c + gamma) where `c`` is in the base field and is materialized
+    LookupUnbalancedPairWithMaterializedBaseInputs {
+        input: [GKRAddress; 2],
+        remainder: GKRAddress,
         output: [GKRAddress; 2],
     },
 
@@ -429,6 +439,13 @@ impl NoFieldGKRRelation {
             } => {
                 vec![]
             }
+            Self::LookupUnbalancedPairWithMaterializedBaseInputs {
+                input,
+                remainder,
+                output,
+            } => {
+                vec![]
+            }
             Self::LookupFromBaseInputsWithSetup {
                 input,
                 setup,
@@ -482,14 +499,14 @@ impl NoFieldGKRRelation {
             }
             Self::MaterializedSingleLookupInput { input, output } => {
                 let mut result = BTreeSet::new();
-                for (_, el) in input.linear_terms.iter() {
+                for (_, el) in input.input.linear_terms.iter() {
                     result.insert(*el);
                 }
                 result.into_iter().collect()
             }
             Self::MaterializedVectorLookupInput { input, output } => {
                 let mut result = BTreeSet::new();
-                for el in input.0.iter() {
+                for el in input.columns.iter() {
                     for (_, el) in el.linear_terms.iter() {
                         result.insert(*el);
                     }
@@ -506,7 +523,7 @@ impl NoFieldGKRRelation {
             Self::LookupPairFromBaseInputs { input, output } => {
                 let mut result = BTreeSet::new();
                 for el in input.iter() {
-                    for (_, el) in el.linear_terms.iter() {
+                    for (_, el) in el.input.linear_terms.iter() {
                         result.insert(*el);
                     }
                 }
@@ -518,11 +535,21 @@ impl NoFieldGKRRelation {
                 output,
             } => {
                 let mut result = BTreeSet::new();
-                for (_, el) in remainder.linear_terms.iter() {
+                for (_, el) in remainder.input.linear_terms.iter() {
                     result.insert(*el);
                 }
                 let mut result: Vec<GKRAddress> = result.into_iter().collect();
                 result.extend_from_slice(input);
+                result
+            }
+            Self::LookupUnbalancedPairWithMaterializedBaseInputs {
+                input,
+                remainder,
+                output,
+            } => {
+                let mut result: Vec<GKRAddress> = vec![];
+                result.extend_from_slice(input);
+                result.push(*remainder);
                 result
             }
             Self::LookupFromBaseInputsWithSetup {
@@ -531,7 +558,7 @@ impl NoFieldGKRRelation {
                 output,
             } => {
                 let mut result = BTreeSet::new();
-                for (_, el) in input.linear_terms.iter() {
+                for (_, el) in input.input.linear_terms.iter() {
                     result.insert(*el);
                 }
                 let mut result: Vec<GKRAddress> = result.into_iter().collect();
@@ -541,7 +568,7 @@ impl NoFieldGKRRelation {
             Self::LookupPairFromVectorInputs { input, output } => {
                 let mut result = BTreeSet::new();
                 for input in input.iter() {
-                    for el in input.0.iter() {
+                    for el in input.columns.iter() {
                         for (_, el) in el.linear_terms.iter() {
                             result.insert(*el);
                         }
@@ -570,7 +597,7 @@ impl NoFieldGKRCacheRelation {
             }
             Self::VectorizedLookup(vl) => {
                 let mut result = vec![];
-                for el in vl.0.iter() {
+                for el in vl.columns.iter() {
                     for (_, pos) in el.linear_terms.iter() {
                         result.push(*pos);
                     }

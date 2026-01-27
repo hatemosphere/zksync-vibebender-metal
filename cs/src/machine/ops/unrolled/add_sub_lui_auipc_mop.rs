@@ -515,9 +515,9 @@ mod test {
 
     #[test]
     fn compile_add_sub_lui_auipc_mop_into_gkr() {
-        use ::field::Mersenne31Field;
+        use ::field::baby_bear::base::BabyBearField;
 
-        let gkr_compiled = compile_unrolled_circuit_state_transition_into_gkr::<Mersenne31Field>(
+        let gkr_compiled = compile_unrolled_circuit_state_transition_into_gkr::<BabyBearField>(
             &|cs| add_sub_lui_auipc_mop_table_addition_fn(cs),
             &|cs| add_sub_lui_auipc_mop_circuit_with_preprocessed_bytecode_for_gkr(cs),
             1 << 20,
@@ -532,9 +532,9 @@ mod test {
 
     #[test]
     fn compile_add_sub_lui_auipc_mop_gkr_witness_graph() {
-        use ::field::Mersenne31Field;
+        use ::field::baby_bear::base::BabyBearField;
 
-        let ssa_forms = dump_ssa_witness_eval_form_for_unrolled_circuit::<Mersenne31Field>(
+        let ssa_forms = dump_ssa_witness_eval_form_for_unrolled_circuit::<BabyBearField>(
             &|cs| add_sub_lui_auipc_mop_table_addition_fn(cs),
             &|cs| add_sub_lui_auipc_mop_circuit_with_preprocessed_bytecode_for_gkr(cs),
         );

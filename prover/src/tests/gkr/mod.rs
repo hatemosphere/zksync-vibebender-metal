@@ -262,17 +262,17 @@ mod add_sub_lui_auipc_mod {
         WitnessComputationalInteger, WitnessComputationalU16, WitnessComputationalU32,
         WitnessComputationalU8, WitnessMask,
     };
-    use ::field::Mersenne31Field;
+    use ::field::baby_bear::base::BabyBearField;
     use cs::cs::witness_placer::scalar_witness_type_set::ScalarWitnessTypeSet;
 
     include!("../../../add_sub_lui_auipc_mop_preprocessed_generated_gkr.rs");
 
     pub fn witness_eval_fn<'a, 'b>(
-        proxy: &'_ mut ColumnMajorWitnessProxy<'a, NonMemoryCircuitOracle<'b>, Mersenne31Field>,
+        proxy: &'_ mut ColumnMajorWitnessProxy<'a, NonMemoryCircuitOracle<'b>, BabyBearField>,
     ) {
         let fn_ptr = evaluate_witness_fn::<
-            ScalarWitnessTypeSet<Mersenne31Field, true>,
-            ColumnMajorWitnessProxy<'a, NonMemoryCircuitOracle<'b>, Mersenne31Field>,
+            ScalarWitnessTypeSet<BabyBearField, true>,
+            ColumnMajorWitnessProxy<'a, NonMemoryCircuitOracle<'b>, BabyBearField>,
         >;
         (fn_ptr)(proxy);
     }

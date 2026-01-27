@@ -100,6 +100,7 @@ impl<F: PrimeField> GKRCompiler<F> {
         assert!(total_lookups_for_range_checks_16 < F::CHARACTERISTICS, "total number of range-check-16 lookups in circuit is {} that is larger that field characteristics {}", total_lookups_for_range_checks_16, F::CHARACTERISTICS);
 
         let mut expect_table_id_for_generic_lookup = false;
+        let mut decode_table_columns_mask = Vec::new();
 
         let (generic_lookup_width, decoder_lookup_pair) = {
             // and then all lookups from circuit + decoder are "generic" ones
@@ -130,11 +131,15 @@ impl<F: PrimeField> GKRCompiler<F> {
                     .extend([executor_machine_state.decoder_data.rd_is_zero]);
                 decoder_lookup_trivial_vars.extend(executor_machine_state.decoder_data.imm);
                 decoder_table_width = 2 + 1 + 1 + 1 + 1 + REGISTER_SIZE;
+                decode_table_columns_mask.resize(decoder_table_width, true);
 
                 if executor_machine_state.decoder_data.funct3.is_placeholder() == false {
                     decoder_lookup_trivial_vars
                         .extend([executor_machine_state.decoder_data.funct3]);
                     decoder_table_width += 1;
+                    decode_table_columns_mask.push(true);
+                } else {
+                    decode_table_columns_mask.push(false);
                 }
 
                 let mut decoder_lookup: Vec<_> = decoder_lookup_trivial_vars
@@ -142,9 +147,11 @@ impl<F: PrimeField> GKRCompiler<F> {
                     .map(|el| LookupInput::<F>::Variable(el))
                     .collect();
                 if circuit_family_bitmask.is_empty() {
-                    // nothing
+                    // we do not need this data
+                    decode_table_columns_mask.push(false);
                 } else {
                     decoder_table_width += 1;
+                    decode_table_columns_mask.push(true);
                     if circuit_family_bitmask.len() == 1 {
                         // just variable itself
                         decoder_lookup.push(LookupInput::<F>::Variable(circuit_family_bitmask[0]));
@@ -165,6 +172,8 @@ impl<F: PrimeField> GKRCompiler<F> {
                 }
                 decoder_lookup_pair = Some((executor_machine_state.execute, decoder_lookup));
             }
+
+            assert_eq!(decode_table_columns_mask.iter().filter(|el| **el == true).count(), decoder_table_width);
 
             let total_generic_lookups = (generic_lookups.len() as u64
                 + decoder_lookup_pair.is_some() as u64)
@@ -922,6 +931,8 @@ impl<F: PrimeField> GKRCompiler<F> {
             placement_data,
             generic_lookup_tables_width: generic_lookup_width,
             tables_ids_in_generic_lookups: expect_table_id_for_generic_lookup,
+            decode_table_columns_mask,
+            has_decoder_lookup: true,
 
             degree_2_constraints,
             degree_1_constraints,

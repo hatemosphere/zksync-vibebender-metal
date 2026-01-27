@@ -271,6 +271,12 @@ pub(crate) unsafe fn gkr_process_machine_state_assuming_preprocessed_decoder<
             if execute {
                 assert!(initial_pc % 4 == 0);
                 let idx = (initial_pc / 4) as usize;
+                // count for mapping purposes
+                proxy
+                    .lookup_mapping_rows_starts
+                    .last_mut()
+                    .expect("must exist")
+                    .write((idx + compiled_circuit.offset_for_decoder_table) as u32);
                 generic_lookup_multiplicities[idx + compiled_circuit.offset_for_decoder_table] += 1;
             }
         } else {

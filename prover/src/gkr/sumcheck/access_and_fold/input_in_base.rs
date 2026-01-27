@@ -6,15 +6,26 @@ pub struct BaseFieldPoly<F: PrimeField> {
     pub(crate) values: Box<[F]>,
 }
 
+impl<F: PrimeField> BaseFieldPoly<F> {
+    pub fn new(values: Box<[F]>) -> Self {
+        assert!(values.len().is_power_of_two());
+        Self {
+            values,
+        }
+    }
+}
+
 #[derive(Debug)]
 pub struct BaseFieldPolySource<F: PrimeField> {
-    start: *mut F,
+    start: *const F,
     next_layer_size: usize,
 }
 
 impl<F: PrimeField, E: FieldExtension<F> + Field>
     EvaluationFormStorage<F, E, BaseFieldRepresentation<F>> for BaseFieldPolySource<F>
 {
+    const SHOULD_ACCESS_TO_PREPARE_FOR_NEXT_STEP: bool = false;
+
     fn dummy() -> Self {
         Self {
             start: null_mut(),
@@ -43,7 +54,7 @@ impl<F: PrimeField, E: FieldExtension<F> + Field>
 pub struct BaseFieldPolySourceAfterOneFolding<F: PrimeField, E: FieldExtension<F> + Field> {
     pub(crate) base_layer_half_size: usize,
     pub(crate) next_layer_size: usize,
-    pub(crate) base_input_start: *mut F,
+    pub(crate) base_input_start: *const F,
     pub(crate) first_folding_challenge_and_squared: (E, E),
 }
 
@@ -51,6 +62,8 @@ impl<F: PrimeField, E: FieldExtension<F> + Field>
     EvaluationFormStorage<F, E, BaseFieldFoldedOnceRepresentation<F>>
     for BaseFieldPolySourceAfterOneFolding<F, E>
 {
+    const SHOULD_ACCESS_TO_PREPARE_FOR_NEXT_STEP: bool = false;
+
     fn dummy() -> Self {
         Self {
             base_input_start: null_mut(),
@@ -144,7 +157,7 @@ impl<F: PrimeField, E: FieldExtension<F> + Field> BaseFieldPolyIntermediateFoldi
 
 #[derive(Debug)]
 pub struct BaseFieldPolySourceAfterTwoFoldings<F: PrimeField, E: FieldExtension<F> + Field> {
-    pub(crate) base_input_start: *mut F,
+    pub(crate) base_input_start: *const F,
     pub(crate) this_layer_cache_start: *mut E,
     pub(crate) base_layer_half_size: usize,
     pub(crate) base_quarter_size: usize,
@@ -158,6 +171,8 @@ impl<F: PrimeField, E: FieldExtension<F> + Field>
     EvaluationFormStorage<F, E, ExtensionFieldRepresentation<F, E>>
     for BaseFieldPolySourceAfterTwoFoldings<F, E>
 {
+    const SHOULD_ACCESS_TO_PREPARE_FOR_NEXT_STEP: bool = true;
+
     fn dummy() -> Self {
         Self {
             base_input_start: null_mut(),

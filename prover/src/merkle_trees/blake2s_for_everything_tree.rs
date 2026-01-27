@@ -271,3 +271,7 @@ impl<A: GoodAllocator> Blake2sU32MerkleTreeWithCap<A> {
 //             .collect()
 //     }
 // }
+
+impl<F: PrimeField, B: GoodAllocator> ColumnMajorMerkleTreeConstructor<F> for Blake2sU32MerkleTreeWithCap<B> {
+    type Verifier = Blake2sForEverythingVerifier;
+}

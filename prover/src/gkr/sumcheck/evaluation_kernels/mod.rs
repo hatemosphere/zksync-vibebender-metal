@@ -207,6 +207,8 @@ pub trait EvaluationFormStorage<
     R: EvaluationRepresentation<F, E>,
 >
 {
+    const SHOULD_ACCESS_TO_PREPARE_FOR_NEXT_STEP: bool;
+
     fn dummy() -> Self;
     fn get_collapse_context(&self) -> &R::CollapseContext;
     #[inline(always)]
@@ -238,6 +240,8 @@ pub trait EvaluationFormStorage<
 impl<F: PrimeField, E: FieldExtension<F> + Field, R: EvaluationRepresentation<F, E>>
     EvaluationFormStorage<F, E, R> for ()
 {
+    const SHOULD_ACCESS_TO_PREPARE_FOR_NEXT_STEP: bool = false;
+
     fn dummy() -> Self {
         ()
     }

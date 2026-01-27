@@ -73,7 +73,7 @@
         {
           "output_layer": 4,
           "enforced_relation": {
-            "LookupUnbalancedPairWithBaseInputs": {
+            "LookupUnbalancedPairWithMaterializedBaseInputs": {
               "input": [
                 {
                   "InnerLayer": {
@@ -89,18 +89,10 @@
                 }
               ],
               "remainder": {
-                "linear_terms": [
-                  [
-                    1,
-                    {
-                      "InnerLayer": {
-                        "layer": 3,
-                        "offset": 6
-                      }
-                    }
-                  ]
-                ],
-                "constant": 0
+                "InnerLayer": {
+                  "layer": 3,
+                  "offset": 6
+                }
               },
               "output": [
                 {
@@ -180,7 +172,7 @@
         {
           "output_layer": 3,
           "enforced_relation": {
-            "LookupUnbalancedPairWithBaseInputs": {
+            "LookupUnbalancedPairWithMaterializedBaseInputs": {
               "input": [
                 {
                   "InnerLayer": {
@@ -196,18 +188,10 @@
                 }
               ],
               "remainder": {
-                "linear_terms": [
-                  [
-                    1,
-                    {
-                      "InnerLayer": {
-                        "layer": 2,
-                        "offset": 5
-                      }
-                    }
-                  ]
-                ],
-                "constant": 0
+                "InnerLayer": {
+                  "layer": 2,
+                  "offset": 5
+                }
               },
               "output": [
                 {
@@ -846,149 +830,152 @@
             }
           },
           {
-            "VectorizedLookup": [
-              {
-                "linear_terms": [
-                  [
-                    1,
-                    {
-                      "BaseLayerMemory": 18
-                    }
-                  ]
-                ],
-                "constant": 0
-              },
-              {
-                "linear_terms": [
-                  [
-                    1,
-                    {
-                      "BaseLayerMemory": 19
-                    }
-                  ]
-                ],
-                "constant": 0
-              },
-              {
-                "linear_terms": [
-                  [
-                    1,
-                    {
-                      "BaseLayerMemory": 4
-                    }
-                  ]
-                ],
-                "constant": 0
-              },
-              {
-                "linear_terms": [
-                  [
-                    1,
-                    {
-                      "BaseLayerMemory": 9
-                    }
-                  ]
-                ],
-                "constant": 0
-              },
-              {
-                "linear_terms": [
-                  [
-                    1,
-                    {
-                      "BaseLayerMemory": 14
-                    }
-                  ]
-                ],
-                "constant": 0
-              },
-              {
-                "linear_terms": [
-                  [
-                    1,
-                    {
-                      "BaseLayerWitness": 0
-                    }
-                  ]
-                ],
-                "constant": 0
-              },
-              {
-                "linear_terms": [
-                  [
-                    1,
-                    {
-                      "BaseLayerWitness": 1
-                    }
-                  ]
-                ],
-                "constant": 0
-              },
-              {
-                "linear_terms": [
-                  [
-                    1,
-                    {
-                      "BaseLayerWitness": 2
-                    }
-                  ]
-                ],
-                "constant": 0
-              },
-              {
-                "linear_terms": [
-                  [
-                    1,
-                    {
-                      "BaseLayerWitness": 3
-                    }
+            "VectorizedLookup": {
+              "columns": [
+                {
+                  "linear_terms": [
+                    [
+                      1,
+                      {
+                        "BaseLayerMemory": 18
+                      }
+                    ]
                   ],
-                  [
-                    2,
-                    {
-                      "BaseLayerWitness": 4
-                    }
+                  "constant": 0
+                },
+                {
+                  "linear_terms": [
+                    [
+                      1,
+                      {
+                        "BaseLayerMemory": 19
+                      }
+                    ]
                   ],
-                  [
-                    4,
-                    {
-                      "BaseLayerWitness": 5
-                    }
+                  "constant": 0
+                },
+                {
+                  "linear_terms": [
+                    [
+                      1,
+                      {
+                        "BaseLayerMemory": 4
+                      }
+                    ]
                   ],
-                  [
-                    8,
-                    {
-                      "BaseLayerWitness": 6
-                    }
+                  "constant": 0
+                },
+                {
+                  "linear_terms": [
+                    [
+                      1,
+                      {
+                        "BaseLayerMemory": 9
+                      }
+                    ]
                   ],
-                  [
-                    16,
-                    {
-                      "BaseLayerWitness": 7
-                    }
+                  "constant": 0
+                },
+                {
+                  "linear_terms": [
+                    [
+                      1,
+                      {
+                        "BaseLayerMemory": 14
+                      }
+                    ]
                   ],
-                  [
-                    32,
-                    {
-                      "BaseLayerWitness": 8
-                    }
+                  "constant": 0
+                },
+                {
+                  "linear_terms": [
+                    [
+                      1,
+                      {
+                        "BaseLayerWitness": 0
+                      }
+                    ]
                   ],
-                  [
-                    64,
-                    {
-                      "BaseLayerWitness": 9
-                    }
+                  "constant": 0
+                },
+                {
+                  "linear_terms": [
+                    [
+                      1,
+                      {
+                        "BaseLayerWitness": 1
+                      }
+                    ]
                   ],
-                  [
-                    128,
-                    {
-                      "BaseLayerWitness": 10
-                    }
-                  ]
-                ],
-                "constant": 0
-              }
-            ]
+                  "constant": 0
+                },
+                {
+                  "linear_terms": [
+                    [
+                      1,
+                      {
+                        "BaseLayerWitness": 2
+                      }
+                    ]
+                  ],
+                  "constant": 0
+                },
+                {
+                  "linear_terms": [
+                    [
+                      1,
+                      {
+                        "BaseLayerWitness": 3
+                      }
+                    ],
+                    [
+                      2,
+                      {
+                        "BaseLayerWitness": 4
+                      }
+                    ],
+                    [
+                      4,
+                      {
+                        "BaseLayerWitness": 5
+                      }
+                    ],
+                    [
+                      8,
+                      {
+                        "BaseLayerWitness": 6
+                      }
+                    ],
+                    [
+                      16,
+                      {
+                        "BaseLayerWitness": 7
+                      }
+                    ],
+                    [
+                      32,
+                      {
+                        "BaseLayerWitness": 8
+                      }
+                    ],
+                    [
+                      64,
+                      {
+                        "BaseLayerWitness": 9
+                      }
+                    ],
+                    [
+                      128,
+                      {
+                        "BaseLayerWitness": 10
+                      }
+                    ]
+                  ],
+                  "constant": 0
+                }
+              ],
+              "lookup_set_index": 18446744073709551615
+            }
           }
         ]
       ],
@@ -1122,15 +1109,18 @@
           "enforced_relation": {
             "LookupFromBaseInputsWithSetup": {
               "input": {
-                "linear_terms": [
-                  [
-                    1,
-                    {
-                      "BaseLayerWitness": 11
-                    }
-                  ]
-                ],
-                "constant": 0
+                "input": {
+                  "linear_terms": [
+                    [
+                      1,
+                      {
+                        "BaseLayerWitness": 11
+                      }
+                    ]
+                  ],
+                  "constant": 0
+                },
+                "lookup_set_index": 0
               },
               "setup": [
                 {
@@ -1163,26 +1153,32 @@
             "LookupPairFromBaseInputs": {
               "input": [
                 {
-                  "linear_terms": [
-                    [
-                      1,
-                      {
-                        "BaseLayerWitness": 12
-                      }
-                    ]
-                  ],
-                  "constant": 0
+                  "input": {
+                    "linear_terms": [
+                      [
+                        1,
+                        {
+                          "BaseLayerWitness": 12
+                        }
+                      ]
+                    ],
+                    "constant": 0
+                  },
+                  "lookup_set_index": 1
                 },
                 {
-                  "linear_terms": [
-                    [
-                      1,
-                      {
-                        "BaseLayerWitness": 13
-                      }
-                    ]
-                  ],
-                  "constant": 0
+                  "input": {
+                    "linear_terms": [
+                      [
+                        1,
+                        {
+                          "BaseLayerWitness": 13
+                        }
+                      ]
+                    ],
+                    "constant": 0
+                  },
+                  "lookup_set_index": 2
                 }
               ],
               "output": [
@@ -1223,15 +1219,18 @@
           "enforced_relation": {
             "LookupFromBaseInputsWithSetup": {
               "input": {
-                "linear_terms": [
-                  [
-                    1,
-                    {
-                      "BaseLayerMemory": 24
-                    }
-                  ]
-                ],
-                "constant": 0
+                "input": {
+                  "linear_terms": [
+                    [
+                      1,
+                      {
+                        "BaseLayerMemory": 24
+                      }
+                    ]
+                  ],
+                  "constant": 0
+                },
+                "lookup_set_index": 0
               },
               "setup": [
                 {
@@ -1264,38 +1263,44 @@
             "LookupPairFromBaseInputs": {
               "input": [
                 {
-                  "linear_terms": [
-                    [
-                      1,
-                      {
-                        "BaseLayerMemory": 25
-                      }
-                    ]
-                  ],
-                  "constant": 0
+                  "input": {
+                    "linear_terms": [
+                      [
+                        1,
+                        {
+                          "BaseLayerMemory": 25
+                        }
+                      ]
+                    ],
+                    "constant": 0
+                  },
+                  "lookup_set_index": 1
                 },
                 {
-                  "linear_terms": [
-                    [
-                      2147483646,
-                      {
-                        "BaseLayerMemory": 20
-                      }
+                  "input": {
+                    "linear_terms": [
+                      [
+                        2013265920,
+                        {
+                          "BaseLayerMemory": 20
+                        }
+                      ],
+                      [
+                        1,
+                        {
+                          "BaseLayerMemory": 0
+                        }
+                      ],
+                      [
+                        524288,
+                        {
+                          "BaseLayerWitness": 22
+                        }
+                      ]
                     ],
-                    [
-                      1,
-                      {
-                        "BaseLayerMemory": 0
-                      }
-                    ],
-                    [
-                      524288,
-                      {
-                        "BaseLayerWitness": 22
-                      }
-                    ]
-                  ],
-                  "constant": 0
+                    "constant": 0
+                  },
+                  "lookup_set_index": 2
                 }
               ],
               "output": [
@@ -1321,50 +1326,56 @@
             "LookupPairFromBaseInputs": {
               "input": [
                 {
-                  "linear_terms": [
-                    [
-                      2147483646,
-                      {
-                        "BaseLayerMemory": 21
-                      }
+                  "input": {
+                    "linear_terms": [
+                      [
+                        2013265920,
+                        {
+                          "BaseLayerMemory": 21
+                        }
+                      ],
+                      [
+                        1,
+                        {
+                          "BaseLayerMemory": 1
+                        }
+                      ],
+                      [
+                        2013265920,
+                        {
+                          "BaseLayerWitness": 22
+                        }
+                      ]
                     ],
-                    [
-                      1,
-                      {
-                        "BaseLayerMemory": 1
-                      }
-                    ],
-                    [
-                      2147483646,
-                      {
-                        "BaseLayerWitness": 22
-                      }
-                    ]
-                  ],
-                  "constant": 524288
+                    "constant": 524288
+                  },
+                  "lookup_set_index": 3
                 },
                 {
-                  "linear_terms": [
-                    [
-                      2147483646,
-                      {
-                        "BaseLayerMemory": 20
-                      }
+                  "input": {
+                    "linear_terms": [
+                      [
+                        2013265920,
+                        {
+                          "BaseLayerMemory": 20
+                        }
+                      ],
+                      [
+                        1,
+                        {
+                          "BaseLayerMemory": 5
+                        }
+                      ],
+                      [
+                        524288,
+                        {
+                          "BaseLayerWitness": 23
+                        }
+                      ]
                     ],
-                    [
-                      1,
-                      {
-                        "BaseLayerMemory": 5
-                      }
-                    ],
-                    [
-                      524288,
-                      {
-                        "BaseLayerWitness": 23
-                      }
-                    ]
-                  ],
-                  "constant": 2147483646
+                    "constant": 1069547521
+                  },
+                  "lookup_set_index": 4
                 }
               ],
               "output": [
@@ -1390,50 +1401,56 @@
             "LookupPairFromBaseInputs": {
               "input": [
                 {
-                  "linear_terms": [
-                    [
-                      2147483646,
-                      {
-                        "BaseLayerMemory": 21
-                      }
+                  "input": {
+                    "linear_terms": [
+                      [
+                        2013265920,
+                        {
+                          "BaseLayerMemory": 21
+                        }
+                      ],
+                      [
+                        1,
+                        {
+                          "BaseLayerMemory": 6
+                        }
+                      ],
+                      [
+                        2013265920,
+                        {
+                          "BaseLayerWitness": 23
+                        }
+                      ]
                     ],
-                    [
-                      1,
-                      {
-                        "BaseLayerMemory": 6
-                      }
-                    ],
-                    [
-                      2147483646,
-                      {
-                        "BaseLayerWitness": 23
-                      }
-                    ]
-                  ],
-                  "constant": 524288
+                    "constant": 524288
+                  },
+                  "lookup_set_index": 5
                 },
                 {
-                  "linear_terms": [
-                    [
-                      2147483646,
-                      {
-                        "BaseLayerMemory": 20
-                      }
+                  "input": {
+                    "linear_terms": [
+                      [
+                        2013265920,
+                        {
+                          "BaseLayerMemory": 20
+                        }
+                      ],
+                      [
+                        1,
+                        {
+                          "BaseLayerMemory": 10
+                        }
+                      ],
+                      [
+                        524288,
+                        {
+                          "BaseLayerWitness": 24
+                        }
+                      ]
                     ],
-                    [
-                      1,
-                      {
-                        "BaseLayerMemory": 10
-                      }
-                    ],
-                    [
-                      524288,
-                      {
-                        "BaseLayerWitness": 24
-                      }
-                    ]
-                  ],
-                  "constant": 2147483645
+                    "constant": 125829121
+                  },
+                  "lookup_set_index": 6
                 }
               ],
               "output": [
@@ -1458,27 +1475,30 @@
           "enforced_relation": {
             "MaterializedSingleLookupInput": {
               "input": {
-                "linear_terms": [
-                  [
-                    2147483646,
-                    {
-                      "BaseLayerMemory": 21
-                    }
+                "input": {
+                  "linear_terms": [
+                    [
+                      2013265920,
+                      {
+                        "BaseLayerMemory": 21
+                      }
+                    ],
+                    [
+                      1,
+                      {
+                        "BaseLayerMemory": 11
+                      }
+                    ],
+                    [
+                      2013265920,
+                      {
+                        "BaseLayerWitness": 24
+                      }
+                    ]
                   ],
-                  [
-                    1,
-                    {
-                      "BaseLayerMemory": 11
-                    }
-                  ],
-                  [
-                    2147483646,
-                    {
-                      "BaseLayerWitness": 24
-                    }
-                  ]
-                ],
-                "constant": 524288
+                  "constant": 524288
+                },
+                "lookup_set_index": 7
               },
               "output": {
                 "InnerLayer": {
@@ -1506,7 +1526,7 @@
                     ],
                     [
                       [
-                        2147483646,
+                        2013265920,
                         8
                       ]
                     ]
@@ -1522,7 +1542,7 @@
                     ],
                     [
                       [
-                        2147483646,
+                        2013265920,
                         9
                       ]
                     ]
@@ -1650,7 +1670,7 @@
                     ],
                     [
                       [
-                        2147483646,
+                        2013265920,
                         16
                       ]
                     ]
@@ -1666,7 +1686,7 @@
                     ],
                     [
                       [
-                        2147483646,
+                        2013265920,
                         17
                       ]
                     ]
@@ -1762,7 +1782,7 @@
                     ],
                     [
                       [
-                        2147483646,
+                        2013265920,
                         16
                       ]
                     ]
@@ -1778,7 +1798,7 @@
                     ],
                     [
                       [
-                        2147483646,
+                        2013265920,
                         17
                       ]
                     ]
@@ -1874,7 +1894,7 @@
                     ],
                     [
                       [
-                        2147483646,
+                        2013265920,
                         16
                       ]
                     ]
@@ -1890,7 +1910,7 @@
                     ],
                     [
                       [
-                        2147483646,
+                        2013265920,
                         17
                       ]
                     ]
@@ -1954,7 +1974,7 @@
                     ],
                     [
                       [
-                        2147483646,
+                        2013265920,
                         16
                       ]
                     ]
@@ -1970,7 +1990,7 @@
                     ],
                     [
                       [
-                        2147483646,
+                        2013265920,
                         17
                       ]
                     ]
@@ -2002,7 +2022,7 @@
                     ],
                     [
                       [
-                        2147483646,
+                        2013265920,
                         16
                       ]
                     ]
@@ -2018,7 +2038,7 @@
                     ],
                     [
                       [
-                        2147483646,
+                        2013265920,
                         17
                       ]
                     ]
@@ -2054,7 +2074,7 @@
                         1
                       ],
                       [
-                        2147483646,
+                        2013265920,
                         16
                       ]
                     ]
@@ -2070,11 +2090,11 @@
                     ],
                     [
                       [
-                        65536,
+                        2013235201,
                         1
                       ],
                       [
-                        2147483646,
+                        2013265920,
                         17
                       ]
                     ]
@@ -2122,7 +2142,7 @@
                     ],
                     [
                       [
-                        2147483646,
+                        2013265920,
                         2
                       ]
                     ]
@@ -2138,7 +2158,7 @@
                     ],
                     [
                       [
-                        2147483646,
+                        2013265920,
                         1
                       ]
                     ]
@@ -2154,7 +2174,7 @@
                     ],
                     [
                       [
-                        2147418111,
+                        30720,
                         1
                       ]
                     ]
@@ -2170,7 +2190,7 @@
                     ],
                     [
                       [
-                        2147483646,
+                        2013265920,
                         1
                       ]
                     ]
@@ -2186,7 +2206,7 @@
                     ],
                     [
                       [
-                        2147418111,
+                        30720,
                         1
                       ]
                     ]
@@ -2222,7 +2242,7 @@
                         3
                       ],
                       [
-                        2147483646,
+                        2013265920,
                         16
                       ]
                     ]
@@ -2238,11 +2258,11 @@
                     ],
                     [
                       [
-                        65536,
+                        2013235201,
                         3
                       ],
                       [
-                        2147483646,
+                        2013265920,
                         17
                       ]
                     ]
@@ -2290,7 +2310,7 @@
                     ],
                     [
                       [
-                        2147483646,
+                        2013265920,
                         4
                       ]
                     ]
@@ -2306,7 +2326,7 @@
                     ],
                     [
                       [
-                        2147483646,
+                        2013265920,
                         3
                       ]
                     ]
@@ -2322,7 +2342,7 @@
                     ],
                     [
                       [
-                        2147418111,
+                        30720,
                         3
                       ]
                     ]
@@ -2354,7 +2374,7 @@
                     ],
                     [
                       [
-                        65536,
+                        2013235201,
                         3
                       ]
                     ]
@@ -2390,7 +2410,7 @@
                         6
                       ],
                       [
-                        2147483646,
+                        2013265920,
                         16
                       ]
                     ]
@@ -2406,11 +2426,11 @@
                     ],
                     [
                       [
-                        65536,
+                        2013235201,
                         6
                       ],
                       [
-                        2147483646,
+                        2013265920,
                         17
                       ]
                     ]
@@ -2458,7 +2478,7 @@
                     ],
                     [
                       [
-                        2147483646,
+                        2013265920,
                         7
                       ]
                     ]
@@ -2474,7 +2494,7 @@
                     ],
                     [
                       [
-                        2147483646,
+                        2013265920,
                         6
                       ]
                     ]
@@ -2542,7 +2562,7 @@
                         13
                       ],
                       [
-                        2147483646,
+                        2013265920,
                         15
                       ]
                     ]
@@ -2658,11 +2678,11 @@
                     ],
                     [
                       [
-                        65536,
+                        2013235201,
                         5
                       ],
                       [
-                        65536,
+                        2013235201,
                         35
                       ]
                     ]
@@ -2678,11 +2698,11 @@
                     ],
                     [
                       [
-                        65536,
+                        2013235201,
                         5
                       ],
                       [
-                        65536,
+                        2013235201,
                         35
                       ]
                     ]
@@ -2698,11 +2718,11 @@
                     ],
                     [
                       [
-                        2,
+                        943718400,
                         5
                       ],
                       [
-                        2,
+                        943718400,
                         35
                       ]
                     ]
@@ -2770,7 +2790,7 @@
                         10
                       ],
                       [
-                        2147483646,
+                        2013265920,
                         12
                       ]
                     ]
@@ -2822,7 +2842,7 @@
                         13
                       ],
                       [
-                        2147483646,
+                        2013265920,
                         15
                       ]
                     ]
@@ -2838,7 +2858,7 @@
                     ],
                     [
                       [
-                        16777216,
+                        1862164190,
                         18
                       ]
                     ]
@@ -2854,7 +2874,7 @@
                     ],
                     [
                       [
-                        2113929215,
+                        302203462,
                         18
                       ]
                     ]
@@ -2870,7 +2890,7 @@
                     ],
                     [
                       [
-                        16777216,
+                        1862164190,
                         18
                       ]
                     ]
@@ -2883,7 +2903,7 @@
                     },
                     [
                       [
-                        2147483646,
+                        2013265920,
                         20
                       ]
                     ]
@@ -2894,7 +2914,7 @@
                     },
                     [
                       [
-                        2147483646,
+                        2013265920,
                         21
                       ]
                     ]
@@ -2905,7 +2925,7 @@
                     },
                     [
                       [
-                        2147483646,
+                        2013265920,
                         22
                       ]
                     ]
@@ -2916,7 +2936,7 @@
                     },
                     [
                       [
-                        2147483646,
+                        2013265920,
                         23
                       ]
                     ]
@@ -2927,7 +2947,7 @@
                     },
                     [
                       [
-                        2147483646,
+                        2013265920,
                         24
                       ]
                     ]
@@ -2938,19 +2958,19 @@
                     },
                     [
                       [
-                        1,
+                        943718400,
                         2
                       ],
                       [
-                        65535,
+                        1,
                         16
                       ],
                       [
-                        32767,
+                        30720,
                         17
                       ],
                       [
-                        2147483646,
+                        2013265920,
                         25
                       ]
                     ]
@@ -2961,19 +2981,19 @@
                     },
                     [
                       [
-                        1,
+                        943718400,
                         4
                       ],
                       [
-                        65535,
+                        1,
                         16
                       ],
                       [
-                        32767,
+                        30720,
                         17
                       ],
                       [
-                        2147483646,
+                        2013265920,
                         26
                       ]
                     ]
@@ -2984,19 +3004,19 @@
                     },
                     [
                       [
-                        1,
+                        943718400,
                         7
                       ],
                       [
-                        65535,
+                        1,
                         16
                       ],
                       [
-                        32767,
+                        30720,
                         17
                       ],
                       [
-                        2147483646,
+                        2013265920,
                         27
                       ]
                     ]
@@ -3029,11 +3049,11 @@
                     },
                     [
                       [
-                        2147418111,
+                        2013200385,
                         17
                       ],
                       [
-                        2147483646,
+                        2013265920,
                         28
                       ]
                     ]
@@ -3044,11 +3064,11 @@
                     },
                     [
                       [
-                        2147483646,
+                        2013265920,
                         5
                       ],
                       [
-                        2147483646,
+                        2013265920,
                         35
                       ]
                     ]
@@ -3059,7 +3079,7 @@
                     },
                     [
                       [
-                        2147418115,
+                        1761638399,
                         11
                       ]
                     ]
@@ -3070,7 +3090,7 @@
                     },
                     [
                       [
-                        2147418115,
+                        1761638399,
                         10
                       ],
                       [
@@ -3078,15 +3098,15 @@
                         11
                       ],
                       [
-                        2147483643,
+                        251658242,
                         12
                       ],
                       [
-                        1,
+                        943718400,
                         15
                       ],
                       [
-                        2147483646,
+                        2013265920,
                         29
                       ]
                     ]
@@ -3097,7 +3117,7 @@
                     },
                     [
                       [
-                        2147418111,
+                        30720,
                         14
                       ]
                     ]
@@ -3108,7 +3128,7 @@
                     },
                     [
                       [
-                        2147418111,
+                        30720,
                         13
                       ],
                       [
@@ -3116,7 +3136,7 @@
                         14
                       ],
                       [
-                        2147483646,
+                        2013265920,
                         30
                       ]
                     ]
@@ -3127,7 +3147,7 @@
                     },
                     [
                       [
-                        2147418111,
+                        2013200385,
                         16
                       ],
                       [
@@ -3135,7 +3155,7 @@
                         17
                       ],
                       [
-                        2147483646,
+                        2013265920,
                         31
                       ]
                     ]
@@ -3146,7 +3166,7 @@
                     },
                     [
                       [
-                        2147483646,
+                        2013265920,
                         32
                       ]
                     ]
@@ -3157,7 +3177,7 @@
                     },
                     [
                       [
-                        2147483646,
+                        2013265920,
                         33
                       ]
                     ]
@@ -3168,7 +3188,7 @@
                     },
                     [
                       [
-                        2147483646,
+                        2013265920,
                         34
                       ]
                     ]
@@ -3179,7 +3199,7 @@
                     },
                     [
                       [
-                        2147483646,
+                        2013265920,
                         8
                       ]
                     ]
@@ -3190,7 +3210,7 @@
                     },
                     [
                       [
-                        2147483646,
+                        2013265920,
                         9
                       ]
                     ]
@@ -3201,7 +3221,7 @@
                     },
                     [
                       [
-                        2147483646,
+                        1069547521,
                         0
                       ]
                     ]
@@ -3212,7 +3232,7 @@
                     },
                     [
                       [
-                        1,
+                        943718400,
                         12
                       ]
                     ]
@@ -3223,7 +3243,7 @@
                     },
                     [
                       [
-                        1,
+                        943718400,
                         15
                       ]
                     ]
@@ -3234,11 +3254,11 @@
                     },
                     [
                       [
-                        134213632,
+                        1430106411,
                         18
                       ],
                       [
-                        2147479551,
+                        1366791400,
                         19
                       ]
                     ]
@@ -3249,7 +3269,7 @@
                     },
                     [
                       [
-                        2147483646,
+                        2013265920,
                         19
                       ]
                     ]
@@ -3260,7 +3280,7 @@
                     },
                     [
                       [
-                        2147483646,
+                        2013265920,
                         12
                       ]
                     ]
@@ -3271,7 +3291,7 @@
                     },
                     [
                       [
-                        2147483646,
+                        2013265920,
                         15
                       ]
                     ]
@@ -3282,11 +3302,11 @@
                     },
                     [
                       [
-                        2013270015,
+                        583159510,
                         18
                       ],
                       [
-                        4096,
+                        646474521,
                         19
                       ]
                     ]
@@ -3305,23 +3325,23 @@
                 ],
                 "constants": [
                   [
-                    2147483646,
+                    1069547521,
                     11
                   ],
                   [
-                    4,
+                    243793921,
                     12
                   ],
                   [
-                    2147483646,
+                    1069547521,
                     14
                   ],
                   [
-                    268419072,
+                    1026952784,
                     18
                   ],
                   [
-                    2147467263,
+                    1463797967,
                     19
                   ]
                 ]
@@ -3518,210 +3538,246 @@
     "generic_lookups": [],
     "range_check_16_lookup_expressions": [
       {
-        "linear_terms": [
-          [
-            1,
-            {
-              "BaseLayerWitness": 11
-            }
-          ]
-        ],
-        "constant": 0
+        "input": {
+          "linear_terms": [
+            [
+              1,
+              {
+                "BaseLayerWitness": 11
+              }
+            ]
+          ],
+          "constant": 0
+        },
+        "lookup_set_index": 0
       },
       {
-        "linear_terms": [
-          [
-            1,
-            {
-              "BaseLayerWitness": 12
-            }
-          ]
-        ],
-        "constant": 0
+        "input": {
+          "linear_terms": [
+            [
+              1,
+              {
+                "BaseLayerWitness": 12
+              }
+            ]
+          ],
+          "constant": 0
+        },
+        "lookup_set_index": 1
       },
       {
-        "linear_terms": [
-          [
-            1,
-            {
-              "BaseLayerWitness": 13
-            }
-          ]
-        ],
-        "constant": 0
+        "input": {
+          "linear_terms": [
+            [
+              1,
+              {
+                "BaseLayerWitness": 13
+              }
+            ]
+          ],
+          "constant": 0
+        },
+        "lookup_set_index": 2
       },
       {
-        "linear_terms": [
-          [
-            1,
-            {
-              "BaseLayerWitness": 14
-            }
-          ]
-        ],
-        "constant": 0
+        "input": {
+          "linear_terms": [
+            [
+              1,
+              {
+                "BaseLayerWitness": 14
+              }
+            ]
+          ],
+          "constant": 0
+        },
+        "lookup_set_index": 3
       }
     ],
     "timestamp_range_check_lookup_expressions": [
       {
-        "linear_terms": [
-          [
-            1,
-            {
-              "BaseLayerMemory": 24
-            }
-          ]
-        ],
-        "constant": 0
+        "input": {
+          "linear_terms": [
+            [
+              1,
+              {
+                "BaseLayerMemory": 24
+              }
+            ]
+          ],
+          "constant": 0
+        },
+        "lookup_set_index": 0
       },
       {
-        "linear_terms": [
-          [
-            1,
-            {
-              "BaseLayerMemory": 25
-            }
-          ]
-        ],
-        "constant": 0
+        "input": {
+          "linear_terms": [
+            [
+              1,
+              {
+                "BaseLayerMemory": 25
+              }
+            ]
+          ],
+          "constant": 0
+        },
+        "lookup_set_index": 1
       },
       {
-        "linear_terms": [
-          [
-            2147483646,
-            {
-              "BaseLayerMemory": 20
-            }
+        "input": {
+          "linear_terms": [
+            [
+              2013265920,
+              {
+                "BaseLayerMemory": 20
+              }
+            ],
+            [
+              1,
+              {
+                "BaseLayerMemory": 0
+              }
+            ],
+            [
+              524288,
+              {
+                "BaseLayerWitness": 22
+              }
+            ]
           ],
-          [
-            1,
-            {
-              "BaseLayerMemory": 0
-            }
-          ],
-          [
-            524288,
-            {
-              "BaseLayerWitness": 22
-            }
-          ]
-        ],
-        "constant": 0
+          "constant": 0
+        },
+        "lookup_set_index": 2
       },
       {
-        "linear_terms": [
-          [
-            2147483646,
-            {
-              "BaseLayerMemory": 21
-            }
+        "input": {
+          "linear_terms": [
+            [
+              2013265920,
+              {
+                "BaseLayerMemory": 21
+              }
+            ],
+            [
+              1,
+              {
+                "BaseLayerMemory": 1
+              }
+            ],
+            [
+              2013265920,
+              {
+                "BaseLayerWitness": 22
+              }
+            ]
           ],
-          [
-            1,
-            {
-              "BaseLayerMemory": 1
-            }
-          ],
-          [
-            2147483646,
-            {
-              "BaseLayerWitness": 22
-            }
-          ]
-        ],
-        "constant": 524288
+          "constant": 524288
+        },
+        "lookup_set_index": 3
       },
       {
-        "linear_terms": [
-          [
-            2147483646,
-            {
-              "BaseLayerMemory": 20
-            }
+        "input": {
+          "linear_terms": [
+            [
+              2013265920,
+              {
+                "BaseLayerMemory": 20
+              }
+            ],
+            [
+              1,
+              {
+                "BaseLayerMemory": 5
+              }
+            ],
+            [
+              524288,
+              {
+                "BaseLayerWitness": 23
+              }
+            ]
           ],
-          [
-            1,
-            {
-              "BaseLayerMemory": 5
-            }
-          ],
-          [
-            524288,
-            {
-              "BaseLayerWitness": 23
-            }
-          ]
-        ],
-        "constant": 2147483646
+          "constant": 1069547521
+        },
+        "lookup_set_index": 4
       },
       {
-        "linear_terms": [
-          [
-            2147483646,
-            {
-              "BaseLayerMemory": 21
-            }
+        "input": {
+          "linear_terms": [
+            [
+              2013265920,
+              {
+                "BaseLayerMemory": 21
+              }
+            ],
+            [
+              1,
+              {
+                "BaseLayerMemory": 6
+              }
+            ],
+            [
+              2013265920,
+              {
+                "BaseLayerWitness": 23
+              }
+            ]
           ],
-          [
-            1,
-            {
-              "BaseLayerMemory": 6
-            }
-          ],
-          [
-            2147483646,
-            {
-              "BaseLayerWitness": 23
-            }
-          ]
-        ],
-        "constant": 524288
+          "constant": 524288
+        },
+        "lookup_set_index": 5
       },
       {
-        "linear_terms": [
-          [
-            2147483646,
-            {
-              "BaseLayerMemory": 20
-            }
+        "input": {
+          "linear_terms": [
+            [
+              2013265920,
+              {
+                "BaseLayerMemory": 20
+              }
+            ],
+            [
+              1,
+              {
+                "BaseLayerMemory": 10
+              }
+            ],
+            [
+              524288,
+              {
+                "BaseLayerWitness": 24
+              }
+            ]
           ],
-          [
-            1,
-            {
-              "BaseLayerMemory": 10
-            }
-          ],
-          [
-            524288,
-            {
-              "BaseLayerWitness": 24
-            }
-          ]
-        ],
-        "constant": 2147483645
+          "constant": 125829121
+        },
+        "lookup_set_index": 6
       },
       {
-        "linear_terms": [
-          [
-            2147483646,
-            {
-              "BaseLayerMemory": 21
-            }
+        "input": {
+          "linear_terms": [
+            [
+              2013265920,
+              {
+                "BaseLayerMemory": 21
+              }
+            ],
+            [
+              1,
+              {
+                "BaseLayerMemory": 11
+              }
+            ],
+            [
+              2013265920,
+              {
+                "BaseLayerWitness": 24
+              }
+            ]
           ],
-          [
-            1,
-            {
-              "BaseLayerMemory": 11
-            }
-          ],
-          [
-            2147483646,
-            {
-              "BaseLayerWitness": 24
-            }
-          ]
-        ],
-        "constant": 524288
+          "constant": 524288
+        },
+        "lookup_set_index": 7
       }
     ],
     "total_width": 28
@@ -3892,19 +3948,31 @@
     }
   },
   "generic_lookup_tables_width": 9,
+  "decode_table_columns_mask": [
+    true,
+    true,
+    true,
+    true,
+    true,
+    true,
+    true,
+    true,
+    false,
+    true
+  ],
   "tables_ids_in_generic_lookups": false,
   "degree_2_constraints": [
     {
       "quadratic_terms": [
         [
-          1,
+          268435454,
           4,
           4
         ]
       ],
       "linear_terms": [
         [
-          2147483646,
+          2013265920,
           4
         ]
       ],
@@ -3913,27 +3981,27 @@
     {
       "quadratic_terms": [
         [
-          2147483646,
+          1744830467,
           16,
           23
         ],
         [
-          2147418111,
+          2013200385,
           16,
           24
         ],
         [
-          2147483646,
+          1744830467,
           16,
           25
         ],
         [
-          2147418111,
+          2013200385,
           16,
           26
         ],
         [
-          1,
+          268435454,
           16,
           27
         ],
@@ -3949,7 +4017,7 @@
     {
       "quadratic_terms": [
         [
-          2147483646,
+          1744830467,
           16,
           31
         ]
@@ -3965,17 +4033,17 @@
     {
       "quadratic_terms": [
         [
-          2147483646,
+          1744830467,
           17,
           23
         ],
         [
-          2147418111,
+          2013200385,
           17,
           24
         ],
         [
-          1,
+          268435454,
           17,
           25
         ],
@@ -3985,7 +4053,7 @@
           26
         ],
         [
-          1,
+          268435454,
           17,
           27
         ],
@@ -4001,7 +4069,7 @@
     {
       "quadratic_terms": [
         [
-          2147483646,
+          1744830467,
           17,
           31
         ]
@@ -4017,7 +4085,7 @@
     {
       "quadratic_terms": [
         [
-          1,
+          268435454,
           23,
           25
         ],
@@ -4032,14 +4100,14 @@
           25
         ],
         [
-          2,
+          1,
           24,
           26
         ]
       ],
       "linear_terms": [
         [
-          2147483646,
+          1744830467,
           32
         ]
       ],
@@ -4048,7 +4116,7 @@
     {
       "quadratic_terms": [
         [
-          1,
+          268435454,
           18,
           27
         ],
@@ -4058,7 +4126,7 @@
           28
         ],
         [
-          2147483646,
+          1744830467,
           18,
           32
         ]
@@ -4069,7 +4137,7 @@
     {
       "quadratic_terms": [
         [
-          2147483646,
+          1744830467,
           18,
           31
         ]
@@ -4085,18 +4153,18 @@
     {
       "quadratic_terms": [
         [
-          2147483646,
+          1744830467,
           8,
           27
         ]
       ],
       "linear_terms": [
         [
-          1,
+          268435454,
           27
         ],
         [
-          2147483646,
+          1744830467,
           35
         ]
       ],
@@ -4105,18 +4173,18 @@
     {
       "quadratic_terms": [
         [
-          2147483646,
+          1744830467,
           8,
           28
         ]
       ],
       "linear_terms": [
         [
-          1,
+          268435454,
           28
         ],
         [
-          2147483646,
+          1744830467,
           36
         ]
       ],
@@ -4125,14 +4193,14 @@
     {
       "quadratic_terms": [
         [
-          1,
+          268435454,
           0,
           38
         ]
       ],
       "linear_terms": [
         [
-          2147418115,
+          2013200389,
           38
         ]
       ],
@@ -4141,27 +4209,27 @@
     {
       "quadratic_terms": [
         [
-          1,
+          268435454,
           0,
           37
         ]
       ],
       "linear_terms": [
         [
-          2147418115,
+          2013200389,
           37
         ],
         [
-          1,
+          268435454,
           38
         ]
       ],
-      "constant_term": 2147483646
+      "constant_term": 2013265920
     },
     {
       "quadratic_terms": [
         [
-          2147483646,
+          1744830467,
           0,
           38
         ]
@@ -4172,32 +4240,32 @@
           0
         ],
         [
-          2147483646,
+          1744830467,
           19
         ],
         [
-          2147483643,
+          2013265917,
           38
         ]
       ],
-      "constant_term": 4
+      "constant_term": 1761607679
     },
     {
       "quadratic_terms": [
         [
-          1,
+          268435454,
           1,
           40
         ],
         [
-          1,
+          268435454,
           38,
           40
         ]
       ],
       "linear_terms": [
         [
-          2147418111,
+          2013200385,
           40
         ]
       ],
@@ -4206,37 +4274,37 @@
     {
       "quadratic_terms": [
         [
-          1,
+          268435454,
           1,
           39
         ],
         [
-          1,
+          268435454,
           38,
           39
         ]
       ],
       "linear_terms": [
         [
-          2147418111,
+          2013200385,
           39
         ],
         [
-          1,
+          268435454,
           40
         ]
       ],
-      "constant_term": 2147483646
+      "constant_term": 2013265920
     },
     {
       "quadratic_terms": [
         [
-          2147483646,
+          1744830467,
           1,
           40
         ],
         [
-          2147483646,
+          1744830467,
           38,
           40
         ]
@@ -4247,7 +4315,7 @@
           1
         ],
         [
-          2147483646,
+          1744830467,
           20
         ],
         [
@@ -4260,121 +4328,121 @@
     {
       "quadratic_terms": [
         [
-          1,
+          268435454,
           0,
           15
         ],
         [
-          1,
+          268435454,
           9,
           12
         ],
         [
-          1,
+          268435454,
           9,
           14
         ],
         [
-          1,
+          268435454,
           9,
           15
         ],
         [
-          1,
+          268435454,
           11,
           23
         ],
         [
-          1,
+          268435454,
           11,
           25
         ],
         [
-          2147483646,
+          1744830467,
           11,
           27
         ],
         [
-          1,
+          268435454,
           12,
           23
         ],
         [
-          2147483646,
+          1744830467,
           12,
           27
         ],
         [
-          2147483646,
+          1744830467,
           13,
           23
         ],
         [
-          1,
+          268435454,
           13,
           25
         ],
         [
-          1,
+          268435454,
           13,
           27
         ],
         [
-          2147483646,
+          1744830467,
           14,
           27
         ],
         [
-          2147483646,
+          1744830467,
           15,
           27
         ],
         [
-          2147483646,
+          1744830467,
           16,
           27
         ],
         [
-          1,
+          268435454,
           16,
           29
         ],
         [
-          2147483646,
+          1744830467,
           17,
           27
         ],
         [
-          1,
+          268435454,
           17,
           29
         ],
         [
-          2147483646,
+          1744830467,
           18,
           27
         ],
         [
-          1,
+          268435454,
           18,
           29
         ]
       ],
       "linear_terms": [
         [
-          65535,
+          268435454,
           16
         ],
         [
-          65535,
+          268435454,
           17
         ],
         [
-          65535,
+          268435454,
           18
         ],
         [
-          2147418111,
+          1744970275,
           41
         ]
       ],
@@ -4383,125 +4451,125 @@
     {
       "quadratic_terms": [
         [
-          1,
+          268435454,
           1,
           15
         ],
         [
-          1,
+          268435454,
           10,
           12
         ],
         [
-          1,
+          268435454,
           10,
           14
         ],
         [
-          1,
+          268435454,
           10,
           15
         ],
         [
-          1,
+          268435454,
           11,
           24
         ],
         [
-          1,
+          268435454,
           11,
           26
         ],
         [
-          2147483646,
+          1744830467,
           11,
           28
         ],
         [
-          1,
+          268435454,
           12,
           24
         ],
         [
-          2147483646,
+          1744830467,
           12,
           28
         ],
         [
-          2147483646,
+          1744830467,
           13,
           24
         ],
         [
-          1,
+          268435454,
           13,
           26
         ],
         [
-          1,
+          268435454,
           13,
           28
         ],
         [
-          2147483646,
+          1744830467,
           14,
           28
         ],
         [
-          2147483646,
+          1744830467,
           15,
           28
         ],
         [
-          2147483646,
+          1744830467,
           16,
           28
         ],
         [
-          1,
+          268435454,
           16,
           30
         ],
         [
-          2147483646,
+          1744830467,
           17,
           28
         ],
         [
-          1,
+          268435454,
           17,
           30
         ],
         [
-          2147483646,
+          1744830467,
           18,
           28
         ],
         [
-          1,
+          268435454,
           18,
           30
         ]
       ],
       "linear_terms": [
         [
-          32767,
+          2013200385,
           16
         ],
         [
-          32767,
+          2013200385,
           17
         ],
         [
-          32767,
+          2013200385,
           18
         ],
         [
-          2147418111,
+          1744970275,
           31
         ],
         [
-          1,
+          268435454,
           41
         ]
       ],
@@ -4510,44 +4578,44 @@
     {
       "quadratic_terms": [
         [
-          16777216,
+          1396092184,
           2,
           2
         ],
         [
-          2113929215,
+          1234347474,
           2,
           21
         ],
         [
-          16777216,
+          1396092184,
           21,
           21
         ]
       ],
       "linear_terms": [
         [
-          134213632,
+          572984981,
           2
         ],
         [
-          2013270015,
+          1440280940,
           21
         ]
       ],
-      "constant_term": 268419072
+      "constant_term": 1567263780
     },
     {
       "quadratic_terms": [
         [
-          1,
+          268435454,
           11,
           11
         ]
       ],
       "linear_terms": [
         [
-          2147483646,
+          1744830467,
           11
         ]
       ],
@@ -4556,14 +4624,14 @@
     {
       "quadratic_terms": [
         [
-          1,
+          268435454,
           12,
           12
         ]
       ],
       "linear_terms": [
         [
-          2147483646,
+          1744830467,
           12
         ]
       ],
@@ -4572,14 +4640,14 @@
     {
       "quadratic_terms": [
         [
-          1,
+          268435454,
           13,
           13
         ]
       ],
       "linear_terms": [
         [
-          2147483646,
+          1744830467,
           13
         ]
       ],
@@ -4588,14 +4656,14 @@
     {
       "quadratic_terms": [
         [
-          1,
+          268435454,
           14,
           14
         ]
       ],
       "linear_terms": [
         [
-          2147483646,
+          1744830467,
           14
         ]
       ],
@@ -4604,14 +4672,14 @@
     {
       "quadratic_terms": [
         [
-          1,
+          268435454,
           15,
           15
         ]
       ],
       "linear_terms": [
         [
-          2147483646,
+          1744830467,
           15
         ]
       ],
@@ -4620,14 +4688,14 @@
     {
       "quadratic_terms": [
         [
-          1,
+          268435454,
           16,
           16
         ]
       ],
       "linear_terms": [
         [
-          2147483646,
+          1744830467,
           16
         ]
       ],
@@ -4636,14 +4704,14 @@
     {
       "quadratic_terms": [
         [
-          1,
+          268435454,
           17,
           17
         ]
       ],
       "linear_terms": [
         [
-          2147483646,
+          1744830467,
           17
         ]
       ],
@@ -4652,14 +4720,14 @@
     {
       "quadratic_terms": [
         [
-          1,
+          268435454,
           18,
           18
         ]
       ],
       "linear_terms": [
         [
-          2147483646,
+          1744830467,
           18
         ]
       ],
@@ -4668,14 +4736,14 @@
     {
       "quadratic_terms": [
         [
-          1,
+          268435454,
           31,
           31
         ]
       ],
       "linear_terms": [
         [
-          2147483646,
+          1744830467,
           31
         ]
       ],
@@ -4684,14 +4752,14 @@
     {
       "quadratic_terms": [
         [
-          1,
+          268435454,
           38,
           38
         ]
       ],
       "linear_terms": [
         [
-          2147483646,
+          1744830467,
           38
         ]
       ],
@@ -4700,14 +4768,14 @@
     {
       "quadratic_terms": [
         [
-          1,
+          268435454,
           40,
           40
         ]
       ],
       "linear_terms": [
         [
-          2147483646,
+          1744830467,
           40
         ]
       ],
@@ -4716,14 +4784,14 @@
     {
       "quadratic_terms": [
         [
-          1,
+          268435454,
           41,
           41
         ]
       ],
       "linear_terms": [
         [
-          2147483646,
+          1744830467,
           41
         ]
       ],
@@ -4732,14 +4800,14 @@
     {
       "quadratic_terms": [
         [
-          1,
+          268435454,
           44,
           44
         ]
       ],
       "linear_terms": [
         [
-          2147483646,
+          1744830467,
           44
         ]
       ],
@@ -4748,14 +4816,14 @@
     {
       "quadratic_terms": [
         [
-          1,
+          268435454,
           47,
           47
         ]
       ],
       "linear_terms": [
         [
-          2147483646,
+          1744830467,
           47
         ]
       ],
@@ -4764,14 +4832,14 @@
     {
       "quadratic_terms": [
         [
-          1,
+          268435454,
           50,
           50
         ]
       ],
       "linear_terms": [
         [
-          2147483646,
+          1744830467,
           50
         ]
       ],
@@ -4780,7 +4848,7 @@
     {
       "quadratic_terms": [
         [
-          1,
+          268435454,
           23,
           25
         ],
@@ -4795,14 +4863,14 @@
           25
         ],
         [
-          2,
+          1,
           24,
           26
         ]
       ],
       "linear_terms": [
         [
-          2147483646,
+          1744830467,
           32
         ]
       ],
@@ -4813,23 +4881,23 @@
     {
       "linear_terms": [
         [
-          2147479551,
+          1781798829,
           2
         ],
         [
-          2147483646,
+          1744830467,
           3
         ],
         [
-          4096,
+          231467092,
           21
         ],
         [
-          1,
+          268435454,
           22
         ]
       ],
-      "constant_term": 2147467263
+      "constant_term": 1440633758
     }
   ],
   "variable_names": {

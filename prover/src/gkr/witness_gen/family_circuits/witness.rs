@@ -304,7 +304,10 @@ pub fn evaluate_gkr_witness_for_executor_family<
 
     let num_memory_columns = compiled_circuit.memory_layout.total_width;
     let num_witness_columns = compiled_circuit.witness_layout.total_width;
-    let num_generic_lookups = compiled_circuit.witness_layout.generic_lookups.len();
+    let mut num_generic_lookups = compiled_circuit.witness_layout.generic_lookups.len();
+    if compiled_circuit.has_decoder_lookup {
+        num_generic_lookups += 1;
+    }
     let num_range_check_16_lookups = compiled_circuit
         .witness_layout
         .range_check_16_lookup_expressions
@@ -589,7 +592,7 @@ pub(crate) unsafe fn gkr_count_special_multiplicities_for_executor_family<
         .iter()
         .enumerate()
     {
-        let value = evaluate_linear_relation(range_check_expression, &*proxy);
+        let value = evaluate_linear_relation(&range_check_expression.input, &*proxy);
         assert!(
             value.as_u64_reduced() <= u16::MAX as u64,
             "invalid value {:?} in range check 16 expression {:?} at row {}",
@@ -635,7 +638,7 @@ pub(crate) unsafe fn gkr_count_special_multiplicities_for_executor_family<
     assert!(timestamp_range_check_relations.len() % 2 == 0);
 
     for (idx, range_check_expression) in timestamp_range_check_relations.iter().enumerate() {
-        let value = evaluate_linear_relation(range_check_expression, &*proxy);
+        let value = evaluate_linear_relation(&range_check_expression.input, &*proxy);
         assert!(
             value.as_u64_reduced() < (1u64 << TIMESTAMP_COLUMNS_NUM_BITS),
             "invalid value {:?} in timestamp range check expression {:?} at row {}",

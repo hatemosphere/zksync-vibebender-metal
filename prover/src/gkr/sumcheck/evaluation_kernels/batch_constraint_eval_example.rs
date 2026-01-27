@@ -86,18 +86,20 @@ impl<F: PrimeField, E: FieldExtension<F> + PrimeField>
         let mut result = [E::ZERO; 2];
         let ctx = r0_sources[0].get_collapse_context();
         for ((a, b), challenge) in self.quadratic_parts.iter() {
-            let a = r0_sources[*a].get_f0_and_f1_minus_f0(index);
-            let b = r0_sources[*b].get_f0_and_f1_minus_f0(index);
-            for i in 1..2 {
-                let mut t = a[i];
-                t.repr_mul_assign::<true>(&b[i]);
+            let a = r0_sources[*a].get_f1_minus_f0_only(index);
+            let b = r0_sources[*b].get_f1_minus_f0_only(index);
+            {
+                let mut t = a;
+                t.repr_mul_assign::<true>(&b);
                 let contribution = t.collapse_for_batch_eval(ctx, challenge);
-                result[i].add_assign(&contribution);
+                result[1].add_assign(&contribution);
             }
         }
-        // and linear part doesn't contribute to quadratic coefficient. We still have to access(!) source to trigger folding
-        for (a, _challenge) in self.linear_parts.iter() {
-            let _a = r0_sources[*a].get_f0_and_f1_minus_f0(index);
+        // and linear part doesn't contribute to quadratic coefficient. We may still have to access(!) source to trigger folding
+        if S0::SHOULD_ACCESS_TO_PREPARE_FOR_NEXT_STEP {
+            for (a, _challenge) in self.linear_parts.iter() {
+                let _a = r0_sources[*a].get_f0_and_f1(index);
+            }
         }
         result[0].mul_assign(&batch_challenges[0]);
         result[1].mul_assign(&batch_challenges[0]);
