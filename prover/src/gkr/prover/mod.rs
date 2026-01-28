@@ -79,18 +79,20 @@ fn split_destinations<T: Sized>(
     for _ in 0..geometry.len() {
         result.push(Vec::with_capacity(len));
     }
-    for (i, mut dest) in dest.into_iter().enumerate() {
+    for mut dest in dest.into_iter() {
         for chunk_idx in 0..geometry.len() {
             let chunk_size = geometry.get_chunk_size(chunk_idx);
             let (chunk, rest) = dest.split_at_mut(chunk_size);
             dest = rest;
             result[chunk_idx].push(chunk);
         }
-        assert_eq!(result[i].len(), len);
         assert!(dest.is_empty());
     }
 
     assert_eq!(geometry.len(), result.len());
+    for el in result.iter() {
+        assert_eq!(el.len(), len);
+    }
 
     result
 }
@@ -190,6 +192,7 @@ pub fn prove_configured_with_gkr<
             &preprocessed_range_check_16,
             &preprocessed_timestamp_range_checks,
             &preprocessed_generic_lookup,
+            lookup_additive_part,
             worker,
         );
     }

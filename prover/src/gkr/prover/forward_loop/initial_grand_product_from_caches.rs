@@ -1,0 +1,15 @@
+use crate::gkr::sumcheck::evaluation_kernels::{trivial_product_in_extension, BatchedGKRKernel};
+
+use super::*;
+
+pub fn evaluate_initial_grand_product_from_caches<F: PrimeField, E: FieldExtension<F> + Field>(
+    inputs: [GKRAddress; 2],
+    output: GKRAddress,
+    gkr_storage: &mut GKRStorage<F, E>,
+    expected_output_layer: usize,
+    worker: &Worker,
+) {
+    // we just need to evaluate the corresponding kernel in the forward direction
+    let kernel = trivial_product_in_extension::SameSizeProductGKRRelation { inputs, output };
+    kernel.evaluate_forward_over_storage(gkr_storage, expected_output_layer);
+}

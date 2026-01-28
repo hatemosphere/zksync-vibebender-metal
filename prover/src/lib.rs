@@ -7,6 +7,7 @@
 #![feature(ptr_as_ref_unchecked)]
 #![feature(slice_from_ptr_range)]
 #![feature(vec_push_within_capacity)]
+#![feature(maybe_uninit_fill)]
 #![feature(lazy_type_alias)] // NECESSARY TO AVOID UGLY LIFETIME BOUND ISSUE
 
 #[cfg(feature = "debug_satisfiable")]

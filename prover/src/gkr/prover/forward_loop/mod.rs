@@ -1,11 +1,15 @@
 use super::*;
 use crate::gkr::sumcheck::access_and_fold::BaseFieldPoly;
 use crate::{cs::definitions::*, gkr::sumcheck::access_and_fold::ExtensionFieldPoly};
-use cs::gkr_compiler::{CompiledAddressSpaceRelationStrict, CompiledAddressStrict};
+use cs::gkr_compiler::{
+    CompiledAddressSpaceRelationStrict, CompiledAddressStrict, NoFieldGKRRelation,
+};
 use cs::{
     definitions::{gkr::DECODER_LOOKUP_FORMAL_SET_INDEX, GKRAddress},
     gkr_compiler::{GKRLayerDescription, NoFieldGKRCacheRelation},
 };
+
+pub(crate) mod initial_grand_product_from_caches;
 
 fn evaluate_cache_relation<F: PrimeField, E: FieldExtension<F> + Field>(
     layer_idx: usize,
@@ -18,6 +22,7 @@ fn evaluate_cache_relation<F: PrimeField, E: FieldExtension<F> + Field>(
     preprocessed_range_check_16: &[E],
     preprocessed_timestamp_range_checks: &[E],
     preprocessed_generic_lookup: &[E],
+    lookup_challenges_additive_part: E,
     worker: &Worker,
 ) {
     assert!(address.is_cache());
@@ -195,7 +200,18 @@ fn evaluate_cache_relation<F: PrimeField, E: FieldExtension<F> + Field>(
                 );
             }
             NoFieldGKRCacheRelation::VectorizedLookupSetup(rel) => {
-                todo!()
+                let mut destination = Box::<[E], Global>::new_uninit_slice(trace_len);
+                destination[..preprocessed_generic_lookup.len()]
+                    .write_copy_of_slice(preprocessed_generic_lookup);
+                let _ = destination[preprocessed_generic_lookup.len()..]
+                    .write_filled(lookup_challenges_additive_part);
+                let destination = destination.assume_init();
+                assert_eq!(layer_idx, 0);
+                gkr_storage.insert_extension_at_layer(
+                    0,
+                    address,
+                    ExtensionFieldPoly::new(destination),
+                );
             }
         }
     }
@@ -212,6 +228,7 @@ pub fn evaluate_layer<F: PrimeField, E: FieldExtension<F> + Field>(
     preprocessed_range_check_16: &[E],
     preprocessed_timestamp_range_checks: &[E],
     preprocessed_generic_lookup: &[E],
+    lookup_challenges_additive_part: E,
     worker: &Worker,
 ) {
     println!("Evaluating layer {} in forward direction", layer_idx);
@@ -263,7 +280,26 @@ pub fn evaluate_layer<F: PrimeField, E: FieldExtension<F> + Field>(
             preprocessed_range_check_16,
             preprocessed_timestamp_range_checks,
             preprocessed_generic_lookup,
+            lookup_challenges_additive_part,
             worker,
         );
+    }
+
+    for gate in layer.gates.iter() {
+        assert_eq!(gate.output_layer, layer_idx + 1);
+        match &gate.enforced_relation {
+            NoFieldGKRRelation::InitialGrandProductFromCaches { input, output } => {
+                initial_grand_product_from_caches::evaluate_initial_grand_product_from_caches(
+                    *input,
+                    *output,
+                    gkr_storage,
+                    layer_idx + 1,
+                    worker,
+                );
+            }
+            rel @ _ => {
+                println!("Should evaluate {:?}", rel);
+            }
+        }
     }
 }

@@ -126,34 +126,9 @@ impl BabyBearExt2 {
         self
     }
 
-    #[cfg(not(all(target_arch = "riscv32", feature = "modular_ops")))]
     #[cfg_attr(not(feature = "no_inline"), inline(always))]
     pub(crate) const fn square_impl(&mut self) -> &mut Self {
-        let mut v0 = self.c0;
-        v0.sub_assign_impl(&self.c1);
-        let mut v3 = self.c0;
-        let mut t0: BabyBearField = self.c1;
-        BabyBearField::mul_by_non_residue_impl(&mut t0);
-        v3.sub_assign_impl(&t0);
-        let mut v2 = self.c0;
-        v2.mul_assign_impl(&self.c1);
-        v0.mul_assign_impl(&v3);
-        v0.add_assign_impl(&v2);
-
-        self.c1 = v2;
-        self.c1.double_impl();
-        self.c0 = v0;
-        BabyBearField::mul_by_non_residue_impl(&mut v2);
-        self.c0.add_assign_impl(&v2);
-
-        self
-    }
-
-    #[cfg(all(target_arch = "riscv32", feature = "modular_ops"))]
-    #[cfg_attr(not(feature = "no_inline"), inline(always))]
-    pub(crate) const fn square_impl(&mut self) -> &mut Self {
-        // here our optimization goal is just minimal number of ops,
-        // so we go schoolbook
+        // We go schoolbook
         // v^2 - nr = 0
         // (a + v * b) ^ 2 = (a^2 + nr * b^2) + v * 2 * ab
 
@@ -380,7 +355,7 @@ impl crate::BaseField<2> for BabyBearExt2 {
 impl crate::BaseField<3> for BabyBearExt2 {
     // (1, 1) is non-residue
     const NON_RESIDUE: BabyBearExt2 = BabyBearExt2 {
-        c0: BabyBearField::TWO,
+        c0: BabyBearField::ONE,
         c1: BabyBearField::ONE,
     };
 

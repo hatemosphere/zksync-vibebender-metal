@@ -47,6 +47,19 @@ impl<F: PrimeField, E: FieldExtension<F> + Field> GKRStorage<F, E> {
         }
     }
 
+    pub(crate) fn get_base_layer(&self, address: GKRAddress) -> &[F] {
+        unsafe {
+            debug_assert!(self.layers.len() > 0);
+            let layer = self.layers.get_unchecked(0);
+            debug_assert!(layer.base_field_inputs.contains_key(&address));
+            &layer
+                .base_field_inputs
+                .get(&address)
+                .unwrap_unchecked()
+                .values[..]
+        }
+    }
+
     pub(crate) fn insert_base_field_at_layer(
         &mut self,
         layer: usize,
