@@ -58,14 +58,28 @@ impl GKRAddress {
     pub fn assert_as_layer(&self, output_layer: usize) {
         match self {
             Self::BaseLayerWitness(..) | Self::BaseLayerMemory(..) => {
-                assert_eq!(output_layer, 0, "element {:?} is base layer only, but is expected at output layer {}", self, output_layer);
+                assert_eq!(
+                    output_layer, 0,
+                    "element {:?} is base layer only, but is expected at output layer {}",
+                    self, output_layer
+                );
             }
-            Self::InnerLayer { .. } | Self::Setup(..) | Self::OptimizedOut(..)  => {
+            Self::Setup(..) | Self::OptimizedOut(..) => {
                 unreachable!();
-            },
-
+            }
+            Self::InnerLayer { layer, .. } => {
+                assert_eq!(
+                    output_layer, *layer,
+                    "element {:?} is not at output layer {}",
+                    self, output_layer
+                );
+            }
             Self::Cached { layer, .. } => {
-                assert_eq!(output_layer, *layer, "element {:?} is not at output layer {}", self, output_layer);
+                assert_eq!(
+                    output_layer, *layer,
+                    "element {:?} is not at output layer {}",
+                    self, output_layer
+                );
             }
         }
     }

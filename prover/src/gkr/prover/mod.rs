@@ -70,10 +70,10 @@ pub struct GKRProof<F: PrimeField, E: FieldExtension<F> + Field> {
     pub pow_nonce: u64,
 }
 
-fn split_destinations<T: Sized>(
-    dest: Vec<&'_ mut [MaybeUninit<T>]>,
+pub(crate) fn split_destinations<T: Sized>(
+    dest: Vec<&'_ mut [T]>,
     geometry: WorkerGeometry,
-) -> Vec<Vec<&'_ mut [MaybeUninit<T>]>> {
+) -> Vec<Vec<&'_ mut [T]>> {
     let len = dest.len();
     let mut result = Vec::with_capacity(geometry.len());
     for _ in 0..geometry.len() {
@@ -97,12 +97,12 @@ fn split_destinations<T: Sized>(
     result
 }
 
-pub(crate) fn apply_row_wise<'a, F: PrimeField, E: FieldExtension<F> + Field>(
-    destination: Vec<&'a mut [MaybeUninit<F>]>,
-    extension_destination: Vec<&'a mut [MaybeUninit<E>]>,
+pub(crate) fn apply_row_wise<'a, A: 'static + Send + Sync, B: 'static + Send + Sync>(
+    destination: Vec<&'a mut [A]>,
+    extension_destination: Vec<&'a mut [B]>,
     trace_len: usize,
     worker: &Worker,
-    func: impl Fn(Vec<&mut [MaybeUninit<F>]>, Vec<&mut [MaybeUninit<E>]>, usize, usize) + Sync,
+    func: impl Fn(Vec<&mut [A]>, Vec<&mut [B]>, usize, usize) + Sync,
 ) {
     let d_len = destination.len();
     let ext_d_len = extension_destination.len();
@@ -193,9 +193,14 @@ pub fn prove_configured_with_gkr<
             &preprocessed_timestamp_range_checks,
             &preprocessed_generic_lookup,
             lookup_additive_part,
+            constraints_batch_challenge,
             worker,
         );
     }
+
+    // we will eventually output results of accumulations of grand product and lookups, and should commit to them here
+
+    // then we go "backward", by taking random point evaluation claims from the previous layer, and producing claims for the next layer
 
     todo!();
 }

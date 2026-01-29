@@ -30,6 +30,15 @@ pub struct ExtensionFieldPolyInitialSource<F: PrimeField, E: FieldExtension<F> +
     pub(crate) _marker: core::marker::PhantomData<F>,
 }
 
+unsafe impl<F: PrimeField, E: FieldExtension<F> + Field> Send
+    for ExtensionFieldPolyInitialSource<F, E>
+{
+}
+unsafe impl<F: PrimeField, E: FieldExtension<F> + Field> Sync
+    for ExtensionFieldPolyInitialSource<F, E>
+{
+}
+
 impl<F: PrimeField, E: FieldExtension<F> + Field> ExtensionFieldPolyInitialSource<F, E> {
     pub(crate) fn current_values(&'_ self) -> &'_ [E] {
         unsafe { core::slice::from_raw_parts(self.start, self.next_layer_size * 2) }
@@ -53,24 +62,24 @@ impl<F: PrimeField, E: FieldExtension<F> + Field>
         &()
     }
     #[inline(always)]
+    fn get_at_index(&self, index: usize) -> ExtensionFieldRepresentation<F, E> {
+        debug_assert!(index < self.next_layer_size * 2);
+        unsafe {
+            let f0 = self.start.add(index).read();
+            ExtensionFieldRepresentation {
+                value: f0,
+                _marker: core::marker::PhantomData,
+            }
+        }
+    }
+    #[inline(always)]
     fn get_f0_and_f1(&self, index: usize) -> [ExtensionFieldRepresentation<F, E>; 2] {
         // just read and do NOT cache f1 - f0
         debug_assert!(index < self.next_layer_size);
-        unsafe {
-            let f0 = self.start.add(index).read();
-            let f1 = self.start.add(self.next_layer_size + index).read();
-
-            [
-                ExtensionFieldRepresentation {
-                    value: f0,
-                    _marker: core::marker::PhantomData,
-                },
-                ExtensionFieldRepresentation {
-                    value: f1,
-                    _marker: core::marker::PhantomData,
-                },
-            ]
-        }
+        [
+            self.get_at_index(index),
+            self.get_at_index(self.next_layer_size + index),
+        ]
     }
 }
 
@@ -138,6 +147,15 @@ pub struct ExtensionFieldPolyContinuingSource<F: PrimeField, E: FieldExtension<F
     pub(crate) _marker: core::marker::PhantomData<F>,
 }
 
+unsafe impl<F: PrimeField, E: FieldExtension<F> + Field> Send
+    for ExtensionFieldPolyContinuingSource<F, E>
+{
+}
+unsafe impl<F: PrimeField, E: FieldExtension<F> + Field> Sync
+    for ExtensionFieldPolyContinuingSource<F, E>
+{
+}
+
 impl<F: PrimeField, E: FieldExtension<F> + Field> ExtensionFieldPolyContinuingSource<F, E> {
     pub(crate) fn previous_values(&'_ self) -> &'_ [E] {
         unsafe { core::slice::from_raw_parts(self.previous_layer_start, self.this_layer_size * 2) }
@@ -166,6 +184,43 @@ impl<F: PrimeField, E: FieldExtension<F> + Field>
         &()
     }
     #[inline(always)]
+    fn get_at_index(&self, index: usize) -> ExtensionFieldRepresentation<F, E> {
+        debug_assert!(index < self.next_layer_size * 2);
+        unsafe {
+            if self.first_access {
+                // recompute corresponding input from the previous layer
+
+                let f00 = self.previous_layer_start.add(index).read();
+                let f01 = self
+                    .previous_layer_start
+                    .add(self.this_layer_size + index)
+                    .read();
+
+                let f0_c0 = f00;
+                let mut f0_c1 = f01;
+                f0_c1.sub_assign(&f00);
+                let mut f0 = self.folding_challenge;
+                f0.mul_assign(&f0_c1);
+                f0.add_assign(&f0_c0);
+
+                // write down
+                self.this_layer_start.add(index).write(f0);
+
+                ExtensionFieldRepresentation {
+                    value: f0,
+                    _marker: core::marker::PhantomData,
+                }
+            } else {
+                let f0 = self.this_layer_start.add(index).read();
+
+                ExtensionFieldRepresentation {
+                    value: f0,
+                    _marker: core::marker::PhantomData,
+                }
+            }
+        }
+    }
+    #[inline(always)]
     fn get_f0_and_f1(&self, index: usize) -> [ExtensionFieldRepresentation<F, E>; 2] {
         // just read and do NOT cache f1 - f0
         debug_assert!(index < self.next_layer_size);
@@ -190,8 +245,6 @@ impl<F: PrimeField, E: FieldExtension<F> + Field>
                     .add(self.this_layer_size + self.next_layer_size + index)
                     .read();
 
-                // dbg!(((f00, f01), (f10, f11)));
-
                 let f0_c0 = f00;
                 let mut f0_c1 = f01;
                 f0_c1.sub_assign(&f00);
@@ -205,8 +258,6 @@ impl<F: PrimeField, E: FieldExtension<F> + Field>
                 let mut f1 = self.folding_challenge;
                 f1.mul_assign(&f1_c1);
                 f1.add_assign(&f1_c0);
-
-                // dbg!((index, f0, f1));
 
                 // write down
                 self.this_layer_start.add(index).write(f0);

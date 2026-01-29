@@ -1,3 +1,8 @@
+use crate::gkr::{
+    prover::{apply_row_wise, split_destinations},
+    sumcheck::access_and_fold::ExtensionFieldPoly,
+};
+
 use super::*;
 use std::mem::MaybeUninit;
 
@@ -6,8 +11,23 @@ pub trait ExtensionFieldInOutFixedSizesEvaluationKernel<
     E: FieldExtension<F> + Field,
     const IN: usize,
     const OUT: usize,
->
+>: Send + Sync
 {
+    fn evaluate_forward<S: EvaluationFormStorage<F, E, ExtensionFieldRepresentation<F, E>>>(
+        &self,
+        index: usize,
+        sources: &[S; IN],
+    ) -> [E; OUT] {
+        assert!(IN > 0);
+        assert!(OUT > 0);
+        unsafe {
+            let p0s = std::array::from_fn(|i| sources[i].get_at_index(index));
+            let eval = self.pointwise_eval_forward(&p0s);
+
+            eval
+        }
+    }
+
     fn evaluate_first_round<
         S: EvaluationFormStorage<F, E, ExtensionFieldRepresentation<F, E>>,
         SOUT: EvaluationFormStorage<F, E, ExtensionFieldRepresentation<F, E>>,
@@ -162,6 +182,75 @@ fn evaluate_extension_field_in_out_fixed_sizes_evaluation_kernel_first_round<
     }
 }
 
+pub fn forward_evaluate_single_input_type_fixed_in_out_kernel_with_extension_inputs<
+    F: PrimeField,
+    E: FieldExtension<F> + Field,
+    const IN: usize,
+    const OUT: usize,
+    K: ExtensionFieldInOutFixedSizesEvaluationKernel<F, E, IN, OUT>,
+>(
+    kernel: &K,
+    inputs: &GKRInputs,
+    storage: &mut GKRStorage<F, E>,
+    expected_output_layer: usize,
+    trace_len: usize,
+    worker: &Worker,
+) {
+    assert!(trace_len.is_power_of_two());
+    unsafe {
+        let mut inputs = inputs.clone();
+        let outputs = std::mem::replace(&mut inputs.outputs_in_extension, vec![]);
+        assert_eq!(outputs.len(), OUT);
+        for output in outputs.iter() {
+            output.assert_as_layer(expected_output_layer);
+        }
+        let sources = storage.select_for_first_round(&inputs);
+        let mut destinations = Vec::with_capacity(outputs.len());
+        for _ in 0..outputs.len() {
+            destinations.push(Box::<[E]>::new_uninit_slice(trace_len));
+        }
+        let mut destinations_refs = Vec::with_capacity(outputs.len());
+        for el in destinations.iter_mut() {
+            destinations_refs.push(&mut el[..]);
+        }
+
+        let inputs = sources
+            .extension_field_inputs
+            .as_chunks::<IN>()
+            .0
+            .iter()
+            .next()
+            .unwrap_unchecked();
+
+        apply_row_wise::<F, _>(
+            vec![],
+            destinations_refs,
+            trace_len,
+            worker,
+            |_, ext_dest, chunk_start, chunk_size| {
+                assert_eq!(ext_dest.len(), OUT);
+                let mut destinations: [&mut [MaybeUninit<E>]; OUT] = ext_dest.try_into().unwrap();
+                for index in 0..chunk_size {
+                    let absolute_index = chunk_start + index;
+                    let value = kernel.evaluate_forward(absolute_index, inputs);
+                    for (dst, val) in destinations.iter_mut().zip(value.into_iter()) {
+                        dst[index].write(val);
+                    }
+                }
+            },
+        );
+
+        for (output, destination) in outputs.into_iter().zip(destinations.into_iter()) {
+            let values = destination.assume_init();
+            storage.insert_extension_at_layer(
+                expected_output_layer,
+                output,
+                ExtensionFieldPoly::new(values),
+            );
+        }
+    }
+}
+
 pub fn evaluate_single_input_type_fixed_in_out_kernel_with_extension_inputs<
     F: PrimeField,
     E: FieldExtension<F> + Field,
@@ -178,9 +267,11 @@ pub fn evaluate_single_input_type_fixed_in_out_kernel_with_extension_inputs<
     accumulator: &mut [[E; 2]],
     total_sumcheck_rounds: usize,
     last_evaluations: &mut BTreeMap<GKRAddress, [E; 2]>,
+    worker: &Worker,
 ) {
+    let work_size = accumulator.len();
+    assert!(work_size.is_power_of_two());
     unsafe {
-        // parallelize eventually
         match step {
             0 => {
                 let sources = storage.select_for_first_round(inputs);
@@ -212,12 +303,28 @@ pub fn evaluate_single_input_type_fixed_in_out_kernel_with_extension_inputs<
                         .next()
                         .unwrap_unchecked();
 
-                    for index in 0..accumulator.len() {
-                        let value = kernel.evaluate_first_round(index, inputs, outputs, challenges);
-                        for i in 0..2 {
-                            accumulator[index][i].add_assign(&value[i]);
-                        }
-                    }
+                    apply_row_wise::<F, _>(
+                        vec![],
+                        vec![accumulator],
+                        work_size,
+                        worker,
+                        |_, mut ext_dest, chunk_start, chunk_size| {
+                            assert_eq!(ext_dest.len(), 1);
+                            let accumulator = ext_dest.pop().unwrap();
+                            for index in 0..chunk_size {
+                                let absolute_index = chunk_start + index;
+                                let value = kernel.evaluate_first_round(
+                                    absolute_index,
+                                    inputs,
+                                    outputs,
+                                    challenges,
+                                );
+                                for i in 0..2 {
+                                    accumulator[index][i].add_assign(&value[i]);
+                                }
+                            }
+                        },
+                    );
                 } else {
                     assert_eq!(sources.extension_field_inputs.len(), IN);
                     assert_eq!(batch_challenges.len(), OUT);
@@ -236,12 +343,24 @@ pub fn evaluate_single_input_type_fixed_in_out_kernel_with_extension_inputs<
                         .next()
                         .unwrap_unchecked();
 
-                    for index in 0..accumulator.len() {
-                        let value = kernel.evaluate::<_, false>(index, inputs, challenges);
-                        for i in 0..2 {
-                            accumulator[index][i].add_assign(&value[i]);
-                        }
-                    }
+                    apply_row_wise::<F, _>(
+                        vec![],
+                        vec![accumulator],
+                        work_size,
+                        worker,
+                        |_, mut ext_dest, chunk_start, chunk_size| {
+                            assert_eq!(ext_dest.len(), 1);
+                            let accumulator = ext_dest.pop().unwrap();
+                            for index in 0..chunk_size {
+                                let absolute_index = chunk_start + index;
+                                let value =
+                                    kernel.evaluate::<_, false>(absolute_index, inputs, challenges);
+                                for i in 0..2 {
+                                    accumulator[index][i].add_assign(&value[i]);
+                                }
+                            }
+                        },
+                    );
                 }
                 // for input in sources.extension_field_inputs.iter() {
                 //     dbg!(input.current_values());
@@ -272,12 +391,24 @@ pub fn evaluate_single_input_type_fixed_in_out_kernel_with_extension_inputs<
                         .next()
                         .unwrap_unchecked();
 
-                    for index in 0..accumulator.len() {
-                        let value = kernel.evaluate::<_, true>(index, inputs, challenges);
-                        for i in 0..2 {
-                            accumulator[index][i].add_assign(&value[i]);
-                        }
-                    }
+                    apply_row_wise::<F, _>(
+                        vec![],
+                        vec![accumulator],
+                        work_size,
+                        worker,
+                        |_, mut ext_dest, chunk_start, chunk_size| {
+                            assert_eq!(ext_dest.len(), 1);
+                            let accumulator = ext_dest.pop().unwrap();
+                            for index in 0..chunk_size {
+                                let absolute_index = chunk_start + index;
+                                let value =
+                                    kernel.evaluate::<_, true>(absolute_index, inputs, challenges);
+                                for i in 0..2 {
+                                    accumulator[index][i].add_assign(&value[i]);
+                                }
+                            }
+                        },
+                    );
                 }
 
                 println!("COLLECTING LAST LAYER VALUES");
@@ -310,12 +441,24 @@ pub fn evaluate_single_input_type_fixed_in_out_kernel_with_extension_inputs<
                         .next()
                         .unwrap_unchecked();
 
-                    for index in 0..accumulator.len() {
-                        let value = kernel.evaluate::<_, false>(index, inputs, challenges);
-                        for i in 0..2 {
-                            accumulator[index][i].add_assign(&value[i]);
-                        }
-                    }
+                    apply_row_wise::<F, _>(
+                        vec![],
+                        vec![accumulator],
+                        work_size,
+                        worker,
+                        |_, mut ext_dest, chunk_start, chunk_size| {
+                            assert_eq!(ext_dest.len(), 1);
+                            let accumulator = ext_dest.pop().unwrap();
+                            for index in 0..chunk_size {
+                                let absolute_index = chunk_start + index;
+                                let value =
+                                    kernel.evaluate::<_, false>(absolute_index, inputs, challenges);
+                                for i in 0..2 {
+                                    accumulator[index][i].add_assign(&value[i]);
+                                }
+                            }
+                        },
+                    );
                 }
                 for source in sources.extension_field_inputs.iter() {
                     dbg!(source.previous_values());

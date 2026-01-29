@@ -52,6 +52,7 @@ impl LookupRationalPair {
         this: Self,
         graph: &mut impl GraphHolder,
         output_layer: usize,
+        single_columns_lookup_width: Option<u32>,
     ) -> (Self, NoFieldGKRRelation) {
         // we consider very limited set of options here
         match (this.num, this.den) {
@@ -123,7 +124,11 @@ impl LookupRationalPair {
                 assert!(this.num_node.is_none());
                 assert!(this.den_node.is_none());
 
-                let node = MaterializeSingleInputNode(input);
+                let node = MaterializeSingleInputNode {
+                    input,
+                    range_check_width: single_columns_lookup_width
+                        .expect("must be present in single column lookups"),
+                };
                 let (den_node, rel) = node.add_at_layer(graph, output_layer);
 
                 let r = Self {
@@ -167,6 +172,7 @@ impl LookupRationalPair {
         pair: (Self, Self),
         graph: &mut impl GraphHolder,
         output_layer: usize,
+        single_columns_lookup_width: Option<u32>,
     ) -> (Self, NoFieldGKRRelation) {
         let (a, b) = pair;
         assert_eq!(a.lookup_type, b.lookup_type);
@@ -215,6 +221,8 @@ impl LookupRationalPair {
                     input: input.clone(),
                     multiplicity,
                     setup,
+                    range_check_width: single_columns_lookup_width
+                        .expect("must be present in single column lookups"),
                 };
                 let ([num, den], rel) = node.add_at_layer(graph, output_layer);
 
@@ -237,6 +245,8 @@ impl LookupRationalPair {
                 let node = LookupSingleColumnWitnessPairAggregationNode {
                     lhs: a.clone(),
                     rhs: b.clone(),
+                    range_check_width: single_columns_lookup_width
+                        .expect("must be present in single column lookups"),
                 };
                 let ([num, den], rel) = node.add_at_layer(graph, output_layer);
 
@@ -313,7 +323,10 @@ impl LookupRationalPair {
 }
 
 #[derive(Clone, Hash, Debug, PartialEq, Eq, serde::Serialize, serde::Deserialize)]
-pub struct MaterializeSingleInputNode(pub(crate) NoFieldSingleColumnLookupRelation);
+pub struct MaterializeSingleInputNode {
+    pub(crate) input: NoFieldSingleColumnLookupRelation,
+    pub(crate) range_check_width: u32,
+}
 
 impl GKRGate for MaterializeSingleInputNode {
     type Output = GKRAddress;
@@ -328,15 +341,39 @@ impl GKRGate for MaterializeSingleInputNode {
         output_layer: usize,
     ) -> (Self::Output, NoFieldGKRRelation) {
         let output = graph.add_intermediate_variable_at_layer(output_layer);
-        // TODO: decide to cache or not, maybe adaptively based on the number of terms
 
-        let relation = NoFieldGKRRelation::MaterializedSingleLookupInput {
-            input: self.0.clone(),
-            output,
-        };
-        graph.add_enforced_relation(relation.clone(), output_layer);
+        if self.input.input.is_trivial_single_input() {
+            // just copy
+            let input = self.input.input.linear_terms[0].1;
+            let relation = NoFieldGKRRelation::Copy { input, output };
+            graph.add_enforced_relation(relation.clone(), output_layer);
 
-        (output, relation)
+            (output, relation)
+        } else {
+            let cached_input = NoFieldGKRCacheRelation::SingleColumnLookup {
+                relation: self.input.clone(),
+                range_check_width: self.range_check_width as usize,
+            };
+            assert!(output_layer > 0);
+            let layer_for_caches = output_layer - 1;
+            let cached_input = graph.add_cached_relation(cached_input, layer_for_caches);
+
+            let relation = NoFieldGKRRelation::Copy {
+                input: cached_input,
+                output,
+            };
+            graph.add_enforced_relation(relation.clone(), output_layer);
+
+            (output, relation)
+        }
+
+        // let relation = NoFieldGKRRelation::MaterializedSingleLookupInput {
+        //     input: self.0.clone(),
+        //     output,
+        // };
+        // graph.add_enforced_relation(relation.clone(), output_layer);
+
+        // (output, relation)
     }
 }
 
@@ -412,6 +449,7 @@ pub struct LookupSingleColumnWitnessMinusSetupInputNode {
     pub input: NoFieldSingleColumnLookupRelation,
     pub multiplicity: GKRAddress,
     pub setup: GKRAddress,
+    pub range_check_width: u32,
 }
 
 impl GKRGate for LookupSingleColumnWitnessMinusSetupInputNode {
@@ -428,8 +466,24 @@ impl GKRGate for LookupSingleColumnWitnessMinusSetupInputNode {
     ) -> (Self::Output, NoFieldGKRRelation) {
         let output = [(); 2].map(|_| graph.add_intermediate_variable_at_layer(output_layer));
 
-        let relation = NoFieldGKRRelation::LookupFromBaseInputsWithSetup {
-            input: self.input.clone(),
+        // We will be lazy - will cache the input
+
+        let input = if self.input.input.is_trivial_single_input() {
+            self.input.input.linear_terms[0].1
+        } else {
+            let cached_input = NoFieldGKRCacheRelation::SingleColumnLookup {
+                relation: self.input.clone(),
+                range_check_width: self.range_check_width as usize,
+            };
+            assert!(output_layer > 0);
+            let layer_for_caches = output_layer - 1;
+            let cached_input = graph.add_cached_relation(cached_input, layer_for_caches);
+
+            cached_input
+        };
+
+        let relation = NoFieldGKRRelation::LookupFromMaterializedBaseInputWithSetup {
+            input,
             setup: [self.multiplicity, self.setup],
             output,
         };
@@ -437,6 +491,16 @@ impl GKRGate for LookupSingleColumnWitnessMinusSetupInputNode {
         graph.add_enforced_relation(relation.clone(), output_layer);
 
         (output, relation)
+
+        // let relation = NoFieldGKRRelation::LookupFromBaseInputsWithSetup {
+        //     input: self.input.clone(),
+        //     setup: [self.multiplicity, self.setup],
+        //     output,
+        // };
+
+        // graph.add_enforced_relation(relation.clone(), output_layer);
+
+        // (output, relation)
     }
 }
 
@@ -444,6 +508,7 @@ impl GKRGate for LookupSingleColumnWitnessMinusSetupInputNode {
 pub struct LookupSingleColumnWitnessPairAggregationNode {
     pub lhs: NoFieldSingleColumnLookupRelation,
     pub rhs: NoFieldSingleColumnLookupRelation,
+    pub range_check_width: u32,
 }
 
 impl GKRGate for LookupSingleColumnWitnessPairAggregationNode {
@@ -460,14 +525,36 @@ impl GKRGate for LookupSingleColumnWitnessPairAggregationNode {
     ) -> (Self::Output, NoFieldGKRRelation) {
         let output = [(); 2].map(|_| graph.add_intermediate_variable_at_layer(output_layer));
 
-        let relation = NoFieldGKRRelation::LookupPairFromBaseInputs {
-            input: [self.lhs.clone(), self.rhs.clone()],
-            output,
-        };
+        let input = [&self.lhs, &self.rhs].map(|input| {
+            if input.input.is_trivial_single_input() {
+                input.input.linear_terms[0].1
+            } else {
+                let cached_input = NoFieldGKRCacheRelation::SingleColumnLookup {
+                    relation: input.clone(),
+                    range_check_width: self.range_check_width as usize,
+                };
+                assert!(output_layer > 0);
+                let layer_for_caches = output_layer - 1;
+                let cached_input = graph.add_cached_relation(cached_input, layer_for_caches);
+
+                cached_input
+            }
+        });
+
+        let relation = NoFieldGKRRelation::LookupPairFromMaterializedBaseInputs { input, output };
 
         graph.add_enforced_relation(relation.clone(), output_layer);
 
         (output, relation)
+
+        // let relation = NoFieldGKRRelation::LookupPairFromBaseInputs {
+        //     input: [self.lhs.clone(), self.rhs.clone()],
+        //     output,
+        // };
+
+        // graph.add_enforced_relation(relation.clone(), output_layer);
+
+        // (output, relation)
     }
 }
 

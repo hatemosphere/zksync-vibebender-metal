@@ -7,6 +7,9 @@ pub struct NoFieldLinearRelation {
 }
 
 impl NoFieldLinearRelation {
+    pub fn is_trivial_single_input(&self) -> bool {
+        self.linear_terms.len() == 1 && self.linear_terms[0].0 == 1 && self.constant == 0
+    }
     pub fn from_single_input(input: GKRAddress) -> Self {
         Self {
             linear_terms: vec![(1, input)].into_boxed_slice(),

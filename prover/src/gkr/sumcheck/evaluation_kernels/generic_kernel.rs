@@ -1,3 +1,5 @@
+use crate::gkr::prover::split_destinations;
+
 use super::*;
 
 #[derive(Clone, Debug, Hash, PartialEq, Eq)]
@@ -8,34 +10,6 @@ pub struct GKRInputs {
     pub outputs_in_extension: Vec<GKRAddress>,
 }
 
-// fn select_fixed_sized_input_in_base_round_0<F: PrimeField, E: FieldExtension<F> + Field, const IN: usize>(
-//     input: GKRInputs,
-//     storage: GKRStorage<F, E>,
-// ) -> () {
-//     todo!();
-// }
-
-// fn select_fixed_sized_input_in_extension_round_0<F: PrimeField, E: FieldExtension<F> + Field, const IN: usize>(
-//     input: GKRInputs,
-//     storage: GKRStorage<F, E>,
-// ) -> () {
-//     todo!();
-// }
-
-// fn select_fixed_sized_input_output_in_extension_round_0<F: PrimeField, E: FieldExtension<F> + Field, const IN: usize, const OUT: usize>(
-//     input: GKRInputs,
-//     storage: GKRStorage<F, E>,
-// ) -> () {
-//     todo!();
-// }
-
-// fn select_fixed_sized_input_in_extension_round_1_and_beyond<F: PrimeField, E: FieldExtension<F> + Field, const IN: usize>(
-//     input: GKRInputs,
-//     storage: GKRStorage<F, E>,
-// ) -> () {
-//     todo!();
-// }
-
 pub trait BatchedGKRKernel<F: PrimeField, E: FieldExtension<F> + Field> {
     fn num_challenges(&self) -> usize;
     fn get_inputs(&self) -> GKRInputs;
@@ -43,6 +17,8 @@ pub trait BatchedGKRKernel<F: PrimeField, E: FieldExtension<F> + Field> {
         &self,
         storage: &mut GKRStorage<F, E>,
         expected_output_layer: usize,
+        trace_len: usize,
+        worker: &Worker,
     );
     fn evaluate_over_storage(
         &self,
@@ -53,6 +29,7 @@ pub trait BatchedGKRKernel<F: PrimeField, E: FieldExtension<F> + Field> {
         accumulator: &mut [[E; 2]],
         total_sumcheck_rounds: usize,
         last_evaluations: &mut BTreeMap<GKRAddress, [E; 2]>,
+        worker: &Worker,
     );
 }
 
@@ -70,8 +47,12 @@ pub fn evaluate_single_input_kernel_with_base_inputs<
     accumulator: &mut [[E; 2]],
     total_sumcheck_rounds: usize,
     last_evaluations: &mut BTreeMap<GKRAddress, [E; 2]>,
+    worker: &Worker,
 ) {
-    // parallelize eventually
+    let work_size = accumulator.len();
+    assert!(work_size.is_power_of_two());
+    let mut accumulator_chunks =
+        split_destinations(vec![accumulator], worker.get_geometry(work_size));
     match step {
         0 => {
             let sources = storage.select_for_first_round(inputs);
@@ -153,8 +134,12 @@ pub fn evaluate_single_input_kernel_with_extension_inputs<
     accumulator: &mut [[E; 2]],
     total_sumcheck_rounds: usize,
     last_evaluations: &mut BTreeMap<GKRAddress, [E; 2]>,
+    worker: &Worker,
 ) {
-    // parallelize eventually
+    let work_size = accumulator.len();
+    assert!(work_size.is_power_of_two());
+    let mut accumulator_chunks =
+        split_destinations(vec![accumulator], worker.get_geometry(work_size));
     match step {
         0 => {
             let sources = storage.select_for_first_round(inputs);

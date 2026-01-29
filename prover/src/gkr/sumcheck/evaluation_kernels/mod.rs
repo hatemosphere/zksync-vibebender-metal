@@ -1,8 +1,8 @@
-use std::collections::BTreeMap;
-
 use crate::gkr::sumcheck::access_and_fold::GKRStorage;
 use cs::definitions::GKRAddress;
 use field::{Field, FieldExtension, PrimeField};
+use std::collections::BTreeMap;
+use worker::Worker;
 
 pub mod batch_constraint_eval_example;
 pub mod trivial_product_in_extension;
@@ -205,12 +205,13 @@ pub trait EvaluationFormStorage<
     F: PrimeField,
     E: FieldExtension<F> + Field,
     R: EvaluationRepresentation<F, E>,
->
+>: Send + Sync
 {
     const SHOULD_ACCESS_TO_PREPARE_FOR_NEXT_STEP: bool;
 
     fn dummy() -> Self;
     fn get_collapse_context(&self) -> &R::CollapseContext;
+    fn get_at_index(&self, index: usize) -> R;
     #[inline(always)]
     fn get_f0_only(&self, index: usize) -> R {
         self.get_f0_and_f1_minus_f0(index)[0]
@@ -247,6 +248,10 @@ impl<F: PrimeField, E: FieldExtension<F> + Field, R: EvaluationRepresentation<F,
     }
     #[inline(always)]
     fn get_collapse_context(&self) -> &R::CollapseContext {
+        unreachable!()
+    }
+    #[inline(always)]
+    fn get_at_index(&self, _index: usize) -> R {
         unreachable!()
     }
     #[inline(always)]

@@ -10,6 +10,7 @@ use cs::{
 };
 
 pub(crate) mod initial_grand_product_from_caches;
+pub(crate) mod lookup_from_base_inputs_with_setup;
 
 fn evaluate_cache_relation<F: PrimeField, E: FieldExtension<F> + Field>(
     layer_idx: usize,
@@ -17,7 +18,7 @@ fn evaluate_cache_relation<F: PrimeField, E: FieldExtension<F> + Field>(
     relation: &NoFieldGKRCacheRelation,
     gkr_storage: &mut GKRStorage<F, E>,
     external_challenges: &GKRExternalChallenges<F, E>,
-    witness_trace: &GKRFullWitnessTrace<F, Global, Global>,
+    witness_trace: &mut GKRFullWitnessTrace<F, Global, Global>,
     trace_len: usize,
     preprocessed_range_check_16: &[E],
     preprocessed_timestamp_range_checks: &[E],
@@ -31,11 +32,74 @@ fn evaluate_cache_relation<F: PrimeField, E: FieldExtension<F> + Field>(
             NoFieldGKRCacheRelation::LongLinear => {
                 todo!();
             }
+            NoFieldGKRCacheRelation::SingleColumnLookup {
+                relation,
+                range_check_width,
+            } => {
+                let mut destination = Box::<[F], Global>::new_uninit_slice(trace_len);
+                if *range_check_width == 16 {
+                    let source = std::mem::replace(
+                        &mut witness_trace.range_check_16_lookup_mapping[relation.lookup_set_index],
+                        vec![],
+                    );
+                    let source_ref = &source;
+                    assert_eq!(source.len(), trace_len);
+                    apply_row_wise::<_, E>(
+                        vec![&mut destination],
+                        vec![],
+                        trace_len,
+                        worker,
+                        |dest, _, chunk_start, chunk_size| {
+                            assert_eq!(dest.len(), 1);
+                            let mut dest = dest;
+                            let dest = dest.pop().unwrap();
+                            for i in 0..chunk_size {
+                                let mapping_index = source_ref[chunk_start + i];
+                                let mapped_value = F::from_u32_unchecked(mapping_index as u32);
+                                dest[i].write(mapped_value);
+                            }
+                        },
+                    );
+                } else if *range_check_width == TIMESTAMP_COLUMNS_NUM_BITS as usize {
+                    let source = std::mem::replace(
+                        &mut witness_trace.timestamp_range_check_lookup_mapping
+                            [relation.lookup_set_index],
+                        vec![],
+                    );
+                    let source_ref = &source;
+                    assert_eq!(source.len(), trace_len);
+                    apply_row_wise::<_, E>(
+                        vec![&mut destination],
+                        vec![],
+                        trace_len,
+                        worker,
+                        |dest, _, chunk_start, chunk_size| {
+                            assert_eq!(dest.len(), 1);
+                            let mut dest = dest;
+                            let dest = dest.pop().unwrap();
+                            for i in 0..chunk_size {
+                                let mapping_index = source_ref[chunk_start + i];
+                                let mapped_value = F::from_u32_unchecked(mapping_index);
+                                dest[i].write(mapped_value);
+                            }
+                        },
+                    );
+                } else {
+                    unreachable!(
+                        "unknown single column lookup range check of width {}",
+                        range_check_width
+                    );
+                };
+
+                let destination = destination.assume_init();
+                assert_eq!(layer_idx, 0);
+                gkr_storage.insert_base_field_at_layer(0, address, BaseFieldPoly::new(destination));
+            }
             NoFieldGKRCacheRelation::MemoryTuple(rel) => {
                 let mut destination = Box::<[E], Global>::new_uninit_slice(trace_len);
                 let ext_destination = vec![&mut destination[..]];
                 let src_ref = &*gkr_storage;
-                apply_row_wise(
+                apply_row_wise::<F, _>(
                     vec![],
                     ext_destination,
                     trace_len,
@@ -167,15 +231,15 @@ fn evaluate_cache_relation<F: PrimeField, E: FieldExtension<F> + Field>(
                 let mut destination = Box::<[E], Global>::new_uninit_slice(trace_len);
                 let ext_destination = vec![&mut destination[..]];
                 let mapping_ref = if lookup_set_index != DECODER_LOOKUP_FORMAL_SET_INDEX {
-                    println!("Mapping decoder lookup");
+                    println!("Mapping lookup access number {}", lookup_set_index);
                     assert!(lookup_set_index < witness_trace.generic_lookup_mapping.len() - 1);
                     &witness_trace.generic_lookup_mapping[lookup_set_index]
                 } else {
-                    println!("Mapping lookup access number {}", lookup_set_index);
+                    println!("Mapping decoder lookup");
                     assert!(witness_trace.generic_lookup_mapping.len() > 0);
                     witness_trace.generic_lookup_mapping.last().unwrap()
                 };
-                apply_row_wise(
+                apply_row_wise::<F, _>(
                     vec![],
                     ext_destination,
                     trace_len,
@@ -199,7 +263,7 @@ fn evaluate_cache_relation<F: PrimeField, E: FieldExtension<F> + Field>(
                     ExtensionFieldPoly::new(destination),
                 );
             }
-            NoFieldGKRCacheRelation::VectorizedLookupSetup(rel) => {
+            NoFieldGKRCacheRelation::VectorizedLookupSetup(_rel) => {
                 let mut destination = Box::<[E], Global>::new_uninit_slice(trace_len);
                 destination[..preprocessed_generic_lookup.len()]
                     .write_copy_of_slice(preprocessed_generic_lookup);
@@ -229,6 +293,7 @@ pub fn evaluate_layer<F: PrimeField, E: FieldExtension<F> + Field>(
     preprocessed_timestamp_range_checks: &[E],
     preprocessed_generic_lookup: &[E],
     lookup_challenges_additive_part: E,
+    constraints_batch_challenge: E,
     worker: &Worker,
 ) {
     println!("Evaluating layer {} in forward direction", layer_idx);
@@ -275,7 +340,7 @@ pub fn evaluate_layer<F: PrimeField, E: FieldExtension<F> + Field>(
             cache_relation,
             gkr_storage,
             external_challenges,
-            &*witness_trace,
+            witness_trace,
             trace_len,
             preprocessed_range_check_16,
             preprocessed_timestamp_range_checks,
@@ -285,20 +350,35 @@ pub fn evaluate_layer<F: PrimeField, E: FieldExtension<F> + Field>(
         );
     }
 
+    let expected_output_layer = layer_idx + 1;
     for gate in layer.gates.iter() {
-        assert_eq!(gate.output_layer, layer_idx + 1);
+        assert_eq!(gate.output_layer, expected_output_layer);
+
         match &gate.enforced_relation {
             NoFieldGKRRelation::InitialGrandProductFromCaches { input, output } => {
-                initial_grand_product_from_caches::evaluate_initial_grand_product_from_caches(
+                println!("Should evaluate {:?}", &gate.enforced_relation);
+                initial_grand_product_from_caches::forward_evaluate_initial_grand_product_from_caches(
                     *input,
                     *output,
                     gkr_storage,
-                    layer_idx + 1,
+                    expected_output_layer,
+                    trace_len,
                     worker,
                 );
             }
+            NoFieldGKRRelation::EnforceConstraintsMaxQuadratic { .. } => {
+                // we do nothing as it should result in all zeroes in case if constraints are satisfied
+            }
+            NoFieldGKRRelation::LookupFromBaseInputsWithSetup {
+                input,
+                setup,
+                output,
+            } => {
+                println!("Should evaluate {:?}", &gate.enforced_relation);
+                // lookup_from_base_inputs_with_setup::forward_evaluate_lookup_from_base_inputs_with_setup(inputs, output, gkr_storage, expected_output_layer, trace_len, worker);
+            }
             rel @ _ => {
-                println!("Should evaluate {:?}", rel);
+                println!("Should evaluate {:?}", &gate.enforced_relation);
             }
         }
     }

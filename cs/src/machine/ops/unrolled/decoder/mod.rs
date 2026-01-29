@@ -266,7 +266,10 @@ pub fn materialize_flattened_decoder_table_with_bitmask<F: PrimeField>(
     fields_bitmask: &[bool],
 ) -> Vec<arrayvec::ArrayVec<F, EXECUTOR_FAMILY_CIRCUIT_DECODER_TABLE_WIDTH>> {
     assert!(supported_entries_for_family.len().is_power_of_two());
-    assert_eq!(fields_bitmask.len(), EXECUTOR_FAMILY_CIRCUIT_DECODER_TABLE_WIDTH);
+    assert_eq!(
+        fields_bitmask.len(),
+        EXECUTOR_FAMILY_CIRCUIT_DECODER_TABLE_WIDTH
+    );
     assert!(fields_bitmask[0]); // at least PCs should be there
     assert!(fields_bitmask[1]);
 

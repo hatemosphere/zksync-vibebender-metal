@@ -173,7 +173,13 @@ impl<F: PrimeField> GKRCompiler<F> {
                 decoder_lookup_pair = Some((executor_machine_state.execute, decoder_lookup));
             }
 
-            assert_eq!(decode_table_columns_mask.iter().filter(|el| **el == true).count(), decoder_table_width);
+            assert_eq!(
+                decode_table_columns_mask
+                    .iter()
+                    .filter(|el| **el == true)
+                    .count(),
+                decoder_table_width
+            );
 
             let total_generic_lookups = (generic_lookups.len() as u64
                 + decoder_lookup_pair.is_some() as u64)

@@ -1,4 +1,5 @@
 use cs::definitions::GKRAddress;
+use worker::Worker;
 
 use super::*;
 
@@ -27,8 +28,21 @@ impl<F: PrimeField, E: FieldExtension<F> + Field> BatchedGKRKernel<F, E>
         &self,
         storage: &mut GKRStorage<F, E>,
         expected_output_layer: usize,
+        trace_len: usize,
+        worker: &Worker,
     ) {
-        todo!();
+        let kernel = SameSizeProductGKRRelationKernel {
+            _marker: core::marker::PhantomData,
+        };
+        let inputs = <Self as BatchedGKRKernel<F, E>>::get_inputs(self);
+        forward_evaluate_single_input_type_fixed_in_out_kernel_with_extension_inputs(
+            &kernel,
+            &inputs,
+            storage,
+            expected_output_layer,
+            trace_len,
+            worker,
+        );
     }
 
     fn evaluate_over_storage(
@@ -40,6 +54,7 @@ impl<F: PrimeField, E: FieldExtension<F> + Field> BatchedGKRKernel<F, E>
         accumulator: &mut [[E; 2]],
         total_sumcheck_rounds: usize,
         last_evaluations: &mut BTreeMap<GKRAddress, [E; 2]>,
+        worker: &Worker,
     ) {
         assert_eq!(
             batch_challenges.len(),
@@ -60,6 +75,7 @@ impl<F: PrimeField, E: FieldExtension<F> + Field> BatchedGKRKernel<F, E>
             accumulator,
             total_sumcheck_rounds,
             last_evaluations,
+            worker,
         );
 
         // evaluate_single_input_kernel_with_extension_inputs(

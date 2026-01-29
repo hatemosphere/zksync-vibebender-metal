@@ -470,7 +470,9 @@ pub(crate) fn lookup_input_into_cached_expr<F: PrimeField, const SINGLE_COLUMN: 
     graph: &dyn GraphHolder,
 ) -> NoFieldGKRCacheRelation {
     NoFieldGKRCacheRelation::VectorizedLookup(lookup_input_into_relation::<F, SINGLE_COLUMN>(
-        lookup, lookup_set_index, graph,
+        lookup,
+        lookup_set_index,
+        graph,
     ))
 }
 

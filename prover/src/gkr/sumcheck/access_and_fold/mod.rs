@@ -70,7 +70,13 @@ impl<F: PrimeField, E: FieldExtension<F> + Field> GKRStorage<F, E> {
             self.layers
                 .resize_with(layer + 1, || GKRLayerSource::default());
         }
-        self.layers[layer].base_field_inputs.insert(address, value);
+        let existing = self.layers[layer].base_field_inputs.insert(address, value);
+        assert!(
+            existing.is_none(),
+            "trying to insert another value for layer {}, address {:?}",
+            layer,
+            address
+        );
     }
 
     pub(crate) fn insert_extension_at_layer(
@@ -83,9 +89,15 @@ impl<F: PrimeField, E: FieldExtension<F> + Field> GKRStorage<F, E> {
             self.layers
                 .resize_with(layer + 1, || GKRLayerSource::default());
         }
-        self.layers[layer]
+        let existing = self.layers[layer]
             .extension_field_inputs
             .insert(address, value);
+        assert!(
+            existing.is_none(),
+            "trying to insert another value for layer {}, address {:?}",
+            layer,
+            address
+        );
     }
 
     pub(crate) fn make_ext_source_for_rounds_two_and_beyond(

@@ -2,6 +2,7 @@ use std::collections::BTreeMap;
 
 use cs::definitions::GKRAddress;
 use field::{Field, FieldExtension, Mersenne31Field, Mersenne31Quartic};
+use worker::Worker;
 
 use crate::gkr::sumcheck::eq_poly::*;
 use crate::gkr::sumcheck::{
@@ -39,6 +40,7 @@ fn test_simple_product() {
 
     const FOLDING_STEPS: usize = 3;
     const POLY_SIZE: usize = 1 << FOLDING_STEPS;
+    let worker = Worker::new_with_num_threads(1);
 
     let a: Vec<E> = (0..POLY_SIZE)
         .map(|el| E::from_base(F::from_u64_with_reduction(el as u64)))
@@ -198,6 +200,7 @@ fn test_simple_product() {
                 &mut accumulator[..],
                 FOLDING_STEPS,
                 &mut last_evaluations,
+                &worker,
             );
             let eq = &eq_reduced_precomputed[eq_reduced_len - 1 - step];
 
@@ -266,6 +269,7 @@ fn test_simple_product() {
                 &mut accumulator[..],
                 FOLDING_STEPS,
                 &mut last_evaluations,
+                &worker,
             );
 
             // we would commit those values

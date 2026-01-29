@@ -67,8 +67,6 @@ impl GKRGraph {
                 .get(&layer_for_caches)
                 .cloned()
                 .unwrap_or_default();
-            dbg!(layer);
-            dbg!(&cache_relations_for_this_layer);
 
             let mut external_lookup_connections = BTreeSet::new();
 
@@ -99,7 +97,14 @@ impl GKRGraph {
                                 let GKRAddress::Cached { layer: l, offset } = cached else {
                                     unreachable!();
                                 };
-                                assert_eq!(l + 1, layer, "relation {:?} is at layer {}, but references cache {:?}", rel, layer, cached);
+                                assert_eq!(
+                                    l + 1,
+                                    layer,
+                                    "relation {:?} is at layer {}, but references cache {:?}",
+                                    rel,
+                                    layer,
+                                    cached
+                                );
                                 let relation = cache_relations_for_this_layer[offset].clone();
                                 descr.cached_relations.insert(cached, relation);
                             }
@@ -124,7 +129,14 @@ impl GKRGraph {
                     let GKRAddress::Cached { layer: l, offset } = cached else {
                         unreachable!();
                     };
-                    assert_eq!(l + 1, layer, "relation {:?} is at layer {}, but references cache {:?}", rel, layer, cached);
+                    assert_eq!(
+                        l + 1,
+                        layer,
+                        "relation {:?} is at layer {}, but references cache {:?}",
+                        rel,
+                        layer,
+                        cached
+                    );
                     let relation = cache_relations_for_this_layer[offset].clone();
                     // if layer == 1 {
                     //     for el in relation.dependencies().into_iter() {

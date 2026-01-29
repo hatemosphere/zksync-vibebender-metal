@@ -19,6 +19,9 @@ pub struct BaseFieldPolySource<F: PrimeField> {
     next_layer_size: usize,
 }
 
+unsafe impl<F: PrimeField> Send for BaseFieldPolySource<F> {}
+unsafe impl<F: PrimeField> Sync for BaseFieldPolySource<F> {}
+
 impl<F: PrimeField, E: FieldExtension<F> + Field>
     EvaluationFormStorage<F, E, BaseFieldRepresentation<F>> for BaseFieldPolySource<F>
 {
@@ -37,14 +40,21 @@ impl<F: PrimeField, E: FieldExtension<F> + Field>
         &()
     }
     #[inline(always)]
-    fn get_f0_and_f1(&self, index: usize) -> [BaseFieldRepresentation<F>; 2] {
-        debug_assert!(index < self.next_layer_size);
+    fn get_at_index(&self, index: usize) -> BaseFieldRepresentation<F> {
+        debug_assert!(index < self.next_layer_size * 2);
         unsafe {
             let f0 = self.start.add(index).read();
-            let f1 = self.start.add(self.next_layer_size + index).read();
 
-            [BaseFieldRepresentation(f0), BaseFieldRepresentation(f1)]
+            BaseFieldRepresentation(f0)
         }
+    }
+    #[inline(always)]
+    fn get_f0_and_f1(&self, index: usize) -> [BaseFieldRepresentation<F>; 2] {
+        debug_assert!(index < self.next_layer_size);
+        [
+            EvaluationFormStorage::<F, E, _>::get_at_index(self, index),
+            EvaluationFormStorage::<F, E, _>::get_at_index(self, self.next_layer_size + index),
+        ]
     }
 }
 
@@ -54,6 +64,15 @@ pub struct BaseFieldPolySourceAfterOneFolding<F: PrimeField, E: FieldExtension<F
     pub(crate) next_layer_size: usize,
     pub(crate) base_input_start: *const F,
     pub(crate) first_folding_challenge_and_squared: (E, E),
+}
+
+unsafe impl<F: PrimeField, E: FieldExtension<F> + Field> Send
+    for BaseFieldPolySourceAfterOneFolding<F, E>
+{
+}
+unsafe impl<F: PrimeField, E: FieldExtension<F> + Field> Sync
+    for BaseFieldPolySourceAfterOneFolding<F, E>
+{
 }
 
 impl<F: PrimeField, E: FieldExtension<F> + Field>
@@ -76,6 +95,11 @@ impl<F: PrimeField, E: FieldExtension<F> + Field>
     ) -> &<BaseFieldFoldedOnceRepresentation<F> as EvaluationRepresentation<F, E>>::CollapseContext
     {
         &self.first_folding_challenge_and_squared
+    }
+    #[inline(always)]
+    fn get_at_index(&self, index: usize) -> BaseFieldFoldedOnceRepresentation<F> {
+        debug_assert!(index < self.next_layer_size * 2);
+        todo!();
     }
     #[inline(always)]
     fn get_f0_and_f1(&self, index: usize) -> [BaseFieldFoldedOnceRepresentation<F>; 2] {
@@ -165,6 +189,15 @@ pub struct BaseFieldPolySourceAfterTwoFoldings<F: PrimeField, E: FieldExtension<
     pub(crate) first_access: bool,
 }
 
+unsafe impl<F: PrimeField, E: FieldExtension<F> + Field> Send
+    for BaseFieldPolySourceAfterTwoFoldings<F, E>
+{
+}
+unsafe impl<F: PrimeField, E: FieldExtension<F> + Field> Sync
+    for BaseFieldPolySourceAfterTwoFoldings<F, E>
+{
+}
+
 impl<F: PrimeField, E: FieldExtension<F> + Field>
     EvaluationFormStorage<F, E, ExtensionFieldRepresentation<F, E>>
     for BaseFieldPolySourceAfterTwoFoldings<F, E>
@@ -190,6 +223,12 @@ impl<F: PrimeField, E: FieldExtension<F> + Field>
     {
         &()
     }
+
+    #[inline(always)]
+    fn get_at_index(&self, index: usize) -> ExtensionFieldRepresentation<F, E> {
+        todo!();
+    }
+
     #[inline(always)]
     fn get_f0_and_f1(&self, index: usize) -> [ExtensionFieldRepresentation<F, E>; 2] {
         // Same recomputation logic as in the previous implementation, but we also fold by using folding challenges,

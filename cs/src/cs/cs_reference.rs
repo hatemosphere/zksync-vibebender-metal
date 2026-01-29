@@ -750,7 +750,9 @@ impl<F: PrimeField, W: WitnessPlacer<F>> Circuit<F> for BasicAssembly<F, W> {
         let query = LookupQuery {
             row,
             table: if let Num::Constant(c) = table_type {
-                LookupQueryTableType::Constant(TableType::get_table_from_id(c.as_u32_reduced() as u32))
+                LookupQueryTableType::Constant(TableType::get_table_from_id(
+                    c.as_u32_reduced() as u32
+                ))
             } else if let Num::Var(v) = table_type {
                 LookupQueryTableType::Variable(v)
             } else {

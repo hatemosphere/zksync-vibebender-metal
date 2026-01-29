@@ -198,6 +198,12 @@ pub(crate) fn layout_lookup_expressions<F: PrimeField, const SINGLE_COLUMN: bool
         println!("Decoder lookup is present");
     }
 
+    let single_columns_lookup_width = match lookup {
+        LookupType::RangeCheck16 => Some(16),
+        LookupType::TimestampRangeCheck => Some(TIMESTAMP_COLUMNS_NUM_BITS),
+        LookupType::Generic => None,
+    };
+
     // create multiplicity
     let multiplicity_var = Variable(*num_variables);
     variable_names.insert(
@@ -241,7 +247,11 @@ pub(crate) fn layout_lookup_expressions<F: PrimeField, const SINGLE_COLUMN: bool
                     total_width,
                     expect_table_id,
                 );
-                let input = lookup_input_into_relation::<F, SINGLE_COLUMN>(&input, DECODER_LOOKUP_FORMAL_SET_INDEX, &*graph);
+                let input = lookup_input_into_relation::<F, SINGLE_COLUMN>(
+                    &input,
+                    DECODER_LOOKUP_FORMAL_SET_INDEX,
+                    &*graph,
+                );
                 assert_eq!(input.columns.len(), graph.setup_addresses(lookup).len());
 
                 let a = LookupRationalPair {
@@ -259,8 +269,12 @@ pub(crate) fn layout_lookup_expressions<F: PrimeField, const SINGLE_COLUMN: bool
                     lookup_type: lookup,
                 };
 
-                let (next_pair, rel) =
-                    LookupRationalPair::accumulate_pair_into_graph((a, b), graph, placement_layer);
+                let (next_pair, rel) = LookupRationalPair::accumulate_pair_into_graph(
+                    (a, b),
+                    graph,
+                    placement_layer,
+                    single_columns_lookup_width,
+                );
 
                 if expressions.is_empty() {
                     return (multiplicity_var, next_pair, rel, initial_relations);
@@ -302,8 +316,12 @@ pub(crate) fn layout_lookup_expressions<F: PrimeField, const SINGLE_COLUMN: bool
                     den_node: None,
                     lookup_type: lookup,
                 };
-                let (next_pair, rel) =
-                    LookupRationalPair::accumulate_pair_into_graph((a, b), graph, placement_layer);
+                let (next_pair, rel) = LookupRationalPair::accumulate_pair_into_graph(
+                    (a, b),
+                    graph,
+                    placement_layer,
+                    single_columns_lookup_width,
+                );
 
                 initial_reduction_layer_nodes.push((next_pair, rel));
             }
@@ -319,7 +337,8 @@ pub(crate) fn layout_lookup_expressions<F: PrimeField, const SINGLE_COLUMN: bool
                     total_width,
                     expect_table_id,
                 );
-                let input = lookup_input_into_relation::<F, SINGLE_COLUMN>(&input, set_idx, &*graph);
+                let input =
+                    lookup_input_into_relation::<F, SINGLE_COLUMN>(&input, set_idx, &*graph);
                 set_idx += 1;
                 assert_eq!(input.columns.len(), graph.setup_addresses(lookup).len());
 
@@ -338,8 +357,12 @@ pub(crate) fn layout_lookup_expressions<F: PrimeField, const SINGLE_COLUMN: bool
                     lookup_type: lookup,
                 };
 
-                let (next_pair, rel) =
-                    LookupRationalPair::accumulate_pair_into_graph((a, b), graph, placement_layer);
+                let (next_pair, rel) = LookupRationalPair::accumulate_pair_into_graph(
+                    (a, b),
+                    graph,
+                    placement_layer,
+                    single_columns_lookup_width,
+                );
 
                 if expressions.is_empty() {
                     return (multiplicity_var, next_pair, rel, initial_relations);
@@ -378,8 +401,12 @@ pub(crate) fn layout_lookup_expressions<F: PrimeField, const SINGLE_COLUMN: bool
                     den_node: None,
                     lookup_type: lookup,
                 };
-                let (next_pair, rel) =
-                    LookupRationalPair::accumulate_pair_into_graph((a, b), graph, placement_layer);
+                let (next_pair, rel) = LookupRationalPair::accumulate_pair_into_graph(
+                    (a, b),
+                    graph,
+                    placement_layer,
+                    single_columns_lookup_width,
+                );
 
                 initial_reduction_layer_nodes.push((next_pair, rel));
             }
@@ -399,7 +426,11 @@ pub(crate) fn layout_lookup_expressions<F: PrimeField, const SINGLE_COLUMN: bool
                     total_width,
                     expect_table_id,
                 );
-                let input = lookup_input_into_relation::<F, SINGLE_COLUMN>(&input, DECODER_LOOKUP_FORMAL_SET_INDEX, &*graph);
+                let input = lookup_input_into_relation::<F, SINGLE_COLUMN>(
+                    &input,
+                    DECODER_LOOKUP_FORMAL_SET_INDEX,
+                    &*graph,
+                );
                 assert_eq!(input.columns.len(), graph.setup_addresses(lookup).len());
 
                 let a = LookupRationalPair {
@@ -417,8 +448,12 @@ pub(crate) fn layout_lookup_expressions<F: PrimeField, const SINGLE_COLUMN: bool
                     lookup_type: lookup,
                 };
 
-                let (next_pair, rel) =
-                    LookupRationalPair::accumulate_pair_into_graph((a, b), graph, placement_layer);
+                let (next_pair, rel) = LookupRationalPair::accumulate_pair_into_graph(
+                    (a, b),
+                    graph,
+                    placement_layer,
+                    single_columns_lookup_width,
+                );
 
                 if expressions.is_empty() {
                     return (multiplicity_var, next_pair, rel, initial_relations);
@@ -459,8 +494,12 @@ pub(crate) fn layout_lookup_expressions<F: PrimeField, const SINGLE_COLUMN: bool
                     den_node: None,
                     lookup_type: lookup,
                 };
-                let (next_pair, rel) =
-                    LookupRationalPair::accumulate_pair_into_graph((a, b), graph, placement_layer);
+                let (next_pair, rel) = LookupRationalPair::accumulate_pair_into_graph(
+                    (a, b),
+                    graph,
+                    placement_layer,
+                    single_columns_lookup_width,
+                );
 
                 initial_reduction_layer_nodes.push((next_pair, rel));
             }
@@ -481,8 +520,12 @@ pub(crate) fn layout_lookup_expressions<F: PrimeField, const SINGLE_COLUMN: bool
                     lookup_type: lookup,
                 };
 
-                let (next_pair, rel) =
-                    LookupRationalPair::add_single_into_graph(last_input, graph, placement_layer);
+                let (next_pair, rel) = LookupRationalPair::add_single_into_graph(
+                    last_input,
+                    graph,
+                    placement_layer,
+                    single_columns_lookup_width,
+                );
 
                 initial_reduction_layer_nodes.push((next_pair, rel));
             }
@@ -498,7 +541,8 @@ pub(crate) fn layout_lookup_expressions<F: PrimeField, const SINGLE_COLUMN: bool
                     total_width,
                     expect_table_id,
                 );
-                let input = lookup_input_into_relation::<F, SINGLE_COLUMN>(&input, set_idx, &*graph);
+                let input =
+                    lookup_input_into_relation::<F, SINGLE_COLUMN>(&input, set_idx, &*graph);
                 set_idx += 1;
                 let a = LookupRationalPair {
                     num: lookup_nodes::LookupNumerator::Identity,
@@ -515,8 +559,12 @@ pub(crate) fn layout_lookup_expressions<F: PrimeField, const SINGLE_COLUMN: bool
                     lookup_type: lookup,
                 };
 
-                let (next_pair, rel) =
-                    LookupRationalPair::accumulate_pair_into_graph((a, b), graph, placement_layer);
+                let (next_pair, rel) = LookupRationalPair::accumulate_pair_into_graph(
+                    (a, b),
+                    graph,
+                    placement_layer,
+                    single_columns_lookup_width,
+                );
 
                 initial_reduction_layer_nodes.push((next_pair, rel));
             }
@@ -551,8 +599,12 @@ pub(crate) fn layout_lookup_expressions<F: PrimeField, const SINGLE_COLUMN: bool
                     den_node: None,
                     lookup_type: lookup,
                 };
-                let (next_pair, rel) =
-                    LookupRationalPair::accumulate_pair_into_graph((a, b), graph, placement_layer);
+                let (next_pair, rel) = LookupRationalPair::accumulate_pair_into_graph(
+                    (a, b),
+                    graph,
+                    placement_layer,
+                    single_columns_lookup_width,
+                );
 
                 initial_reduction_layer_nodes.push((next_pair, rel));
             }
@@ -573,8 +625,12 @@ pub(crate) fn layout_lookup_expressions<F: PrimeField, const SINGLE_COLUMN: bool
                     lookup_type: lookup,
                 };
 
-                let (next_pair, rel) =
-                    LookupRationalPair::add_single_into_graph(last_input, graph, placement_layer);
+                let (next_pair, rel) = LookupRationalPair::add_single_into_graph(
+                    last_input,
+                    graph,
+                    placement_layer,
+                    single_columns_lookup_width,
+                );
 
                 initial_reduction_layer_nodes.push((next_pair, rel));
             }
@@ -605,6 +661,7 @@ pub(crate) fn layout_lookup_expressions<F: PrimeField, const SINGLE_COLUMN: bool
                 (a.0.clone(), b.0.clone()),
                 graph,
                 placement_layer,
+                single_columns_lookup_width,
             );
 
             next_layer.push(next_pair);
@@ -616,6 +673,7 @@ pub(crate) fn layout_lookup_expressions<F: PrimeField, const SINGLE_COLUMN: bool
                     last.0.clone(),
                     graph,
                     placement_layer,
+                    single_columns_lookup_width,
                 );
 
                 next_layer.push(next_pair);

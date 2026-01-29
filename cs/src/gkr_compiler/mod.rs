@@ -14,8 +14,8 @@ use crate::gkr_compiler::graph::GraphHolder;
 pub use crate::gkr_compiler::layout::GKRAuxLayoutData;
 pub use crate::gkr_compiler::layout::GKRLayerDescription;
 use crate::one_row_compiler::gkr::NoFieldLinearRelation;
-use crate::one_row_compiler::gkr::NoFieldVectorLookupRelation;
 use crate::one_row_compiler::gkr::NoFieldSingleColumnLookupRelation;
+use crate::one_row_compiler::gkr::NoFieldVectorLookupRelation;
 use common_constants::*;
 use field::PrimeField;
 use std::collections::*;
@@ -300,7 +300,7 @@ pub enum NoFieldGKRRelation {
 
     // Lookup argument related
     // Computes linear relation and places it into variable in base field
-    MaterializedSingleLookupInput {
+    MaterializeSingleLookupInput {
         input: NoFieldSingleColumnLookupRelation,
         output: GKRAddress,
     },
@@ -329,6 +329,13 @@ pub enum NoFieldGKRRelation {
         input: [NoFieldSingleColumnLookupRelation; 2],
         output: [GKRAddress; 2],
     },
+
+    // 1/(a+gamma) + 1/(b + gamma) where a, b are in base field and materialized
+    LookupPairFromMaterializedBaseInputs {
+        input: [GKRAddress; 2],
+        output: [GKRAddress; 2],
+    },
+
     // a/b + 1/(c + gamma) where `c`` is in the base field
     LookupUnbalancedPairWithBaseInputs {
         input: [GKRAddress; 2],
@@ -338,6 +345,13 @@ pub enum NoFieldGKRRelation {
     // 1/(a+gamma) + multiplicity/(setup + gamma) where a is in base field
     LookupFromBaseInputsWithSetup {
         input: NoFieldSingleColumnLookupRelation,
+        setup: [GKRAddress; 2],
+        output: [GKRAddress; 2],
+    },
+
+    // 1/(a+gamma) + multiplicity/(setup + gamma) where a is in base field and materialized
+    LookupFromMaterializedBaseInputWithSetup {
+        input: GKRAddress,
         setup: [GKRAddress; 2],
         output: [GKRAddress; 2],
     },
@@ -376,10 +390,13 @@ impl NoFieldGKRRelation {
             // Self::FormalBaseLayerInput(..) => vec![],
             Self::EnforceConstraintsMaxQuadratic { input } => vec![],
             Self::Copy { input, output } => {
-                assert!(input.is_cache() == false);
                 assert!(output.is_cache() == false);
 
-                vec![]
+                if input.is_cache() {
+                    vec![*input]
+                } else {
+                    vec![]
+                }
             }
             Self::InitialGrandProductFromCaches { input, output } => {
                 assert!(input[0].is_cache());
@@ -413,7 +430,7 @@ impl NoFieldGKRRelation {
             } => {
                 vec![]
             }
-            Self::MaterializedSingleLookupInput { input, output } => {
+            Self::MaterializeSingleLookupInput { input, output } => {
                 vec![]
             }
             Self::MaterializedVectorLookupInput { input, output } => {
@@ -431,6 +448,16 @@ impl NoFieldGKRRelation {
             }
             Self::LookupPairFromBaseInputs { input, output } => {
                 vec![]
+            }
+            Self::LookupPairFromMaterializedBaseInputs { input, output } => {
+                let mut all_cached = vec![];
+                for el in input.iter() {
+                    if el.is_cache() {
+                        all_cached.push(*el);
+                    }
+                }
+
+                all_cached
             }
             Self::LookupUnbalancedPairWithBaseInputs {
                 input,
@@ -452,6 +479,17 @@ impl NoFieldGKRRelation {
                 output,
             } => {
                 vec![]
+            }
+            Self::LookupFromMaterializedBaseInputWithSetup {
+                input,
+                setup,
+                output,
+            } => {
+                if input.is_cache() {
+                    vec![*input]
+                } else {
+                    vec![]
+                }
             }
             Self::LookupPairFromVectorInputs { input, output } => {
                 vec![]
@@ -497,7 +535,7 @@ impl NoFieldGKRRelation {
             } => {
                 vec![*input, *mask]
             }
-            Self::MaterializedSingleLookupInput { input, output } => {
+            Self::MaterializeSingleLookupInput { input, output } => {
                 let mut result = BTreeSet::new();
                 for (_, el) in input.input.linear_terms.iter() {
                     result.insert(*el);
@@ -528,6 +566,9 @@ impl NoFieldGKRRelation {
                     }
                 }
                 result.into_iter().collect()
+            }
+            Self::LookupPairFromMaterializedBaseInputs { input, output } => {
+                vec![]
             }
             Self::LookupUnbalancedPairWithBaseInputs {
                 input,
@@ -565,6 +606,13 @@ impl NoFieldGKRRelation {
                 result.extend_from_slice(setup);
                 result
             }
+            Self::LookupFromMaterializedBaseInputWithSetup {
+                input,
+                setup,
+                output,
+            } => {
+                vec![]
+            }
             Self::LookupPairFromVectorInputs { input, output } => {
                 let mut result = BTreeSet::new();
                 for input in input.iter() {
@@ -584,6 +632,10 @@ impl NoFieldGKRRelation {
 #[derive(Clone, Debug, Hash, PartialEq, Eq, serde::Serialize, serde::Deserialize)]
 pub enum NoFieldGKRCacheRelation {
     LongLinear,
+    SingleColumnLookup {
+        relation: NoFieldSingleColumnLookupRelation,
+        range_check_width: usize,
+    },
     VectorizedLookup(NoFieldVectorLookupRelation),
     MemoryTuple(NoFieldSpecialMemoryContributionRelation),
     VectorizedLookupSetup(Box<[GKRAddress]>),
@@ -594,6 +646,14 @@ impl NoFieldGKRCacheRelation {
         match self {
             Self::LongLinear => {
                 vec![]
+            }
+            Self::SingleColumnLookup { relation, .. } => {
+                let mut result = vec![];
+                for (_, pos) in relation.input.linear_terms.iter() {
+                    result.push(*pos);
+                }
+
+                result
             }
             Self::VectorizedLookup(vl) => {
                 let mut result = vec![];
