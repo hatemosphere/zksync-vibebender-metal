@@ -11,6 +11,7 @@ use cs::{
 
 pub(crate) mod initial_grand_product_from_caches;
 pub(crate) mod lookup_from_base_inputs_with_setup;
+pub(crate) mod lookup_from_vector_inputs_with_setup;
 
 fn evaluate_cache_relation<F: PrimeField, E: FieldExtension<F> + Field>(
     layer_idx: usize,
@@ -376,6 +377,38 @@ pub fn evaluate_layer<F: PrimeField, E: FieldExtension<F> + Field>(
             } => {
                 println!("Should evaluate {:?}", &gate.enforced_relation);
                 // lookup_from_base_inputs_with_setup::forward_evaluate_lookup_from_base_inputs_with_setup(inputs, output, gkr_storage, expected_output_layer, trace_len, worker);
+            }
+            rel @ _ => {
+                println!("Should evaluate {:?}", &gate.enforced_relation);
+            }
+        }
+    }
+
+    for gate in layer.gates_with_external_connections.iter() {
+        assert_eq!(gate.output_layer, expected_output_layer);
+
+        match &gate.enforced_relation {
+            NoFieldGKRRelation::InitialGrandProductFromCaches { input, output } => {
+                println!("Should evaluate {:?}", &gate.enforced_relation);
+                initial_grand_product_from_caches::forward_evaluate_initial_grand_product_from_caches(
+                    *input,
+                    *output,
+                    gkr_storage,
+                    expected_output_layer,
+                    trace_len,
+                    worker,
+                );
+            }
+            NoFieldGKRRelation::EnforceConstraintsMaxQuadratic { .. } => {
+                unreachable!(); // no extenal connection
+            }
+            NoFieldGKRRelation::LookupWithCachedDensAndSetup {
+                input,
+                setup,
+                output,
+            } => {
+                println!("Should evaluate {:?}", &gate.enforced_relation);
+                lookup_from_vector_inputs_with_setup::forward_evaluate_masked_lookup_from_vector_inputs_with_setup(*input, *setup, *output, gkr_storage, expected_output_layer, trace_len, worker);
             }
             rel @ _ => {
                 println!("Should evaluate {:?}", &gate.enforced_relation);

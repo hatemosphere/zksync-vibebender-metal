@@ -8,7 +8,7 @@ pub fn forward_evaluate_lookup_from_base_inputs_with_setup<
     F: PrimeField,
     E: FieldExtension<F> + Field,
 >(
-    input: &NoFieldSingleColumnLookupRelation,
+    input: GKRAddress,
     setup: [GKRAddress; 2],
     output: [GKRAddress; 2],
     gkr_storage: &mut GKRStorage<F, E>,
