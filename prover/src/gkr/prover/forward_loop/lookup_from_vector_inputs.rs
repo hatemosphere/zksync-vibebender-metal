@@ -1,4 +1,6 @@
-use crate::gkr::sumcheck::evaluation_kernels::{lookup_base_ext_minus_base_ext, BatchedGKRKernel};
+use crate::gkr::sumcheck::evaluation_kernels::{
+    lookup_masked_ext_minus_multiplicity_ext, BatchedGKRKernel,
+};
 
 use super::*;
 
@@ -14,7 +16,7 @@ pub fn forward_evaluate_masked_lookup_from_vector_inputs_with_setup<
     trace_len: usize,
     worker: &Worker,
 ) {
-    let kernel = lookup_base_ext_minus_base_ext::LookupBaseExtMinusBaseExtGKRRelation {
+    let kernel = lookup_masked_ext_minus_multiplicity_ext::LookupBaseExtMinusBaseExtGKRRelation {
         nums: [input[0], setup[0]],
         dens: [input[1], setup[1]],
         outputs,

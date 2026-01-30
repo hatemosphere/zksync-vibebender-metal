@@ -204,16 +204,22 @@ impl<F: PrimeField, E: FieldExtension<F> + Field> GKRStorage<F, E> {
                         BaseFieldRepresentation<F>,
                     >>::dummy());
             } else {
-                match *input {
-                    GKRAddress::OptimizedOut(..) | GKRAddress::InnerLayer { .. } => {
+                let layer = match *input {
+                    GKRAddress::OptimizedOut(..) => {
                         unreachable!()
                     }
-                    GKRAddress::Cached { layer, .. } => {
+                    GKRAddress::Cached { layer, .. }   => {
                         assert_eq!(layer, 0);
+                        0
                     }
-                    _ => {}
+                    GKRAddress::InnerLayer { layer, .. } => {
+                        layer
+                    },
+                    GKRAddress::BaseLayerMemory(..) | GKRAddress::BaseLayerWitness(..) | GKRAddress::Setup(..) => {
+                        0
+                    }
                 };
-                let Some(source) = self.layers[0].base_field_inputs.get(input) else {
+                let Some(source) = self.layers[layer].base_field_inputs.get(input) else {
                     panic!("Polynomial with address {:?} is missing from input sources for base field polys", input);
                 };
                 let accessor = source.accessor();
@@ -226,16 +232,22 @@ impl<F: PrimeField, E: FieldExtension<F> + Field> GKRStorage<F, E> {
                     .extension_field_inputs
                     .push(ExtensionFieldPolyInitialSource::dummy());
             } else {
-                match *input {
-                    GKRAddress::OptimizedOut(..) | GKRAddress::InnerLayer { .. } => {
+                let layer = match *input {
+                    GKRAddress::OptimizedOut(..) => {
                         unreachable!()
                     }
-                    GKRAddress::Cached { layer, .. } => {
+                    GKRAddress::Cached { layer, .. }   => {
                         assert_eq!(layer, 0);
+                        0
                     }
-                    _ => {}
+                    GKRAddress::InnerLayer { layer, .. } => {
+                        layer
+                    },
+                    GKRAddress::BaseLayerMemory(..) | GKRAddress::BaseLayerWitness(..) | GKRAddress::Setup(..) => {
+                        0
+                    }
                 };
-                let Some(source) = self.layers[0].extension_field_inputs.get(input) else {
+                let Some(source) = self.layers[layer].extension_field_inputs.get(input) else {
                     panic!("Polynomial with address {:?} is missing from input sources for extension field polys", input);
                 };
                 let accessor = source.accessor();
@@ -249,21 +261,22 @@ impl<F: PrimeField, E: FieldExtension<F> + Field> GKRStorage<F, E> {
                     .extension_field_outputs
                     .push(ExtensionFieldPolyInitialSource::dummy());
             } else {
-                match *output {
+                let layer = match *output {
                     GKRAddress::OptimizedOut(..)
                     | GKRAddress::BaseLayerMemory(..)
-                    | GKRAddress::BaseLayerWitness(..) => {
+                    | GKRAddress::BaseLayerWitness(..) | GKRAddress::Setup(..) => {
                         unreachable!()
                     }
                     GKRAddress::Cached { layer, .. } => {
-                        assert_eq!(layer, 1);
+                        unreachable!()
+                        // assert_eq!(layer, 1);
+                        // 1
                     }
                     GKRAddress::InnerLayer { layer, .. } => {
-                        assert_eq!(layer, 1);
+                        layer
                     }
-                    _ => {}
                 };
-                let Some(source) = self.layers[1].extension_field_inputs.get(output) else {
+                let Some(source) = self.layers[layer].extension_field_inputs.get(output) else {
                     panic!("Polynomial with address {:?} is missing from output sources for extension field polys", output);
                 };
                 let accessor = source.accessor();

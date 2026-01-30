@@ -26,8 +26,7 @@ pub trait MixedFieldsInOutFixedSizesEvaluationKernel<
         sources: &[SB; IN_BASE],
         ext_sources: &[SE; IN_EXT],
     ) -> [E; OUT] {
-        assert!(IN_BASE > 0);
-        assert!(IN_EXT > 0);
+        assert!(IN_BASE + IN_EXT > 0);
         assert!(OUT > 0);
         unsafe {
             let sources = sources.each_ref().map(|el| el.get_at_index(index));
@@ -50,8 +49,7 @@ pub trait MixedFieldsInOutFixedSizesEvaluationKernel<
         output_sources: &[SOUT; OUT],
         batch_challenges: &[E; OUT],
     ) -> [E; 2] {
-        assert!(IN_BASE > 0);
-        assert!(IN_EXT > 0);
+        assert!(IN_BASE + IN_EXT > 0);
         assert!(OUT > 0);
         unsafe {
             let mut result = [const { MaybeUninit::uninit() }; 2];
@@ -101,8 +99,7 @@ pub trait MixedFieldsInOutFixedSizesEvaluationKernel<
         ext_sources: &[SE; IN_EXT],
         batch_challenges: &[E; OUT],
     ) -> [E; 2] {
-        assert!(IN_BASE > 0);
-        assert!(IN_EXT > 0);
+        assert!(IN_BASE + IN_EXT > 0);
         assert!(OUT > 0);
         unsafe {
             let ctx = sources.get_unchecked(0).get_collapse_context();
