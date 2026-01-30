@@ -10,35 +10,56 @@ use std::ptr::null_mut;
 type BF = BaseField;
 type E2 = Ext2Field;
 
-cuda_kernel!(BenchBase, bench_bf, values: *const BF, count: u32);
+cuda_kernel!(Bench, bench, values: *const BF, count: u32);
 
-bench_bf!(ab_bf_add_bench_kernel);
-bench_bf!(ab_bf_mul_bench_kernel);
+bench!(ab_add_bf_bench_kernel);
+bench!(ab_mul_bf_bench_kernel);
+bench!(ab_add_e2_bench_kernel);
+bench!(ab_mul_e2_bench_kernel);
+bench!(ab_add_e4_bench_kernel);
+bench!(ab_mul_e4_bench_kernel);
+bench!(ab_add_e6_bench_kernel);
+bench!(ab_mul_e6_bench_kernel);
 
-pub fn bf_add_bench(stream: &CudaStream) -> CudaResult<()> {
+fn bench(f: BenchSignature, stream: &CudaStream) -> CudaResult<()> {
     let device_id = get_device()?;
     let mpc = device_get_attribute(MultiProcessorCount, device_id)? as u32;
     let config = CudaLaunchConfig::basic(mpc, 1024, stream);
-    let args = BenchBaseArguments::new(null_mut(), 0);
-    BenchBaseFunction(ab_bf_add_bench_kernel).launch(&config, &args)
+    let args = BenchArguments::new(null_mut(), 0);
+    BenchFunction(f).launch(&config, &args)
 }
 
-pub fn bf_mul_bench(stream: &CudaStream) -> CudaResult<()> {
-    let device_id = get_device()?;
-    let mpc = device_get_attribute(MultiProcessorCount, device_id)? as u32;
-    let config = CudaLaunchConfig::basic(mpc, 1024, stream);
-    let args = BenchBaseArguments::new(null_mut(), 0);
-    BenchBaseFunction(ab_bf_mul_bench_kernel).launch(&config, &args)
+pub fn bench_add_bf(stream: &CudaStream) -> CudaResult<()> {
+    bench(ab_add_bf_bench_kernel, stream)
 }
 
-cuda_kernel!(BenchExt2, bench_e2, values: *const E2, count: u32);
-
-bench_e2!(ab_e2_sqr_bench_kernel);
-
-pub fn e2_sqr_bench(stream: &CudaStream) -> CudaResult<()> {
-    let device_id = get_device()?;
-    let mpc = device_get_attribute(MultiProcessorCount, device_id)? as u32;
-    let config = CudaLaunchConfig::basic(mpc, 1024, stream);
-    let args = BenchExt2Arguments::new(null_mut(), 0);
-    BenchExt2Function(ab_e2_sqr_bench_kernel).launch(&config, &args)
+pub fn bench_mul_bf(stream: &CudaStream) -> CudaResult<()> {
+    bench(ab_mul_bf_bench_kernel, stream)
 }
+
+pub fn bench_add_e2(stream: &CudaStream) -> CudaResult<()> {
+    bench(ab_add_e2_bench_kernel, stream)
+}
+
+pub fn bench_mul_e2(stream: &CudaStream) -> CudaResult<()> {
+    bench(ab_mul_e2_bench_kernel, stream)
+}
+
+pub fn bench_add_e4(stream: &CudaStream) -> CudaResult<()> {
+    bench(ab_add_e4_bench_kernel, stream)
+}
+
+pub fn bench_mul_e4(stream: &CudaStream) -> CudaResult<()> {
+    bench(ab_mul_e4_bench_kernel, stream)
+}
+
+pub fn bench_add_e6(stream: &CudaStream) -> CudaResult<()> {
+    bench(ab_add_e6_bench_kernel, stream)
+}
+
+pub fn bench_mul_e6(stream: &CudaStream) -> CudaResult<()> {
+    bench(ab_mul_e6_bench_kernel, stream)
+}
+
+
+

@@ -9,34 +9,80 @@ use era_cudart_sys::CudaDeviceAttr::MultiProcessorCount;
 
 use gpu_prover_new::field_bench::*;
 
-fn base_field(c: &mut Criterion<CudaMeasurement>) {
+fn binary_bf(c: &mut Criterion<CudaMeasurement>) {
     let mpc = device_get_attribute(MultiProcessorCount, 0).unwrap() as u64;
     let stream = CudaStream::default();
     let mut group = c.benchmark_group("field");
-    group.throughput(Throughput::Elements(mpc * 1024 * 1024 * 64 * 16));
-    group.bench_function("add", |b: &mut Bencher<CudaMeasurement>| {
+    group.throughput(Throughput::Elements(mpc * 1024 * 1024 * 32 * 32));
+    group.bench_function("add_bf", |b: &mut Bencher<CudaMeasurement>| {
         b.iter(|| {
-            bf_add_bench(&stream).unwrap();
+            bench_add_bf(&stream).unwrap();
             stream.synchronize().unwrap();
         })
     });
-    group.bench_function("mul", |b: &mut Bencher<CudaMeasurement>| {
+    group.bench_function("mul_bf", |b: &mut Bencher<CudaMeasurement>| {
         b.iter(|| {
-            bf_mul_bench(&stream).unwrap();
+            bench_mul_bf(&stream).unwrap();
             stream.synchronize().unwrap();
         })
     });
     group.finish();
 }
 
-fn ext2_field(c: &mut Criterion<CudaMeasurement>) {
+fn binary_e2(c: &mut Criterion<CudaMeasurement>) {
     let mpc = device_get_attribute(MultiProcessorCount, 0).unwrap() as u64;
     let stream = CudaStream::default();
     let mut group = c.benchmark_group("field");
-    group.throughput(Throughput::Elements(mpc * 1024 * 256 * 16 * 16));
-    group.bench_function("sqr", |b: &mut Bencher<CudaMeasurement>| {
+    group.throughput(Throughput::Elements(mpc * 1024 * 1024 * 16 * 16));
+    group.bench_function("add_e2", |b: &mut Bencher<CudaMeasurement>| {
         b.iter(|| {
-            e2_sqr_bench(&stream).unwrap();
+            bench_add_e2(&stream).unwrap();
+            stream.synchronize().unwrap();
+        })
+    });
+    group.bench_function("mul_e2", |b: &mut Bencher<CudaMeasurement>| {
+        b.iter(|| {
+            bench_mul_e2(&stream).unwrap();
+            stream.synchronize().unwrap();
+        })
+    });
+    group.finish();
+}
+
+fn binary_e4(c: &mut Criterion<CudaMeasurement>) {
+    let mpc = device_get_attribute(MultiProcessorCount, 0).unwrap() as u64;
+    let stream = CudaStream::default();
+    let mut group = c.benchmark_group("field");
+    group.throughput(Throughput::Elements(mpc * 1024 * 1024 * 8 * 8));
+    group.bench_function("add_e4", |b: &mut Bencher<CudaMeasurement>| {
+        b.iter(|| {
+            bench_add_e4(&stream).unwrap();
+            stream.synchronize().unwrap();
+        })
+    });
+    group.bench_function("mul_e4", |b: &mut Bencher<CudaMeasurement>| {
+        b.iter(|| {
+            bench_mul_e4(&stream).unwrap();
+            stream.synchronize().unwrap();
+        })
+    });
+    group.finish();
+}
+
+fn binary_e6(c: &mut Criterion<CudaMeasurement>) {
+    let mpc = device_get_attribute(MultiProcessorCount, 0).unwrap() as u64;
+    let stream = CudaStream::default();
+    let mut group = c.benchmark_group("field");
+    group.throughput(Throughput::Elements(mpc * 1024 * 1024 * 5 * 5));
+    group.bench_function("add_e6", |b: &mut Bencher<CudaMeasurement>| {
+        b.iter(|| {
+            bench_add_e6(&stream).unwrap();
+            stream.synchronize().unwrap();
+        })
+    });
+    group.bench_function("mul_e6", |b: &mut Bencher<CudaMeasurement>| {
+        b.iter(|| {
+            bench_mul_e6(&stream).unwrap();
             stream.synchronize().unwrap();
         })
     });
@@ -46,6 +92,6 @@ fn ext2_field(c: &mut Criterion<CudaMeasurement>) {
 criterion_group!(
     name = bench;
     config = Criterion::default().with_measurement::<CudaMeasurement>(CudaMeasurement{});
-    targets = base_field, ext2_field
+    targets = binary_bf, binary_e2, binary_e4, binary_e6
 );
 criterion_main!(bench);
