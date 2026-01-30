@@ -4,6 +4,7 @@ use field::{Field, FieldExtension, PrimeField};
 use std::collections::BTreeMap;
 use worker::Worker;
 
+pub mod fixed_kernels;
 pub mod kernel_impls;
 
 pub mod generic_kernel;
@@ -11,6 +12,7 @@ pub mod simple_in_base;
 pub mod simple_in_extension;
 pub mod simple_mixed;
 
+pub use self::fixed_kernels::*;
 pub use self::generic_kernel::*;
 pub use self::kernel_impls::*;
 pub use self::simple_in_base::*;
