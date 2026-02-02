@@ -321,7 +321,9 @@ mod tests {
     use crate::ops::simple::set_to_zero;
     use crate::utils::GetChunksCount;
 
-    fn verify_leaves(values: &[BF], results: &[DG], log_rows_per_hash: u32) {
+    const USE_REDUCED_BLAKE2_ROUNDS: bool = true;
+
+    fn verify_leaves(values: &[BF], results: &[Digest], log_rows_per_hash: u32) {
         let count = results.len();
         let values_len = values.len();
         assert_eq!(values_len % (count << log_rows_per_hash), 0);
@@ -335,7 +337,7 @@ mod tests {
             }
             let blocks_count = input.len().get_chunks_count(BLOCK_SIZE);
             let mut state = Blake2sState::new();
-            let mut expected = DG::default();
+            let mut expected = Digest::default();
             for (i, chunk) in input.iter().chunks(BLOCK_SIZE).into_iter().enumerate() {
                 let chunk = chunk.cloned().collect_vec();
                 let block_len = chunk.len();
@@ -348,9 +350,13 @@ mod tests {
                     .collect_vec();
                 block.copy_from_slice(&chunk);
                 if i == blocks_count - 1 {
-                    state.absorb_final_block::<false>(&block, block_len, &mut expected);
+                    state.absorb_final_block::<USE_REDUCED_BLAKE2_ROUNDS>(
+                        &block,
+                        block_len,
+                        &mut expected,
+                    );
                 } else {
-                    state.absorb::<false>(&block);
+                    state.absorb::<USE_REDUCED_BLAKE2_ROUNDS>(&block);
                 }
             }
             let actual = results[i];
@@ -358,7 +364,7 @@ mod tests {
         }
     }
 
-    fn verify_nodes(values: &[DG], results: &[DG]) {
+    fn verify_nodes(values: &[Digest], results: &[Digest]) {
         let results_len = results.len();
         let values_len = values.len();
         assert_eq!(values_len, results_len * 2);
@@ -372,15 +378,18 @@ mod tests {
                     .collect_vec()
                     .try_into()
                     .unwrap();
-                let mut expected = DG::default();
-                Blake2sState::compress_two_to_one::<false>(&state, &mut expected);
+                let mut expected = Digest::default();
+                Blake2sState::compress_two_to_one::<USE_REDUCED_BLAKE2_ROUNDS>(
+                    &state,
+                    &mut expected,
+                );
                 assert_eq!(expected, actual);
             });
     }
 
-    fn random_digest() -> DG {
+    fn random_digest() -> Digest {
         let mut rng = rand::rng();
-        let mut result = DG::default();
+        let mut result = Digest::default();
         result.fill_with(|| rng.random());
         result
     }
@@ -394,7 +403,7 @@ mod tests {
         let mut values_host = vec![BF::ZERO; (N * VALUES_PER_ROW) << LOG_ROWS_PER_HASH];
         let mut rng = rand::rng();
         values_host.fill_with(|| BF::from_nonreduced_u32(rng.random()));
-        let mut results_host = vec![DG::default(); N];
+        let mut results_host = vec![Digest::default(); N];
         let stream = CudaStream::default();
         let mut values_device = DeviceAllocation::alloc(values_host.len()).unwrap();
         let mut results_device = DeviceAllocation::alloc(results_host.len()).unwrap();
@@ -415,9 +424,9 @@ mod tests {
     fn blake2s_nodes() {
         const LOG_N: usize = 10;
         const N: usize = 1 << LOG_N;
-        let mut values_host = vec![DG::default(); N * 2];
+        let mut values_host = vec![Digest::default(); N * 2];
         values_host.fill_with(random_digest);
-        let mut results_host = vec![DG::default(); N];
+        let mut results_host = vec![Digest::default(); N];
         let stream = CudaStream::default();
         let mut values_device = DeviceAllocation::alloc(values_host.len()).unwrap();
         let mut results_device = DeviceAllocation::alloc(results_host.len()).unwrap();
@@ -428,7 +437,7 @@ mod tests {
         verify_nodes(&values_host, &results_host);
     }
 
-    fn verify_tree(values: &[DG], results: &[DG], layers_count: u32) {
+    fn verify_tree(values: &[Digest], results: &[Digest], layers_count: u32) {
         assert_eq!(values.len(), results.len());
         if layers_count == 0 {
             assert!(results.iter().all(|x| x.iter().all(|&x| x == 0)));
@@ -447,7 +456,7 @@ mod tests {
         let mut values_host = vec![BF::ZERO; (n * VALUES_PER_ROW) << LOG_ROWS_PER_HASH];
         let mut rng = rand::rng();
         values_host.fill_with(|| BF::from_nonreduced_u32(rng.random()));
-        let mut results_host = vec![DG::default(); n * 2];
+        let mut results_host = vec![Digest::default(); n * 2];
         let stream = CudaStream::default();
         let mut values_device = DeviceAllocation::alloc(values_host.len()).unwrap();
         let mut results_device = DeviceAllocation::alloc(results_host.len()).unwrap();
@@ -534,9 +543,9 @@ mod tests {
         let mut rng = rand::rng();
         let mut indexes_host = vec![0; INDEXES_COUNT];
         indexes_host.fill_with(|| rng.random_range(0..1u32 << LOG_LEAVES_COUNT));
-        let mut values_host = vec![DG::default(); 1 << (LOG_LEAVES_COUNT + 1)];
+        let mut values_host = vec![Digest::default(); 1 << (LOG_LEAVES_COUNT + 1)];
         values_host.fill_with(random_digest);
-        let mut results_host = vec![DG::default(); INDEXES_COUNT * LAYERS_COUNT];
+        let mut results_host = vec![Digest::default(); INDEXES_COUNT * LAYERS_COUNT];
         let stream = CudaStream::default();
         let mut indexes_device = DeviceAllocation::alloc(indexes_host.len()).unwrap();
         let mut values_device = DeviceAllocation::alloc(values_host.len()).unwrap();
@@ -553,7 +562,7 @@ mod tests {
         .unwrap();
         memory_copy_async(&mut results_host, &results_device, &stream).unwrap();
         stream.synchronize().unwrap();
-        fn verify_merkle_path(indexes: &[u32], values: &[DG], results: &[DG]) {
+        fn verify_merkle_path(indexes: &[u32], values: &[Digest], results: &[Digest]) {
             let (values, values_next) = values.split_at(values.len() >> 1);
             let (results, results_next) = results.split_at(INDEXES_COUNT);
             for (row_index, &index) in indexes.iter().enumerate() {
@@ -576,7 +585,7 @@ mod tests {
         const N: usize = 1 << LOG_N;
         const LOG_CAP_SIZE: u32 = LOG_N - 1;
         const CAP_SIZE: usize = 1 << LOG_CAP_SIZE;
-        let mut values_host = vec![DG::default(); N * 2];
+        let mut values_host = vec![Digest::default(); N * 2];
         let mut counter: u32 = 0;
         values_host.fill_with(|| {
             let value = counter;
@@ -586,7 +595,7 @@ mod tests {
         let mut values_device = DeviceAllocation::alloc(values_host.len()).unwrap();
         memory_copy(&mut values_device, &values_host).unwrap();
         let cap_device = super::merkle_tree_cap(&values_device, LOG_CAP_SIZE);
-        let mut cap_host = vec![DG::default(); CAP_SIZE];
+        let mut cap_host = vec![Digest::default(); CAP_SIZE];
         memory_copy(&mut cap_host, cap_device).unwrap();
         assert_eq!(cap_host.len(), CAP_SIZE);
         assert_eq!(cap_host, values_host[N..3 * N / 2]);
@@ -609,8 +618,8 @@ mod tests {
         block[..STATE_SIZE].copy_from_slice(&h_seed);
         block[STATE_SIZE] = h_result[0] as u32;
         block[STATE_SIZE + 1] = (h_result[0] >> 32) as u32;
-        let mut digest = DG::default();
-        state.absorb_final_block::<true>(&block, STATE_SIZE + 2, &mut digest);
+        let mut digest = Digest::default();
+        state.absorb_final_block::<USE_REDUCED_BLAKE2_ROUNDS>(&block, STATE_SIZE + 2, &mut digest);
         assert!(digest[0].leading_zeros() >= BITS_COUNT);
     }
 }
