@@ -27,6 +27,7 @@ criterion = "0.5"
 itertools = "0.14"
 rand = "0.9"
 serial_test = "3"
+blake2s_u32 = { workspace = true }
 
 [[bench]]
 name = "field"

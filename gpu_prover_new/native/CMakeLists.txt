@@ -6,10 +6,13 @@ if ((NOT DEFINED CMAKE_CUDA_ARCHITECTURES) OR (CMAKE_CUDA_ARCHITECTURES STREQUAL
     set(CMAKE_CUDA_ARCHITECTURES native)
 endif ()
 add_library(gpu_prover_new_native STATIC
+        bench/field.cu
+        ops/blake2s.cu
+        ops/complex.cu
+        ops/complex.cuh
         ops/simple.cu
         common.cuh
         field.cuh
-        field_bench.cu
         memory.cuh
         ptx.cuh
 )

@@ -3,7 +3,7 @@
 using namespace ::airbender::field;
 using namespace ::airbender::memory;
 
-namespace airbender::ops_simple {
+namespace airbender::ops::simple {
 
 template <typename T> struct value_getter {
   using value_type = T;
@@ -216,10 +216,11 @@ BINARY_KERNEL(sub, e6, bf, e6)
 BINARY_KERNEL(sub, e6, e2, e6)
 BINARY_KERNEL(sub, e6, e6, e6)
 
-// #define TERNARY_KERNEL(op, arg0_t, arg1_t, arg2_t, result_t)                                                                                                   \
-//   EXTERN __global__ void ab_##op##_##arg0_t##_##arg1_t##_##arg2_t##_kernel(const arg0_t##_getter arg0, const arg1_t##_getter arg1, const arg2_t##_getter arg2, \
-//                                                                            result_t##_setter result) {                                                         \
-//     ternary_op(op, arg0, arg1, arg2, result);                                                                                                                  \
+// #define TERNARY_KERNEL(op, arg0_t, arg1_t, arg2_t, result_t) \
+//   EXTERN __global__ void ab_##op##_##arg0_t##_##arg1_t##_##arg2_t##_kernel(const arg0_t##_getter arg0, const arg1_t##_getter arg1, const arg2_t##_getter
+//   arg2, \
+//                                                                            result_t##_setter result) { \
+//     ternary_op(op, arg0, arg1, arg2, result); \
 //   }
 //
 // TERNARY_KERNEL(mul_add, bf, bf, bf, bf)
@@ -277,4 +278,4 @@ BINARY_KERNEL(sub, e6, e6, e6)
 // TERNARY_KERNEL(mul_sub, e4, e4, e2, e4)
 // TERNARY_KERNEL(mul_sub, e4, e4, e4, e4)
 
-} // namespace airbender::ops_simple
+} // namespace airbender::ops::simple

@@ -1,4 +1,4 @@
-#include "field.cuh"
+#include "../field.cuh"
 
 namespace airbender::field {
 
