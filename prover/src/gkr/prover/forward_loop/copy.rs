@@ -10,8 +10,8 @@ pub fn forward_evaluate_copy<F: PrimeField, E: FieldExtension<F> + Field>(
     output: GKRAddress,
     gkr_storage: &mut GKRStorage<F, E>,
     expected_output_layer: usize,
-    trace_len: usize,
-    worker: &Worker,
+    _trace_len: usize,
+    _worker: &Worker,
 ) {
     output.assert_as_layer(expected_output_layer);
     assert!(output.is_cache() == false);

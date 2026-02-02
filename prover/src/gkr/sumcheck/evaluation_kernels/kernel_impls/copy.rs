@@ -63,10 +63,10 @@ impl<F: PrimeField, E: FieldExtension<F> + Field> BatchedGKRKernel<F, E>
             batch_challenges.len(),
             <Self as BatchedGKRKernel<F, E>>::num_challenges(self)
         );
-        let kernel = ExtensionCopyGKRRelationKernel::default();
+        let kernel = BaseFieldCopyGKRRelationKernel::default();
         let inputs = <Self as BatchedGKRKernel<F, E>>::get_inputs(self);
 
-        evaluate_single_input_type_fixed_in_out_kernel_with_extension_inputs(
+        evaluate_single_input_type_fixed_in_out_kernel_with_base_inputs(
             &kernel,
             &inputs,
             storage,
