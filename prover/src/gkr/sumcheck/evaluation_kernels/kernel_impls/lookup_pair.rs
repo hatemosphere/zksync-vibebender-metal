@@ -1,0 +1,103 @@
+use super::*;
+
+pub struct LookupPairGKRRelation {
+    pub inputs: [[GKRAddress; 2]; 2], // [[a, b], [c, d]] -> a/b + c/d
+    pub outputs: [GKRAddress; 2],
+}
+
+impl<F: PrimeField, E: FieldExtension<F> + Field> BatchedGKRKernel<F, E> for LookupPairGKRRelation {
+    fn num_challenges(&self) -> usize {
+        2
+    }
+
+    fn get_inputs(&self) -> GKRInputs {
+        GKRInputs {
+            inputs_in_base: Vec::new(),
+            inputs_in_extension: [
+                self.inputs[0][0],
+                self.inputs[0][1],
+                self.inputs[1][0],
+                self.inputs[1][1],
+            ]
+            .to_vec(),
+            outputs_in_base: Vec::new(),
+            outputs_in_extension: self.outputs.to_vec(),
+        }
+    }
+
+    fn evaluate_forward_over_storage(
+        &self,
+        storage: &mut GKRStorage<F, E>,
+        expected_output_layer: usize,
+        trace_len: usize,
+        worker: &Worker,
+    ) {
+        let kernel = LookupAdditionGKRRelationKernel::default();
+        let inputs = <Self as BatchedGKRKernel<F, E>>::get_inputs(self);
+        forward_evaluate_single_input_type_fixed_in_out_kernel_with_extension_inputs(
+            &kernel,
+            &inputs,
+            storage,
+            expected_output_layer,
+            trace_len,
+            worker,
+        );
+    }
+
+    fn evaluate_over_storage(
+        &self,
+        storage: &mut GKRStorage<F, E>,
+        step: usize,
+        batch_challenges: &[E],
+        folding_challenges: &[E],
+        accumulator: &mut [[E; 2]],
+        total_sumcheck_rounds: usize,
+        last_evaluations: &mut BTreeMap<GKRAddress, [E; 2]>,
+        worker: &Worker,
+    ) {
+        assert_eq!(
+            batch_challenges.len(),
+            <Self as BatchedGKRKernel<F, E>>::num_challenges(self)
+        );
+        let kernel = LookupAdditionGKRRelationKernel::default();
+        let inputs = <Self as BatchedGKRKernel<F, E>>::get_inputs(self);
+
+        evaluate_single_input_type_fixed_in_out_kernel_with_extension_inputs(
+            &kernel,
+            &inputs,
+            storage,
+            step,
+            batch_challenges,
+            folding_challenges,
+            accumulator,
+            total_sumcheck_rounds,
+            last_evaluations,
+            worker,
+        );
+    }
+}
+
+#[derive(Default)]
+pub struct LookupAdditionGKRRelationKernel<F: PrimeField, E: FieldExtension<F> + Field> {
+    _marker: core::marker::PhantomData<(F, E)>,
+}
+
+impl<F: PrimeField, E: FieldExtension<F> + Field>
+    ExtensionFieldInOutFixedSizesEvaluationKernel<F, E, 4, 2>
+    for LookupAdditionGKRRelationKernel<F, E>
+{
+    #[inline(always)]
+    fn pointwise_eval(&self, input: &[ExtensionFieldRepresentation<F, E>; 4]) -> [E; 2] {
+        let [a, b, c, d] = input.each_ref().map(|x| x.into_value());
+        // a/b + c/d = (a*d + c*b) / (b*d)
+        let mut num = a;
+        num.mul_assign(&d);
+        let mut cb = c;
+        cb.mul_assign(&b);
+        num.add_assign(&cb);
+
+        let mut den = b;
+        den.mul_assign(&d);
+        [num, den]
+    }
+}

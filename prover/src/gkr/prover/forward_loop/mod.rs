@@ -12,6 +12,9 @@ use cs::{
 pub(crate) mod pairwise_product;
 pub(crate) mod lookup_from_base_inputs;
 pub(crate) mod lookup_from_vector_inputs;
+pub(crate) mod copy;
+pub(crate) mod lookup_pair;
+pub(crate) mod mask_product;
 
 fn evaluate_cache_relation<F: PrimeField, E: FieldExtension<F> + Field>(
     layer_idx: usize,
@@ -357,6 +360,10 @@ pub fn evaluate_layer<F: PrimeField, E: FieldExtension<F> + Field>(
         assert_eq!(gate.output_layer, expected_output_layer);
 
         match &gate.enforced_relation {
+            NoFieldGKRRelation::Copy { input, output } => {
+                // println!("Should evaluate {:?}", &gate.enforced_relation);
+                copy::forward_evaluate_copy(*input, *output, gkr_storage, expected_output_layer, trace_len, worker);
+            }
             NoFieldGKRRelation::InitialGrandProductFromCaches { input, output } => {
                 // println!("Should evaluate {:?}", &gate.enforced_relation);
                 pairwise_product::forward_evaluate_pairwise_product(
@@ -368,7 +375,20 @@ pub fn evaluate_layer<F: PrimeField, E: FieldExtension<F> + Field>(
                     worker,
                 );
             }
+            NoFieldGKRRelation::MaskIntoIdentityProduct {input, mask, output} => {
+                // println!("Should evaluate {:?}", &gate.enforced_relation);
+                mask_product::forward_evaluate_mask_into_identity(
+                    *input,
+                    *mask,
+                    *output,
+                    gkr_storage,
+                    expected_output_layer,
+                    trace_len,
+                    worker
+                );
+            }
             NoFieldGKRRelation::TrivialProduct { input, output } => {
+                // println!("Should evaluate {:?}", &gate.enforced_relation);
                 pairwise_product::forward_evaluate_pairwise_product(
                     *input,
                     *output,
@@ -420,6 +440,10 @@ pub fn evaluate_layer<F: PrimeField, E: FieldExtension<F> + Field>(
             } => {
                 // println!("Should evaluate {:?}", &gate.enforced_relation);
                 lookup_from_vector_inputs::forward_evaluate_masked_lookup_from_vector_inputs_with_setup(*input, *setup, *output, gkr_storage, expected_output_layer, trace_len, worker);
+            }
+            NoFieldGKRRelation::LookupPair { input, output } => {
+                // println!("Should evaluate {:?}", &gate.enforced_relation);
+                lookup_pair::forward_evaluate_lookup_pair(*input, *output, gkr_storage, expected_output_layer, trace_len, worker);
             }
             rel @ _ => {
                 println!("Should evaluate {:?}", &gate.enforced_relation);
