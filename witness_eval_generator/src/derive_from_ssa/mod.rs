@@ -638,7 +638,8 @@ mod test {
                 deserialize_from_file(&format!("../cs/{}_layout_gkr.json", prefix));
             let compiled_graph: Vec<Vec<RawExpression<BabyBearField>>> =
                 deserialize_from_file(&format!("../cs/{}_ssa_gkr.json", prefix));
-            let full_stream = derive_from_gkr_ssa(&compiled_graph, &compiled_circuit, false, "BabyBearField");
+            let full_stream =
+                derive_from_gkr_ssa(&compiled_graph, &compiled_circuit, false, "BabyBearField");
 
             std::fs::File::create(&format!("../prover/{}_generated_gkr.rs", prefix))
                 .unwrap()

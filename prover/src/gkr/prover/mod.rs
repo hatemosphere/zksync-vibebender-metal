@@ -1,4 +1,5 @@
 use std::alloc::Global;
+use std::collections::BTreeMap;
 use std::mem::MaybeUninit;
 
 use cs::gkr_compiler::GKRCircuitArtifact;
@@ -20,6 +21,7 @@ use cs::definitions::NUM_MEM_ARGUMENT_LINEARIZATION_CHALLENGES;
 pub mod forward_loop;
 pub mod setup;
 pub mod stages;
+pub mod sumcheck_loop;
 
 #[derive(Clone, Debug)]
 pub struct BaseFieldCosetBoundTracePart<F: PrimeField + TwoAdicField> {
@@ -203,6 +205,45 @@ pub fn prove_configured_with_gkr<
     // we will eventually output results of accumulations of grand product and lookups, and should commit to them here
 
     // then we go "backward", by taking random point evaluation claims from the previous layer, and producing claims for the next layer
+    let mut claims_for_layers = BTreeMap::new();
+    let mut points_for_claims_at_layer = BTreeMap::new();
+    {
+        let layer_idx = compiled_circuit.layers.len();
+        let mut claims = BTreeMap::new();
+        for gate_with_external_connection in compiled_circuit
+            .layers
+            .last()
+            .unwrap()
+            .gates_with_external_connections
+            .iter()
+        {
+            for input_claim in gate_with_external_connection
+                .enforced_relation
+                .expected_input_claims()
+            {
+                claims.insert(input_claim, E::ZERO);
+            }
+        }
+        claims_for_layers.insert(layer_idx, claims);
+        points_for_claims_at_layer
+            .insert(layer_idx, vec![E::ONE; trace_len.trailing_zeros() as usize]);
+    }
+
+    for (layer_idx, layer) in compiled_circuit.layers.iter().enumerate().rev() {
+        sumcheck_loop::evaluate_sumcheck_for_layer(
+            layer_idx,
+            layer,
+            &mut points_for_claims_at_layer,
+            &mut claims_for_layers,
+            &mut gkr_storage,
+            compiled_circuit,
+            external_challenges,
+            trace_len,
+            lookup_additive_part,
+            constraints_batch_challenge,
+            worker,
+        );
+    }
 
     todo!();
 }

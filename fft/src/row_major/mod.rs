@@ -88,7 +88,9 @@ pub fn adjust_to_zero_c0_var_length<const N: usize, A: Allocator + Clone>(
     let mut adjustment_factors = vec![Mersenne31Field::ZERO; columns_range.len()];
     for src in per_thread_accumulators.into_iter() {
         for (dst, src) in adjustment_factors.iter_mut().zip(src.into_iter()) {
-            dst.sub_assign(&Mersenne31Field::from_nonreduced_u32((src % (Mersenne31Field::CHARACTERISTICS as u64)) as u32));
+            dst.sub_assign(&Mersenne31Field::from_nonreduced_u32(
+                (src % (Mersenne31Field::CHARACTERISTICS as u64)) as u32,
+            ));
         }
     }
     let mut row = trace_columns.row_view((trace_len - 1)..trace_len);

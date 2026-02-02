@@ -317,7 +317,9 @@ fn test_adjust_c0() {
     for _ in 0..trace_len {
         let row = t.current_row();
         for el in row.iter_mut() {
-            *el = Mersenne31Field::from_nonreduced_u32((i % (Mersenne31Field::CHARACTERISTICS as u64)) as u32);
+            *el = Mersenne31Field::from_nonreduced_u32(
+                (i % (Mersenne31Field::CHARACTERISTICS as u64)) as u32,
+            );
             i += 1;
         }
         t.advance_row();

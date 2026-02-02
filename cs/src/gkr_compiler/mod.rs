@@ -502,6 +502,12 @@ impl NoFieldGKRRelation {
         }
     }
 
+    pub fn expected_input_claims(&self) -> Vec<GKRAddress> {
+        // they are also the outputs
+
+        todo!()
+    }
+
     pub fn created_claims(&self) -> Vec<GKRAddress> {
         match self {
             // Self::FormalBaseLayerInput(..) => vec![],
