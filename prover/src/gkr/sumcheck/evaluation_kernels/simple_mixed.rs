@@ -17,6 +17,7 @@ pub trait MixedFieldsInOutFixedSizesEvaluationKernel<
     const OUT: usize,
 >: Send + Sync
 {
+    #[inline(always)]
     fn evaluate_forward<
         SB: EvaluationFormStorage<F, E, BaseFieldRepresentation<F>>,
         SE: EvaluationFormStorage<F, E, ExtensionFieldRepresentation<F, E>>,
@@ -28,15 +29,14 @@ pub trait MixedFieldsInOutFixedSizesEvaluationKernel<
     ) -> [E; OUT] {
         assert!(IN_BASE + IN_EXT > 0);
         assert!(OUT > 0);
-        unsafe {
-            let sources = sources.each_ref().map(|el| el.get_at_index(index));
-            let ext_sources = ext_sources.each_ref().map(|el| el.get_at_index(index));
-            let eval = self.pointwise_eval_forward(&sources, &ext_sources);
+        let sources = sources.each_ref().map(|el| el.get_at_index(index));
+        let ext_sources = ext_sources.each_ref().map(|el| el.get_at_index(index));
+        let eval = self.pointwise_eval_forward(&sources, &ext_sources);
 
-            eval
-        }
+        eval
     }
 
+    #[inline(always)]
     fn evaluate_first_round<
         SB: EvaluationFormStorage<F, E, BaseFieldRepresentation<F>>,
         SE: EvaluationFormStorage<F, E, ExtensionFieldRepresentation<F, E>>,
@@ -87,6 +87,7 @@ pub trait MixedFieldsInOutFixedSizesEvaluationKernel<
         }
     }
 
+    #[inline(always)]
     fn evaluate<
         RB: EvaluationRepresentation<F, E>,
         SB: EvaluationFormStorage<F, E, RB>,
@@ -158,6 +159,7 @@ pub trait MixedFieldsInOutFixedSizesEvaluationKernel<
     }
 }
 
+#[inline(always)]
 fn evaluate_mixed_field_in_out_fixed_sizes_evaluation_kernel<
     F: PrimeField,
     E: FieldExtension<F> + Field,
@@ -187,6 +189,7 @@ fn evaluate_mixed_field_in_out_fixed_sizes_evaluation_kernel<
     }
 }
 
+#[inline(always)]
 fn evaluate_mixed_field_in_out_fixed_sizes_evaluation_kernel_first_round<
     F: PrimeField,
     E: FieldExtension<F> + Field,

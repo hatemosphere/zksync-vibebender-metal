@@ -13,6 +13,7 @@ pub trait ExtensionFieldInOutFixedSizesEvaluationKernel<
     const OUT: usize,
 >: Send + Sync
 {
+    #[inline(always)]
     fn evaluate_forward<S: EvaluationFormStorage<F, E, ExtensionFieldRepresentation<F, E>>>(
         &self,
         index: usize,
@@ -20,14 +21,13 @@ pub trait ExtensionFieldInOutFixedSizesEvaluationKernel<
     ) -> [E; OUT] {
         assert!(IN > 0);
         assert!(OUT > 0);
-        unsafe {
-            let p0s = std::array::from_fn(|i| sources[i].get_at_index(index));
-            let eval = self.pointwise_eval_forward(&p0s);
+        let p0s = std::array::from_fn(|i| sources[i].get_at_index(index));
+        let eval = self.pointwise_eval_forward(&p0s);
 
-            eval
-        }
+        eval
     }
 
+    #[inline(always)]
     fn evaluate_first_round<
         S: EvaluationFormStorage<F, E, ExtensionFieldRepresentation<F, E>>,
         SOUT: EvaluationFormStorage<F, E, ExtensionFieldRepresentation<F, E>>,
@@ -71,6 +71,7 @@ pub trait ExtensionFieldInOutFixedSizesEvaluationKernel<
         }
     }
 
+    #[inline(always)]
     fn evaluate<
         S: EvaluationFormStorage<F, E, ExtensionFieldRepresentation<F, E>>,
         const EXPLICIT_FORM: bool,
@@ -118,6 +119,7 @@ pub trait ExtensionFieldInOutFixedSizesEvaluationKernel<
     }
 }
 
+#[inline(always)]
 fn evaluate_extension_field_in_out_fixed_sizes_evaluation_kernel<
     F: PrimeField,
     E: FieldExtension<F> + Field,
@@ -141,6 +143,7 @@ fn evaluate_extension_field_in_out_fixed_sizes_evaluation_kernel<
     }
 }
 
+#[inline(always)]
 fn evaluate_extension_field_in_out_fixed_sizes_evaluation_kernel_first_round<
     F: PrimeField,
     E: FieldExtension<F> + Field,

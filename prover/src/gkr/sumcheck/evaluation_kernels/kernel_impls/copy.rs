@@ -89,17 +89,18 @@ pub struct BaseFieldCopyGKRRelationKernel<F: PrimeField, E: FieldExtension<F> + 
 impl<F: PrimeField, E: FieldExtension<F> + Field>
     BaseFieldInOutFixedSizesEvaluationKernel<F, E, 1, 1> for BaseFieldCopyGKRRelationKernel<F, E>
 {
+    #[inline(always)]
     fn evaluate_first_round<
         S: EvaluationFormStorage<F, E, BaseFieldRepresentation<F>>,
         SOUT: EvaluationFormStorage<F, E, BaseFieldRepresentation<F>>,
     >(
         &self,
         index: usize,
-        sources: &[S; 1],
-        _output_sources: &[SOUT; 1],
+        _sources: &[S; 1],
+        output_sources: &[SOUT; 1],
         batch_challenges: &[E; 1],
     ) -> [E; 2] {
-        let output_f0 = sources[0]
+        let output_f0 = output_sources[0]
             .get_f0_only(index)
             .collapse_for_batch_eval(&(), &batch_challenges[0]);
 
@@ -107,6 +108,7 @@ impl<F: PrimeField, E: FieldExtension<F> + Field>
         [output_f0, E::ZERO]
     }
 
+    #[inline(always)]
     fn evaluate<
         R: EvaluationRepresentation<F, E>,
         S: EvaluationFormStorage<F, E, R>,
@@ -128,69 +130,24 @@ impl<F: PrimeField, E: FieldExtension<F> + Field>
         } else {
             // For non-explicit form (intermediate rounds), return [f0, 0]
             // The quadratic coefficient is 0 for a linear function
-            let f0 = sources[0]
-                .get_f0_only(index)
-                .collapse_for_batch_eval(collapse_ctx, &batch_challenges[0]);
-            [f0, E::ZERO]
+            if S::SHOULD_ACCESS_TO_PREPARE_FOR_NEXT_STEP {
+                let [f0, _] = sources[0].get_two_points::<EXPLICIT_FORM>(index);
+
+                let f0 = f0.collapse_for_batch_eval(collapse_ctx, &batch_challenges[0]);
+                [f0, E::ZERO]
+            } else {
+                let f0 = sources[0]
+                    .get_f0_only(index)
+                    .collapse_for_batch_eval(collapse_ctx, &batch_challenges[0]);
+                [f0, E::ZERO]
+            }
         }
     }
 
-    fn pointwise_eval<R: EvaluationRepresentation<F, E>>(&self, input: &[R; 1]) -> [R; 1] {
-        *input
+    #[inline(always)]
+    fn pointwise_eval<R: EvaluationRepresentation<F, E>>(&self, _input: &[R; 1]) -> [R; 1] {
+        unreachable!("not used by this kernel")
     }
-
-    // fn evaluate_first_round<
-    //     S: super::EvaluationFormStorage<F, E, ExtensionFieldRepresentation<F, E>>,
-    //     SOUT: super::EvaluationFormStorage<F, E, ExtensionFieldRepresentation<F, E>>,
-    // >(
-    //     &self,
-    //     index: usize,
-    //     _sources: &[S; 1],
-    //     output_sources: &[SOUT; 1],
-    //     batch_challenges: &[E; 1],
-    // ) -> [E; 2] {
-    //     let output_f0 = output_sources[0].get_f0_only(index).into_value();
-    //     let mut eval_c0 = batch_challenges[0];
-    //     eval_c0.mul_assign(&output_f0);
-
-    //     // result[1] = 0 because the quadratic coefficient is 0 for a linear function
-    //     [eval_c0, E::ZERO]
-    // }
-
-    // fn evaluate<
-    //     S: super::EvaluationFormStorage<F, E, ExtensionFieldRepresentation<F, E>>,
-    //     const EXPLICIT_FORM: bool,
-    // >(
-    //     &self,
-    //     index: usize,
-    //     sources: &[S; 1],
-    //     batch_challenges: &[E; 1],
-    // ) -> [E; 2] {
-    //     if EXPLICIT_FORM {
-    //         // For explicit form (final round), return [kernel(f0), kernel(f1)]
-    //         // For Copy, kernel is identity, so this is just [f0, f1]
-    //         let [f0, f1] = sources[0].get_two_points::<true>(index);
-    //         let f0_val = f0.into_value();
-    //         let f1_val = f1.into_value();
-    //         let mut eval_c0 = batch_challenges[0];
-    //         eval_c0.mul_assign(&f0_val);
-    //         let mut eval_c1 = batch_challenges[0];
-    //         eval_c1.mul_assign(&f1_val);
-    //         [eval_c0, eval_c1]
-    //     } else {
-    //         // For non-explicit form (intermediate rounds), return [f0, 0]
-    //         // The quadratic coefficient is 0 for a linear function
-    //         let f0 = sources[0].get_f0_only(index).into_value();
-    //         let mut eval_c0 = batch_challenges[0];
-    //         eval_c0.mul_assign(&f0);
-    //         [eval_c0, E::ZERO]
-    //     }
-    // }
-
-    // #[inline(always)]
-    // fn pointwise_eval(&self, input: &[ExtensionFieldRepresentation<F, E>; 1]) -> [E; 1] {
-    //     [input[0].into_value()]
-    // }
 }
 
 pub struct ExtensionCopyGKRRelation {
@@ -283,18 +240,19 @@ impl<F: PrimeField, E: FieldExtension<F> + Field>
     ExtensionFieldInOutFixedSizesEvaluationKernel<F, E, 1, 1>
     for ExtensionCopyGKRRelationKernel<F, E>
 {
+    #[inline(always)]
     fn evaluate_first_round<
         S: super::EvaluationFormStorage<F, E, ExtensionFieldRepresentation<F, E>>,
         SOUT: super::EvaluationFormStorage<F, E, ExtensionFieldRepresentation<F, E>>,
     >(
         &self,
         index: usize,
-        sources: &[S; 1],
-        _output_sources: &[SOUT; 1],
+        _sources: &[S; 1],
+        output_sources: &[SOUT; 1],
         batch_challenges: &[E; 1],
     ) -> [E; 2] {
         // there is no difference for input or output
-        let output_f0 = sources[0].get_f0_only(index).into_value();
+        let output_f0 = output_sources[0].get_f0_only(index).into_value();
         let mut eval_c0 = batch_challenges[0];
         eval_c0.mul_assign(&output_f0);
 
@@ -302,6 +260,7 @@ impl<F: PrimeField, E: FieldExtension<F> + Field>
         [eval_c0, E::ZERO]
     }
 
+    #[inline(always)]
     fn evaluate<
         S: super::EvaluationFormStorage<F, E, ExtensionFieldRepresentation<F, E>>,
         const EXPLICIT_FORM: bool,
@@ -325,10 +284,17 @@ impl<F: PrimeField, E: FieldExtension<F> + Field>
         } else {
             // For non-explicit form (intermediate rounds), return [f0, 0]
             // The quadratic coefficient is 0 for a linear function
-            let f0 = sources[0].get_f0_only(index).into_value();
-            let mut eval_c0 = batch_challenges[0];
-            eval_c0.mul_assign(&f0);
-            [eval_c0, E::ZERO]
+            if S::SHOULD_ACCESS_TO_PREPARE_FOR_NEXT_STEP {
+                let [f0, _] = sources[0].get_two_points::<EXPLICIT_FORM>(index);
+                let mut eval_c0 = batch_challenges[0];
+                eval_c0.mul_assign(&f0.into_value());
+                [eval_c0, E::ZERO]
+            } else {
+                let f0 = sources[0].get_f0_only(index).into_value();
+                let mut eval_c0 = batch_challenges[0];
+                eval_c0.mul_assign(&f0);
+                [eval_c0, E::ZERO]
+            }
         }
     }
 

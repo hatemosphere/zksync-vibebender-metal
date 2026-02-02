@@ -71,6 +71,8 @@ impl<F: PrimeField, E: FieldExtension<F> + PrimeField>
     fn num_challenges(&self) -> usize {
         1
     }
+
+    #[inline(always)]
     fn evaluate_first_round<
         R0: EvaluationRepresentation<F, E>,
         S0: EvaluationFormStorage<F, E, R0>,
@@ -115,6 +117,7 @@ impl<F: PrimeField, E: FieldExtension<F> + PrimeField>
         result
     }
 
+    #[inline(always)]
     fn evaluate<
         R0: EvaluationRepresentation<F, E>,
         S0: EvaluationFormStorage<F, E, R0>,
