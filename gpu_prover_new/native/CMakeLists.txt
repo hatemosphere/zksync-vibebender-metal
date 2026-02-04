@@ -9,6 +9,7 @@ add_library(gpu_prover_new_native STATIC
         common.cuh
         field.cuh
         memory.cuh
+        ntt/natural_main_evals_to_coset_evals.cu
         ptx.cuh
 )
 add_subdirectory(bench)
