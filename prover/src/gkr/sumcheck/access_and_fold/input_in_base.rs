@@ -4,19 +4,27 @@ use super::*;
 
 #[derive(Debug)]
 pub struct BaseFieldPoly<F: PrimeField> {
-    pub(crate) values: Box<[F]>,
+    pub(crate) values: Arc<Box<[F]>>,
 }
 
 impl<F: PrimeField> BaseFieldPoly<F> {
     pub fn new(values: Box<[F]>) -> Self {
         assert!(values.len().is_power_of_two());
-        Self { values }
+        Self {
+            values: Arc::new(values),
+        }
     }
 
     pub fn accessor(&self) -> BaseFieldPolySource<F> {
         BaseFieldPolySource {
             start: self.values.as_ptr(),
             next_layer_size: self.values.len() / 2,
+        }
+    }
+
+    pub fn arc_clone(&self) -> Self {
+        Self {
+            values: Arc::clone(&self.values),
         }
     }
 }

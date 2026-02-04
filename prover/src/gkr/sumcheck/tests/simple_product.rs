@@ -65,11 +65,11 @@ fn test_simple_product() {
     layer_0.layer_idx = 0;
     layer_0.extension_field_inputs.insert(
         GKRAddress::BaseLayerMemory(0),
-        Arc::new(ExtensionFieldPoly::new(a.into_boxed_slice())),
+        ExtensionFieldPoly::new(a.into_boxed_slice()),
     );
     layer_0.extension_field_inputs.insert(
         GKRAddress::BaseLayerMemory(1),
-        Arc::new(ExtensionFieldPoly::new(b.into_boxed_slice())),
+        ExtensionFieldPoly::new(b.into_boxed_slice()),
     );
 
     storage.layers.push(layer_0);
@@ -80,7 +80,7 @@ fn test_simple_product() {
             layer: 1,
             offset: 0,
         },
-        Arc::new(ExtensionFieldPoly::new(output.into_boxed_slice())),
+        ExtensionFieldPoly::new(output.into_boxed_slice()),
     );
 
     storage.layers.push(layer_1);
@@ -229,8 +229,8 @@ fn test_simple_product() {
 
             // this will give us a sumcheck claim for the next round
             {
-                let s0 = evaluate_small_univariate_poly::<F, E>(&coeffs, &E::ZERO);
-                let s1 = evaluate_small_univariate_poly::<F, E>(&coeffs, &E::ONE);
+                let s0 = evaluate_small_univariate_poly::<F, E, 4>(&coeffs, &E::ZERO);
+                let s1 = evaluate_small_univariate_poly::<F, E, 4>(&coeffs, &E::ONE);
                 let mut v = s0;
                 v.add_assign(&s1);
                 v.mul_assign(&last_eq_poly_prefactor_contribution);
@@ -239,7 +239,7 @@ fn test_simple_product() {
 
             let folding_challenge = E::from_base(F::from_u64_with_reduction(2 * (step as u64) + 1));
             folding_challenges.push(folding_challenge);
-            let next_claim = evaluate_small_univariate_poly::<F, E>(&coeffs, &folding_challenge);
+            let next_claim = evaluate_small_univariate_poly::<F, E, 4>(&coeffs, &folding_challenge);
 
             dbg!(next_claim);
 

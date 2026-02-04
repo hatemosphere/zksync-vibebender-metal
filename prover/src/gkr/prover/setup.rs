@@ -1,5 +1,7 @@
 use super::*;
+use crate::gkr::prover::stages::stage1::ColumnMajorCosetBoundTracePart;
 use crate::gkr::sumcheck::access_and_fold::BaseFieldPoly;
+use crate::gkr::whir::ColumnMajorBaseOracleForCoset;
 use crate::prover_stages::compute_aggregated_key_value_dyn;
 use common_constants::TIMESTAMP_COLUMNS_NUM_BITS;
 use cs::definitions::GKRAddress;
@@ -9,13 +11,13 @@ use cs::machine::ops::unrolled::{
 use cs::tables::{TableDriver, TableType};
 use fft::{materialize_powers_serial_starting_with_one, GoodAllocator};
 use field::batch_inverse_checked;
+use std::sync::Arc;
 
 pub struct GKRSetupPrecomputations<
     F: PrimeField + TwoAdicField,
     T: ColumnMajorMerkleTreeConstructor<F>,
 > {
-    pub ldes: Vec<BaseFieldCosetBoundTracePart<F>>,
-    pub trees: Vec<T>,
+    pub cosets: Vec<ColumnMajorBaseOracleForCoset<F, T>>,
 }
 
 impl<F: PrimeField + TwoAdicField, T: ColumnMajorMerkleTreeConstructor<F>>
@@ -29,6 +31,7 @@ impl<F: PrimeField + TwoAdicField, T: ColumnMajorMerkleTreeConstructor<F>>
         // lde_precomputations: &LdePrecomputations<A>,
         lde_factor: usize,
         tree_cap_size: usize,
+        values_per_leaf: usize,
         worker: &Worker,
     ) -> Self {
         Self::from_tables_and_trace_len_with_decoder_table(
@@ -40,6 +43,7 @@ impl<F: PrimeField + TwoAdicField, T: ColumnMajorMerkleTreeConstructor<F>>
             // lde_precomputations,
             lde_factor,
             tree_cap_size,
+            values_per_leaf,
             worker,
         )
     }
@@ -53,6 +57,7 @@ impl<F: PrimeField + TwoAdicField, T: ColumnMajorMerkleTreeConstructor<F>>
         // lde_precomputations: &LdePrecomputations<A>,
         lde_factor: usize,
         tree_cap_size: usize,
+        values_per_leaf: usize,
         worker: &Worker,
     ) -> Self {
         assert!(trace_len.is_power_of_two());
@@ -69,10 +74,17 @@ impl<F: PrimeField + TwoAdicField, T: ColumnMajorMerkleTreeConstructor<F>>
             compiled_circuit,
             // worker,
         );
+        let trace_len_log2 = trace_len.trailing_zeros() as usize;
+
+        let main_domain = ColumnMajorBaseOracleForCoset {
+            original_values_normal_order: main_domain_trace,
+            tree: T::dummy(), // TODO
+            values_per_leaf,
+            trace_len_log2,
+        };
 
         Self {
-            ldes: vec![main_domain_trace],
-            trees: vec![],
+            cosets: vec![main_domain],
         }
 
         // // NOTE: we do not use last row of the setup (and in general last of of circuit),
@@ -106,20 +118,16 @@ impl<F: PrimeField + TwoAdicField, T: ColumnMajorMerkleTreeConstructor<F>>
         trace_len: usize,
         compiled_circuit: &GKRCircuitArtifact<F>,
         // worker: &Worker,
-    ) -> BaseFieldCosetBoundTracePart<F> {
+    ) -> Vec<ColumnMajorCosetBoundTracePart<F, F>> {
         // we always have range-check 16 bits and timestamp limbs
         let total_width = 2 + compiled_circuit.generic_lookup_tables_width;
 
         println!("Creating setup with {} columns in total", total_width);
 
-        let mut trace = BaseFieldCosetBoundTracePart {
-            columns: Vec::with_capacity(total_width),
-            offset: F::ONE,
-        };
+        let mut result = Vec::with_capacity(total_width);
+
         for _ in 0..(2 + compiled_circuit.generic_lookup_tables_width) {
-            trace
-                .columns
-                .push(vec![F::ZERO; trace_len].into_boxed_slice());
+            result.push(vec![F::ZERO; trace_len].into_boxed_slice());
         }
 
         let table_encoding_capacity_per_tuple = trace_len;
@@ -159,8 +167,8 @@ impl<F: PrimeField + TwoAdicField, T: ColumnMajorMerkleTreeConstructor<F>>
 
         // no parallelism for now
 
-        trace.columns[0][..(1 << 16)].copy_from_slice(&range_check_16_table_content);
-        trace.columns[1][..(1 << TIMESTAMP_COLUMNS_NUM_BITS)]
+        result[0][..(1 << 16)].copy_from_slice(&range_check_16_table_content);
+        result[1][..(1 << TIMESTAMP_COLUMNS_NUM_BITS)]
             .copy_from_slice(&timestamp_range_check_table);
 
         if compiled_circuit.tables_ids_in_generic_lookups == false {
@@ -169,10 +177,10 @@ impl<F: PrimeField + TwoAdicField, T: ColumnMajorMerkleTreeConstructor<F>>
 
         for row_idx in 0..all_generic_tables.len() {
             for column in 0..3 {
-                trace.columns[2 + column][row_idx] = all_generic_tables[row_idx][column];
+                result[2 + column][row_idx] = all_generic_tables[row_idx][column];
             }
             if compiled_circuit.tables_ids_in_generic_lookups {
-                trace.columns.last_mut().unwrap()[row_idx] = all_generic_tables[row_idx][3];
+                result.last_mut().unwrap()[row_idx] = all_generic_tables[row_idx][3];
             }
         }
         let offset = compiled_circuit.offset_for_decoder_table;
@@ -185,20 +193,26 @@ impl<F: PrimeField + TwoAdicField, T: ColumnMajorMerkleTreeConstructor<F>>
             let width = table[0].len();
             assert_eq!(
                 2 + width + (compiled_circuit.tables_ids_in_generic_lookups as usize),
-                trace.columns.len()
+                result.len()
             );
             for row_idx in 0..decoder_table.len() {
                 for column in 0..width {
-                    trace.columns[2 + column][row_idx + offset] = table[row_idx][column];
+                    result[2 + column][row_idx + offset] = table[row_idx][column];
                 }
                 if compiled_circuit.tables_ids_in_generic_lookups {
-                    trace.columns.last_mut().unwrap()[row_idx + offset] =
+                    result.last_mut().unwrap()[row_idx + offset] =
                         F::from_u32_unchecked(TableType::Decoder as u32);
                 }
             }
         }
 
-        trace
+        result
+            .into_iter()
+            .map(|el| ColumnMajorCosetBoundTracePart {
+                column: Arc::new(el),
+                offset: F::ONE,
+            })
+            .collect()
     }
 
     pub fn preprocess_lookups<E: FieldExtension<F> + Field>(
@@ -265,10 +279,10 @@ impl<F: PrimeField + TwoAdicField, T: ColumnMajorMerkleTreeConstructor<F>>
         assert!(trace_len >= generic_lookup_tables_size);
 
         if generic_lookup_tables_size > 0 {
-            assert!(self.ldes[0].columns.len() > 2);
+            assert!(self.cosets[0].original_values_normal_order.len() > 2);
             let challenge_powers = materialize_powers_serial_starting_with_one::<E, Global>(
                 lookup_alpha,
-                self.ldes[0].columns.len() - 2,
+                self.cosets[0].original_values_normal_order.len() - 2,
             );
 
             let mut generic_lookup_preprocessing = Vec::with_capacity_in(trace_len, A::default());
@@ -293,7 +307,7 @@ impl<F: PrimeField + TwoAdicField, T: ColumnMajorMerkleTreeConstructor<F>>
                                 let absolute_row_idx = chunk_start + i;
 
                                 for column in 0..compiled_circuit.generic_lookup_tables_width {
-                                    buffer[column] = self.ldes[0].columns[2 + column][absolute_row_idx];
+                                    buffer[column] = self.cosets[0].original_values_normal_order[2 + column].column[absolute_row_idx];
                                 }
 
                                 let denom = compute_aggregated_key_value_dyn(

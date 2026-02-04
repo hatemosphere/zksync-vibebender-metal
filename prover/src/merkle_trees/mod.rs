@@ -88,6 +88,8 @@ pub trait MerkleTreeConstructor: Sized + Send + Sync {
 pub trait ColumnMajorMerkleTreeConstructor<F: PrimeField>: Sized + Send + Sync {
     type Verifier: LeafInclusionVerifier;
 
+    fn dummy() -> Self;
+
     // fn construct_for_coset<A: GoodAllocator, const N: usize>(
     //     trace: &RowMajorTrace<Mersenne31Field, N, A>,
     //     cap_size: usize,

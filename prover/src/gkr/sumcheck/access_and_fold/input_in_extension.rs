@@ -2,7 +2,7 @@ use super::*;
 
 #[derive(Debug)]
 pub struct ExtensionFieldPoly<F: PrimeField, E: FieldExtension<F> + Field> {
-    pub(crate) values: Box<[E]>,
+    pub(crate) values: Arc<Box<[E]>>,
     pub(crate) _marker: core::marker::PhantomData<F>,
 }
 
@@ -10,7 +10,7 @@ impl<F: PrimeField, E: FieldExtension<F> + Field> ExtensionFieldPoly<F, E> {
     pub fn new(values: Box<[E]>) -> Self {
         assert!(values.len().is_power_of_two());
         Self {
-            values,
+            values: Arc::new(values),
             _marker: core::marker::PhantomData,
         }
     }
@@ -19,6 +19,13 @@ impl<F: PrimeField, E: FieldExtension<F> + Field> ExtensionFieldPoly<F, E> {
         ExtensionFieldPolyInitialSource {
             start: self.values.as_ptr(),
             next_layer_size: self.values.len() / 2,
+            _marker: core::marker::PhantomData,
+        }
+    }
+
+    pub fn arc_clone(&self) -> Self {
+        Self {
+            values: Arc::clone(&self.values),
             _marker: core::marker::PhantomData,
         }
     }

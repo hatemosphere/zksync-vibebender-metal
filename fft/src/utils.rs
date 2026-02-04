@@ -488,10 +488,7 @@ mod tests {
         let mut rng = rand::rng();
 
         (0..len)
-            .map(|_| {
-                Mersenne31Field::from_u32_with_reduction(rng.random_range(0..(1 << 31) - 1))
-                    .unwrap()
-            })
+            .map(|_| Mersenne31Field::from_u32_with_reduction(rng.random_range(0..(1 << 31) - 1)))
             .collect()
     }
 }

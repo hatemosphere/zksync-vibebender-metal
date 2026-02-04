@@ -41,20 +41,18 @@ pub(super) fn setup_storage<F: PrimeField, E: FieldExtension<F> + Field>(
     let mut layer_0 = GKRLayerSource::default();
     layer_0.layer_idx = 0;
     for (addr, poly) in inputs {
-        layer_0.extension_field_inputs.insert(
-            addr,
-            Arc::new(ExtensionFieldPoly::new(poly.into_boxed_slice())),
-        );
+        layer_0
+            .extension_field_inputs
+            .insert(addr, ExtensionFieldPoly::new(poly.into_boxed_slice()));
     }
     storage.layers.push(layer_0);
 
     let mut layer_1 = GKRLayerSource::default();
     layer_1.layer_idx = 1;
     for (addr, poly) in outputs {
-        layer_1.extension_field_inputs.insert(
-            addr,
-            Arc::new(ExtensionFieldPoly::new(poly.into_boxed_slice())),
-        );
+        layer_1
+            .extension_field_inputs
+            .insert(addr, ExtensionFieldPoly::new(poly.into_boxed_slice()));
     }
     storage.layers.push(layer_1);
 
@@ -264,8 +262,8 @@ pub(super) fn run_sumcheck_test<
 
             // Verify sumcheck claim
             {
-                let s0 = evaluate_small_univariate_poly::<F, E>(&coeffs, &E::ZERO);
-                let s1 = evaluate_small_univariate_poly::<F, E>(&coeffs, &E::ONE);
+                let s0 = evaluate_small_univariate_poly::<F, E, 4>(&coeffs, &E::ZERO);
+                let s1 = evaluate_small_univariate_poly::<F, E, 4>(&coeffs, &E::ONE);
                 let mut v = s0;
                 v.add_assign(&s1);
                 v.mul_assign(&last_eq_poly_prefactor_contribution);
@@ -274,7 +272,7 @@ pub(super) fn run_sumcheck_test<
 
             let folding_challenge = folding_challenges_precomputed[step];
             folding_challenges.push(folding_challenge);
-            let next_claim = evaluate_small_univariate_poly::<F, E>(&coeffs, &folding_challenge);
+            let next_claim = evaluate_small_univariate_poly::<F, E, 4>(&coeffs, &folding_challenge);
 
             {
                 let t =

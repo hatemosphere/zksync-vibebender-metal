@@ -19,8 +19,8 @@ pub use self::input_in_extension::*;
 #[derive(Default)]
 pub struct GKRLayerSource<F: PrimeField, E: FieldExtension<F> + Field> {
     pub layer_idx: usize,
-    pub base_field_inputs: BTreeMap<GKRAddress, Arc<BaseFieldPoly<F>>>,
-    pub extension_field_inputs: BTreeMap<GKRAddress, Arc<ExtensionFieldPoly<F, E>>>,
+    pub base_field_inputs: BTreeMap<GKRAddress, BaseFieldPoly<F>>,
+    pub extension_field_inputs: BTreeMap<GKRAddress, ExtensionFieldPoly<F, E>>,
     pub intermediate_storage_for_folder_base_field_inputs:
         BTreeMap<GKRAddress, (usize, BaseFieldPolyIntermediateFoldingStorage<F, E>)>,
     pub intermediate_storage_for_folder_extension_field_inputs:
@@ -71,27 +71,6 @@ impl<F: PrimeField, E: FieldExtension<F> + Field> GKRStorage<F, E> {
             self.layers
                 .resize_with(layer + 1, || GKRLayerSource::default());
         }
-        let existing = self.layers[layer]
-            .base_field_inputs
-            .insert(address, Arc::new(value));
-        assert!(
-            existing.is_none(),
-            "trying to insert another value for layer {}, address {:?}",
-            layer,
-            address
-        );
-    }
-
-    pub(crate) fn insert_arc_base_field_at_layer(
-        &mut self,
-        layer: usize,
-        address: GKRAddress,
-        value: Arc<BaseFieldPoly<F>>,
-    ) {
-        if layer >= self.layers.len() {
-            self.layers
-                .resize_with(layer + 1, || GKRLayerSource::default());
-        }
         let existing = self.layers[layer].base_field_inputs.insert(address, value);
         assert!(
             existing.is_none(),
@@ -106,27 +85,6 @@ impl<F: PrimeField, E: FieldExtension<F> + Field> GKRStorage<F, E> {
         layer: usize,
         address: GKRAddress,
         value: ExtensionFieldPoly<F, E>,
-    ) {
-        if layer >= self.layers.len() {
-            self.layers
-                .resize_with(layer + 1, || GKRLayerSource::default());
-        }
-        let existing = self.layers[layer]
-            .extension_field_inputs
-            .insert(address, Arc::new(value));
-        assert!(
-            existing.is_none(),
-            "trying to insert another value for layer {}, address {:?}",
-            layer,
-            address
-        );
-    }
-
-    pub(crate) fn insert_arc_extension_at_layer(
-        &mut self,
-        layer: usize,
-        address: GKRAddress,
-        value: Arc<ExtensionFieldPoly<F, E>>,
     ) {
         if layer >= self.layers.len() {
             self.layers

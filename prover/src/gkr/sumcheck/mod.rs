@@ -1,5 +1,4 @@
 use field::{Field, FieldExtension, PrimeField};
-use std::mem::MaybeUninit;
 
 pub mod access_and_fold;
 pub mod eq_poly;
@@ -80,12 +79,12 @@ pub fn output_univariate_monomial_form_max_quadratic<
     [c0, c1, c2, c3]
 }
 
-pub fn evaluate_small_univariate_poly<F: PrimeField, E: FieldExtension<F> + Field>(
-    coeffs: &[E; 4],
+pub fn evaluate_small_univariate_poly<F: PrimeField, E: FieldExtension<F> + Field, const N: usize>(
+    coeffs: &[E; N],
     point: &E,
 ) -> E {
-    let mut result = coeffs[3];
-    for i in (0..3).rev() {
+    let mut result = coeffs[N-1];
+    for i in (0..(N-1)).rev() {
         result.mul_assign(point);
         result.add_assign(&coeffs[i]);
     }

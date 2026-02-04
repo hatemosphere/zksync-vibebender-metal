@@ -22,12 +22,6 @@ pub mod setup;
 pub mod stages;
 pub mod sumcheck_loop;
 
-#[derive(Clone, Debug)]
-pub struct BaseFieldCosetBoundTracePart<F: PrimeField + TwoAdicField> {
-    pub columns: Vec<Box<[F]>>,
-    pub offset: F,
-}
-
 #[derive(
     Clone, Copy, Debug, Hash, Default, serde::Serialize, serde::Deserialize, PartialEq, Eq,
 )]

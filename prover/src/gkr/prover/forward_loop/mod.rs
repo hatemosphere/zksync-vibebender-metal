@@ -371,7 +371,7 @@ pub fn evaluate_layer<F: PrimeField, E: FieldExtension<F> + Field>(
         assert_eq!(gate.output_layer, expected_output_layer);
 
         // println!("Should evaluate {:?}", &gate.enforced_relation);
-        
+
         let now = std::time::Instant::now();
         match &gate.enforced_relation {
             NoFieldGKRRelation::Copy { input, output } => {
@@ -498,6 +498,10 @@ pub fn evaluate_layer<F: PrimeField, E: FieldExtension<F> + Field>(
                 println!("Should evaluate {:?}", rel);
             }
         }
-        println!("Evaluating {:?} took {:?}", &gate.enforced_relation, now.elapsed());
+        println!(
+            "Evaluating {:?} took {:?}",
+            &gate.enforced_relation,
+            now.elapsed()
+        );
     }
 }

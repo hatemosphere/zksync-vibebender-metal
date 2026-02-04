@@ -276,4 +276,12 @@ impl<F: PrimeField, B: GoodAllocator> ColumnMajorMerkleTreeConstructor<F>
     for Blake2sU32MerkleTreeWithCap<B>
 {
     type Verifier = Blake2sForEverythingVerifier;
+
+    fn dummy() -> Self {
+        Blake2sU32MerkleTreeWithCap {
+            cap_size: 0,
+            leaf_hashes: Vec::new_in(B::default()),
+            node_hashes_enumerated_from_leafs: vec![],
+        }
+    }
 }

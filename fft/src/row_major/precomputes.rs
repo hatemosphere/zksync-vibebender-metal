@@ -108,9 +108,13 @@ impl<E: TwoAdicField, A: GoodAllocator> Twiddles<E, A> {
         let mut forward_twiddles_not_bitreversed = forward_twiddles.clone();
         bitreverse_enumeration_inplace(&mut forward_twiddles_not_bitreversed);
 
-        //precomputes for grinded fft
-        let (grinded_fft_forward_twiddles, grinded_fft_inverse_twiddles) =
-            precompute_twiddles(domain_size);
+        // dummy worst case
+        let (grinded_fft_forward_twiddles, grinded_fft_inverse_twiddles) = if domain_size < 16 {
+            precompute_twiddles(16)
+        } else {
+            //precomputes for grinded fft
+            precompute_twiddles(domain_size)
+        };
 
         Twiddles {
             forward_twiddles,

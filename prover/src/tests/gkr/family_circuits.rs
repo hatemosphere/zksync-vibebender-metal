@@ -415,6 +415,7 @@ pub fn gkr_run_basic_unrolled_test_impl(
                 &twiddles,
                 lde_factor,
                 tree_cap_size,
+                2,
                 &worker,
             );
 
