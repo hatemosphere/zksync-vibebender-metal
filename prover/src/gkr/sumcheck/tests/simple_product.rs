@@ -101,10 +101,10 @@ fn test_simple_product() {
         .collect();
     // dbg!(&previous_round_challenges);
 
-    let eq_precomputed = make_eq_poly_in_full::<F, E>(&previous_round_challenges);
+    let eq_precomputed = make_eq_poly_in_full::<E>(&previous_round_challenges);
     // dbg!(&eq_precomputed);
 
-    let mut claim = evaluate_with_precomputed_eq_ext::<F, E>(
+    let mut claim = evaluate_with_precomputed_eq_ext::<E>(
         &storage.layers[1]
             .extension_field_inputs
             .get(&GKRAddress::InnerLayer {
@@ -122,14 +122,14 @@ fn test_simple_product() {
         let folding_challenges: Vec<E> = (0..FOLDING_STEPS)
             .map(|el| E::from_base(F::from_u64_with_reduction(2 * (el as u64) + 1)))
             .collect();
-        let eq_precomputed = make_eq_poly_in_full::<F, E>(&folding_challenges);
+        let eq_precomputed = make_eq_poly_in_full::<E>(&folding_challenges);
         let a = &storage.layers[0]
             .extension_field_inputs
             .get(&GKRAddress::BaseLayerMemory(0))
             .unwrap()
             .values[..];
         let a_expected =
-            evaluate_with_precomputed_eq_ext::<F, E>(a, &eq_precomputed.last().unwrap()[..]);
+            evaluate_with_precomputed_eq_ext::<E>(a, &eq_precomputed.last().unwrap()[..]);
         expected_random_evals.insert(GKRAddress::BaseLayerMemory(0), a_expected);
         let b = &storage.layers[0]
             .extension_field_inputs
@@ -137,7 +137,7 @@ fn test_simple_product() {
             .unwrap()
             .values[..];
         let b_expected =
-            evaluate_with_precomputed_eq_ext::<F, E>(b, &eq_precomputed.last().unwrap()[..]);
+            evaluate_with_precomputed_eq_ext::<E>(b, &eq_precomputed.last().unwrap()[..]);
         expected_random_evals.insert(GKRAddress::BaseLayerMemory(1), b_expected);
     }
 
@@ -146,7 +146,7 @@ fn test_simple_product() {
 
     let mut folding_challenges = vec![];
 
-    let eq_reduced_precomputed = make_eq_poly_reduced::<F, E>(&previous_round_challenges);
+    let eq_reduced_precomputed = make_eq_poly_reduced::<E>(&previous_round_challenges);
     // dbg!(&eq_reduced_precomputed);
     let eq_reduced_len = eq_reduced_precomputed.len();
 

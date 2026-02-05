@@ -2,7 +2,7 @@ use field::{Field, FieldExtension};
 
 use super::*;
 
-pub fn make_eq_poly_reduced<F: PrimeField, E: FieldExtension<F> + Field>(
+pub fn make_eq_poly_reduced<E: Field>(
     previous_round_challenges: &[E],
 ) -> Vec<Box<[E]>> {
     assert!(previous_round_challenges.len() > 1);
@@ -47,7 +47,7 @@ pub fn make_eq_poly_reduced<F: PrimeField, E: FieldExtension<F> + Field>(
     result
 }
 
-pub fn make_eq_poly_in_full<F: PrimeField, E: FieldExtension<F> + Field>(
+pub fn make_eq_poly_in_full<E: Field>(
     previous_round_challenges: &[E],
 ) -> Vec<Box<[E]>> {
     let mut result = make_eq_poly_reduced(previous_round_challenges);
@@ -95,7 +95,7 @@ pub(crate) fn evaluate_with_precomputed_eq<F: PrimeField, E: FieldExtension<F> +
     result
 }
 
-pub(crate) fn evaluate_with_precomputed_eq_ext<F: PrimeField, E: FieldExtension<F> + Field>(
+pub(crate) fn evaluate_with_precomputed_eq_ext<E: Field>(
     ext_field_values: &[E],
     eq: &[E],
 ) -> E {

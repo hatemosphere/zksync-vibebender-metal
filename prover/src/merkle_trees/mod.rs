@@ -85,7 +85,7 @@ pub trait MerkleTreeConstructor: Sized + Send + Sync {
     );
 }
 
-pub trait ColumnMajorMerkleTreeConstructor<F: PrimeField>: Sized + Send + Sync {
+pub trait ColumnMajorMerkleTreeConstructor<F: PrimeField>: Sized + Send + Sync + core::fmt::Debug {
     type Verifier: LeafInclusionVerifier;
 
     fn dummy() -> Self;

@@ -44,18 +44,48 @@
 // - Due to complexity of such sumcheck (that drags various prefactors from previous rounds), most likely size of the final polynomial
 // should be very small (much smaller compared to FRI case)
 
+// NOTE: as we can choose rates somewhat independently from folding parameters, then for 100 bits of conjectured security we can do like
+// let's say initially poly is 2^24
+// - initial rate 1/2, and fold once - 100 queries, size 2^23
+// - we discard all other polys from memory - RAM is no longer a problem, and next computations are cheap
+// - rate 1/8, we do 33 queries and fold 4 times. Next step is 2^20
+// - rate 1/64, we do 18 queries and fold 4 times. Next step is 2^16
+// - rate 1/256, 13 queries, fold 4 times. Next step 2^12
+// - rate 1/1024, 10 queries, fold 4 times. Next step 2^8
+// - rate 1/4096, 8 queries, fold 4 times, output final 2^4 values
+
+// NOTE on hypercube construction
+// Original WHIR paper assumes knowledge of the monomial form, and implementations perform sumcheck over it. For efficiency we want to use
+// "main domain" as the multilinear poly representation, and so our definition of the multivariate poly should be different:
+// - usually f(x1, x2, ...) = \sum_{hypercube of 0/1} eq(x1, x2, ..., 0/1, 0/1, ...) evals(0/1, 0/1, 0/1)
+// - so evaluation at random point is just \sum_{hypercube of 0/1} eq(r1, r2, ..., 0/1, 0/1, ...) evals(0/1, 0/1, 0/1) for concerete values of r1, r2, etc
+// - however, we want to use evals at (1/omega, 1/omega^2, ...) in the RHS of the definition instead
+// - so our equality poly is a little more complex, and we should change summation - instead of summing over b \in {0, 1}^N, we instead sum over b \in {1, omega} * {1, omega^2}
+// for the corresponding root of unity, and equality poly's definition becomes "bivariate multilinear poly with 1s at 1 and omega", and it's
+// explicit form is eq(X, Y) = (1 - X')(1 - Y') + X'Y' with linear mapping of (X' - 1)/(X - 0) = (omega - 1), so X = (X' - 1)/(omega - 1) and so for Y', and so
+// eq(X, Y) = 1 / (omega - 1) ^ 2 * (X - 1)(Y - 1) + (1 - (X - 1)/(omega - 1))(1 - (Y - 1)/(omega - 1))
+// Cheking: eq(1, 1) = 0 + 1
+// eq(omega, omega) = 1 + 0
+
+// NOTE: for GKR part we can use assymmetric definition of eq poly, such that it's equality table is defined as
+//  X      Y       Value
+//  0      1         1
+//  1     omega      1
+// so after first GKR layer we can use "standard" 0/1 hypercube
+
 use crate::gkr::prover::stages::stage1::{
-    compute_column_major_lde_from_main_domain_and_output_monomial_form,
+    compute_column_major_monomial_form_from_main_domain,
     ColumnMajorCosetBoundTracePart,
 };
+use crate::gkr::sumcheck::eq_poly::make_eq_poly_in_full;
 use crate::gkr::sumcheck::*;
-use crate::gkr::sumcheck::eq_poly::{make_eq_poly_in_full, make_eq_poly_reduced};
 use crate::{gkr::prover::apply_row_wise, merkle_trees::ColumnMajorMerkleTreeConstructor};
-use fft::{materialize_powers_serial_starting_with_one, Twiddles};
+use fft::{Twiddles, batch_inverse_inplace, bitreverse_enumeration_inplace, domain_generator_for_size, materialize_powers_serial_starting_with_one};
 use field::{Field, FieldExtension, PrimeField, TwoAdicField};
 use std::alloc::Global;
 use worker::Worker;
 
+#[derive(Debug)]
 pub struct ColumnMajorBaseOracleForCoset<
     F: PrimeField + TwoAdicField,
     T: ColumnMajorMerkleTreeConstructor<F>,
@@ -72,11 +102,33 @@ impl<F: PrimeField + TwoAdicField, T: ColumnMajorMerkleTreeConstructor<F>>
     pub fn query_for_folded_index(&self, index: usize) -> Vec<Vec<F>> {
         assert!(self.values_per_leaf.is_power_of_two());
         assert!(index < (1 << self.trace_len_log2) / self.values_per_leaf);
+        let trace_len = 1 << self.trace_len_log2;
 
-        todo!()
+        let mut result: Vec<Vec<F>> = (0..self.values_per_leaf).into_iter().map(|_| {
+            Vec::with_capacity(self.original_values_normal_order.len())
+        }).collect();
+
+        match self.values_per_leaf {
+            2 => {
+                let offsets = [0, trace_len/2];
+                for src_poly in self.original_values_normal_order.iter() {
+                    for (j, offset) in offsets.iter().enumerate() {
+                        let i = *offset + index;
+                        let value = src_poly.column[i];
+                        result[j].push(value);
+                    }
+                }
+            },
+            a @ _ => {
+                panic!("unsupported: {} values per leaf", a);
+            }
+        }
+
+        result
     }
 }
 
+#[derive(Debug)]
 pub struct ColumnMajorBaseOracleForLDE<
     F: PrimeField + TwoAdicField,
     T: ColumnMajorMerkleTreeConstructor<F>,
@@ -87,10 +139,12 @@ pub struct ColumnMajorBaseOracleForLDE<
 impl<F: PrimeField + TwoAdicField, T: ColumnMajorMerkleTreeConstructor<F>>
     ColumnMajorBaseOracleForLDE<F, T>
 {
-    pub fn query_for_folded_index(&self, index: usize) -> Vec<Vec<F>> {
-        let coset_index = index >> self.cosets[0].trace_len_log2;
-        let internal_index = index & ((1 << self.cosets[0].trace_len_log2) - 1);
-        self.cosets[coset_index].query_for_folded_index(index)
+    pub fn query_for_folded_index(&self, index: usize) -> (usize, Vec<Vec<F>>) {
+        // let coset_index = index >> self.cosets[0].trace_len_log2;
+        // let internal_index = index & ((1 << self.cosets[0].trace_len_log2) - 1);
+        let coset_index = index & (self.cosets.len() - 1);
+        let internal_index = index / self.cosets.len();
+        (coset_index, self.cosets[coset_index].query_for_folded_index(internal_index))
     }
 }
 
@@ -100,7 +154,7 @@ pub fn whir_fold<
     T: ColumnMajorMerkleTreeConstructor<F>,
 >(
     base_layer_oracles: [ColumnMajorBaseOracleForLDE<F, T>; 3], // memory, witness, setup
-    original_claims: [Vec<E>; 3], // memory, witness, setup
+    original_claims: [Vec<E>; 3],                               // memory, witness, setup
     original_evaluation_point: Vec<E>,
     original_lde_factor: usize,
     batching_challenge: &E,
@@ -114,6 +168,10 @@ pub fn whir_fold<
     trace_len_log2: usize,
     worker: &Worker,
 ) {
+    dbg!(&base_layer_oracles);
+
+    let two_inv = F::from_u32_unchecked(2).inverse().unwrap();
+
     assert!(original_lde_factor.is_power_of_two());
     assert_eq!(whir_steps_schedule.len(), whir_steps_lde_factors.len());
 
@@ -136,11 +194,7 @@ pub fn whir_fold<
         *batching_challenge,
         total_base_oracles,
     );
-    let challenge_powers = vec![
-        E::ONE,
-        E::ZERO,
-        E::ZERO
-    ];
+    let challenge_powers = vec![E::ONE, E::ZERO, E::ZERO];
     let (base_mem_powers, rest) = challenge_powers.split_at(original_claims[0].len());
     let (base_witness_powers, base_setup_powers) = rest.split_at(original_claims[1].len());
     assert_eq!(base_setup_powers.len(), original_claims[2].len());
@@ -151,7 +205,7 @@ pub fn whir_fold<
         base_setup_powers.to_vec(),
     ];
 
-    let mut batched_poly_on_main_domain = vec![E::ZERO; 1 << trace_len_log2].into_boxed_slice();
+    let mut batched_poly_on_main_domain = vec![E::ZERO; 1 << trace_len_log2];
 
     apply_row_wise::<F, E>(
         vec![],
@@ -189,11 +243,10 @@ pub fn whir_fold<
     );
 
     // TODO: LDE and make oracles
-    let (other_domains, mut monomial_form) =
-        compute_column_major_lde_from_main_domain_and_output_monomial_form(
+    let monomial_form =
+        compute_column_major_monomial_form_from_main_domain(
             &batched_poly_on_main_domain[..],
             twiddles,
-            original_lde_factor,
         );
 
     let mut batched_claim = E::ZERO;
@@ -219,39 +272,38 @@ pub fn whir_fold<
     let mut evaluation_coordinates = &original_evaluation_point[..];
 
     // as we will eventually continue to mix-in additional equality polys into sumcheck kernel,
-    // we compute the largest one and update it each round
-    let mut eq_polys = make_eq_poly_in_full::<F, E>(&original_evaluation_point[..]); // TODO: parallelize
-    let mut eq_poly = eq_polys.pop().unwrap();
+    // so we can NOT easily use the same trick with splitting out eq poly highest coordinate in sumcheck.
+    // So we make EQ poly explicitly, and then we will update it after every step, and use naively
+
+    dbg!(&original_evaluation_point);
+
+    let mut eq_polys = make_eq_poly_in_full::<E>(&original_evaluation_point[..]); // TODO: parallelize
+    let mut eq_poly_box = eq_polys.pop().unwrap();
+    let mut eq_poly = &mut eq_poly_box[..];
     drop(eq_polys);
 
     // initial folding
     let num_initial_folding_rounds = whir_steps_schedule.next().unwrap();
     let mut last_eq_poly_prefactor_contribution = E::ONE;
-    let mut sumchecked_poly = batched_poly_on_main_domain.to_vec();
-    dbg!(&sumchecked_poly);
+    let mut total_eq_poly_prefactor = E::ONE;
+    let mut sumchecked_poly_evaluation_form_vec = batched_poly_on_main_domain;
+    let mut sumchecked_poly_evaluation_form = &mut sumchecked_poly_evaluation_form_vec[..];
+    let mut sumchecked_poly_monomial_form = monomial_form;
+    let mut monomial_form_buffer = Vec::with_capacity(sumchecked_poly_monomial_form.len());
+
+    dbg!(&sumchecked_poly_evaluation_form);
     let mut claim = batched_claim;
+
+    assert_eq!(eq_poly.len(), sumchecked_poly_evaluation_form.len());
+    assert_eq!(eq_poly.len(), sumchecked_poly_monomial_form.len());
 
     let mut folding_challenges = vec![];
     let mut ood_samples_per_round = vec![];
     let mut delinearization_challenges_per_round = vec![];
 
     {
-        // compute univariate poly of degree 2, such that F(original_evaluation_point) == batched_claim.
-        // As degree is here is always low, we only need to walk over half of the domain
-        // F(X) = (a X + b) (c X + d), and F(0) + F(1) = batched_claim = bd + (a + b)(c + d)
-        // We also know `a` and `b` from apriori decomposition of eq poly
-        // eq = ((1 - X)*(1 - original_evaluation_point[0]) + X * original_evaluation_point[0])
-        // so
-        // `a` = (2 * original_evaluation_point[0] - 1)
-        // `b` = (1 - original_evaluation_point[0])
-        // other two are also easy
-        // `c` = \sum_{x[1..]} eq(x[1..], original_evaluation_point[1..]) * (batched_poly(1, x[1..]) - batched_poly(0, x[1..]))
-        // `d` = \sum_{x[1..]} eq(x[1..], original_evaluation_point[1..]) * batched_poly(0, x[1..])
-        // last one is half-size in terms of memory reads
-
-        // so we can compute `c` as (batched_claim - bd) / (a + b) - d, and completely avoid access to batched_poly(1, x[1..])
-
-        // Same logic applies to all other sumcheck steps that we will have
+        // Even though we can do all the same trick as in our GKR kernels and only evaluate sum of half-size,
+        // instead we naively evaluate at 0 and 1, and use input claim to get the monomial form via Lagrange interpolation
 
         for el in base_layer_oracles.iter() {
             for el in el.cosets.iter() {
@@ -261,67 +313,34 @@ pub fn whir_fold<
         let mut folding_challenges_in_round = vec![];
 
         for _ in 0..num_initial_folding_rounds {
+            let half_len = sumchecked_poly_evaluation_form.len() / 2;
+            let eval_at_0 = dot_product(
+                &sumchecked_poly_evaluation_form[..half_len],
+                &eq_poly[..half_len],
+                worker,
+            );
+            dbg!(eval_at_0);
+
+            let eval_at_1 = dot_product(
+                &sumchecked_poly_evaluation_form[half_len..],
+                &eq_poly[half_len..],
+                worker,
+            );
+            dbg!(eval_at_1);
+
+            // Lagrange intepolation
             let evaluation_point = evaluation_coordinates[0];
             evaluation_coordinates = &evaluation_coordinates[1..];
-            let mut a = E::ONE;
-            a.sub_assign(&evaluation_point);
 
-            let mut b = evaluation_point;
-            b.double();
-            b.sub_assign_base(&F::ONE);
-
-            let mut d = E::ZERO;
-
-            // There is also an important aspect of mapping univariate and multivariate enumeration.
-            // When we fold for proximity check, we always pair omega^k and -omega^k,
-            // and so our coordinate should reflect this in enumeration. If we enumerate normally (1, omega, omega^2, ...),
-            // and we treat our coordinate as MSB of the integer index, then we automatically get the behavior we want
-
-            let half_cube = &sumchecked_poly[..sumchecked_poly.len() / 2];
-            dbg!(half_cube);
-            dbg!(&eq_poly);
-            assert_eq!(eq_poly.len(), half_cube.len());
-            for (a, b) in eq_poly.iter().zip(half_cube.iter()) {
-                let mut t = *a;
-                t.mul_assign(&b);
-                d.add_assign(&t);
-            }
-
-            let mut a_plus_b = a;
-            a_plus_b.add_assign(&b);
-            let a_plus_b_inv = a_plus_b.inverse().expect("must exist");
-
-            let mut bd = b;
-            bd.mul_assign(&d);
-
-            let mut normalized_claim = claim;
-            normalized_claim.mul_assign(
-                &last_eq_poly_prefactor_contribution
-                    .inverse()
-                    .expect("not zero"),
-            );
-
-            let mut c = normalized_claim;
-            c.sub_assign(&bd);
-            c.mul_assign(&a_plus_b_inv);
-            c.sub_assign(&d);
-
-            let c0 = bd;
-            let mut ad = a;
-            ad.mul_assign(&d);
-            let mut bc = b;
-            bc.mul_assign(&c);
-            let mut c1 = ad;
-            c1.add_assign(&bc);
-            let mut c2 = a;
-            c2.mul_assign(&c);
-
-            let coeffs = [c0, c1, c2];
+            let univariate_coeffs =
+                special_lagrange_interpolate(eval_at_0, eval_at_1, claim, evaluation_point);
 
             {
                 // self-check
-                let s0 = evaluate_small_univariate_poly(&coeffs, &E::ZERO);
-                let s1 = evaluate_small_univariate_poly(&coeffs, &E::ONE);
+                let s0 = evaluate_small_univariate_poly(&univariate_coeffs, &E::ZERO);
+                assert_eq!(s0, eval_at_0);
+                let s1 = evaluate_small_univariate_poly(&univariate_coeffs, &E::ONE);
+                assert_eq!(s1, eval_at_1);
                 let mut v = s0;
                 v.add_assign(&s1);
                 v.mul_assign(&last_eq_poly_prefactor_contribution);
@@ -330,41 +349,96 @@ pub fn whir_fold<
 
             // draw folding challenge
             let folding_challenge = E::from_base(F::from_u32_unchecked(42));
+            let folding_challenge = E::ZERO;
             folding_challenges_in_round.push(folding_challenge);
             {
-                let t =
-                    evaluate_eq_poly::<F, E>(&folding_challenge, &evaluation_point);
+                let t = evaluate_eq_poly::<F, E>(&folding_challenge, &evaluation_point);
                 last_eq_poly_prefactor_contribution = t;
+                total_eq_poly_prefactor.mul_assign(&t);
             }
-            let next_claim = evaluate_small_univariate_poly(&coeffs, &folding_challenge);
+            let next_claim = evaluate_small_univariate_poly(&univariate_coeffs, &folding_challenge);
             claim = next_claim;
             // and fold the poly itself - both multivariate evals mapping, and monomial form
 
-            todo!()
+            dbg!(&sumchecked_poly_monomial_form);
+            fold_monomial_form(
+                &mut sumchecked_poly_monomial_form,
+                &mut monomial_form_buffer,
+                &folding_challenge,
+                worker,
+            );
+            dbg!(&sumchecked_poly_monomial_form);
 
+            let domain_size = sumchecked_poly_evaluation_form.len();
+            let omegas_inv = materialize_powers_serial_starting_with_one::<F, Global>(F::TWO_ADICITY_GENERATORS_INVERSED[domain_size.trailing_zeros() as usize], domain_size / 2);
+            sumchecked_poly_evaluation_form = fold_evaluation_form(
+                &mut sumchecked_poly_evaluation_form[..],
+                &omegas_inv,
+                // &twiddles.inverse_twiddles,
+                &folding_challenge,
+                &two_inv,
+                worker,
+            );
+
+            assert_eq!(sumchecked_poly_monomial_form.len(), sumchecked_poly_evaluation_form.len());
+
+            // and so we fold equality poly too
+
+            eq_poly = fold_eq_poly(eq_poly, &folding_challenge, worker);
         }
 
-        folding_challenges.push(folding_challenges_in_round);
+        folding_challenges.push(folding_challenges_in_round.clone());
+
+        let mut contributions_to_eq_poly = vec![];
+        let mut contributions_to_eq_poly_with_base_points = vec![];
 
         // draw OOD sample
         let ood_point = E::from_base(F::from_u32_unchecked(42));
         // compute OOD value
-        let ood_value = E::ZERO;
+        let ood_value = evaluate_monomial_form(&sumchecked_poly_monomial_form[..], &ood_point, worker);
+        // {
+        //     dbg!(ood_value);
+        //     let mut pows = make_pows(ood_point, sumchecked_poly_evaluation_form.len().trailing_zeros() as usize);
+        //     let value = evaluate_multivarite(&sumchecked_poly_evaluation_form, &pows);
+        //     dbg!(value);
+        // }
 
         ood_samples_per_round.push((ood_point, ood_value));
 
         // now can draw challenges
 
         // and we can immediatelly query all the original oracles, and drop them. For that we need to draw indexes
-        let num_bits = trace_len_log2 + (original_lde_factor.trailing_zeros() as usize) - num_initial_folding_rounds;
+        let original_domain_log2 = trace_len_log2 + (original_lde_factor.trailing_zeros() as usize);
+        let query_domain_log2 = original_domain_log2 - num_initial_folding_rounds;
+        let query_domain_size = 1u64 << query_domain_log2;
+        let generator = domain_generator_for_size::<F>(query_domain_size);
+        let input_domain_size = 1u64 << original_domain_log2;
+        let extended_generator = domain_generator_for_size::<F>(input_domain_size);
+
+        let set_generator = domain_generator_for_size::<F>(1u64 << num_initial_folding_rounds);
+        let mut folding_set_offsets: Vec<F> = (0..(1u64 << (num_initial_folding_rounds - 1))).map(|el| set_generator.pow(el as u32)).collect();
+        bitreverse_enumeration_inplace(&mut folding_set_offsets);
+
+        let cosets_invs: Vec<_> = base_layer_oracles[0].cosets.iter().map(|el| el.original_values_normal_order[0].offset.inverse().unwrap()).collect();
+        let coset_invs_powers: Vec<Vec<F>> = cosets_invs.iter().map(|el| {
+            (0..num_initial_folding_rounds).map(|pow| {
+                el.pow(pow as u32)
+            }).collect::<Vec<_>>()
+        }).collect();
+
         let num_queries = whir_queries_schedule.next().unwrap();
         let mut query_indexes = vec![];
         for _ in 0..num_queries {
+            // query index is power for omega^k expression
             query_indexes.push(0usize);
         }
         // and delinearization challenge
         let delinearization_challenge = E::from_base(F::from_u32_unchecked(7));
         delinearization_challenges_per_round.push(delinearization_challenge);
+
+        // we will have OOD sample contribution
+        contributions_to_eq_poly.push((ood_point, delinearization_challenge));
+
         let mut claim_correction = E::ZERO;
         {
             let mut t = ood_value;
@@ -375,9 +449,15 @@ pub fn whir_fold<
         current_delinearization_challenge.square();
         for query_index in query_indexes.into_iter() {
             // get original leaf, compute batched, and then folded value
+            let base_root = extended_generator.pow(query_index as u32);
+            let base_root_inv = base_root.inverse().unwrap();
+            let mut coset_idx = usize::MAX;
             let mut batched_evals = vec![E::ZERO; base_layer_oracles[0].cosets[0].values_per_leaf];
-            for (oracle, batching_challenges) in base_layer_oracles.iter().zip(batch_challenges.iter()) {
-                let leaf = oracle.query_for_folded_index(query_index);
+            for (oracle, batching_challenges) in
+                base_layer_oracles.iter().zip(batch_challenges.iter())
+            {
+                let (idx, leaf) = oracle.query_for_folded_index(query_index);
+                coset_idx = idx;
                 assert_eq!(batched_evals.len(), leaf.len());
                 for (dst, src) in batched_evals.iter_mut().zip(leaf.iter()) {
                     assert_eq!(src.len(), batching_challenges.len());
@@ -388,57 +468,443 @@ pub fn whir_fold<
                     }
                 }
             }
-            // and then fold
+            dbg!(&batched_evals);
+
+            // Now we can fold
+            let mut buffer = Vec::with_capacity(batched_evals.len());
+            for folding_step in 0..num_initial_folding_rounds {
+                let (src, dst) = if folding_step % 2 == 0 {
+                    (&batched_evals[..], &mut buffer)
+                } else {
+                    (&buffer[..], &mut batched_evals)
+                };
+                assert!(dst.is_empty());
+                assert!(src.is_empty() == false);
+                assert!(src.len().is_power_of_two());
+                for (set_idx, [a, b]) in src.as_chunks::<2>().0.iter().enumerate() {
+                    let mut t = *a;
+                    t.sub_assign(b);
+                    t.mul_assign(&folding_challenges_in_round[folding_step]);
+                    t.mul_assign_by_base(&coset_invs_powers[coset_idx][folding_step]);
+                    t.mul_assign_by_base(&base_root_inv);
+                    t.mul_assign_by_base(&folding_set_offsets[set_idx]);
+                    
+                    t.add_assign(a);
+                    t.add_assign(b);
+                    t.mul_assign_by_base(&two_inv);
+                    dst.push(t);
+                }
+                if folding_step % 2 == 0 {
+                    batched_evals.clear();
+                } else {
+                    buffer.clear();
+                };
+            }
+            
+            let folded = if num_initial_folding_rounds % 2 == 1 {
+                &buffer[..]
+            } else {
+                &batched_evals[..]
+            };
+
+            dbg!(folded);
+            dbg!(&sumchecked_poly_evaluation_form);
+            dbg!(&sumchecked_poly_monomial_form);
+            {
+                let mut t = E::ZERO;
+                for el in sumchecked_poly_monomial_form.iter() {
+                    t.add_assign(el);
+                }
+                dbg!(t);
+            }
+
+            {
+                {
+                    let mut source = sumchecked_poly_monomial_form.clone();
+                    // TODO: very stupid and slow...
+                    bitreverse_enumeration_inplace(&mut source[..]);
+                    fft::naive::serial_ct_ntt_bitreversed_to_natural(
+                        &mut source[..],
+                        sumchecked_poly_monomial_form.len().trailing_zeros(),
+                        &twiddles.forward_twiddles,
+                    );
+                    assert_eq!(source, sumchecked_poly_evaluation_form);
+                }
+            }
+
+            {
+                let omega = domain_generator_for_size::<F>((sumchecked_poly_evaluation_form.len() * 2) as u64);
+                for i in 0..sumchecked_poly_evaluation_form.len() {
+                    let root = omega.pow(i as u32);
+                    // let t = evaluate_monomial_form(&sumchecked_poly_monomial_form, &E::from_base(root), worker);
+                    // assert_eq!(t, sumchecked_poly_evaluation_form[i]);
+                    let mut t = sumchecked_poly_evaluation_form.to_vec();
+                    bitreverse_enumeration_inplace(&mut t);
+                    let pows = make_pows(root, sumchecked_poly_evaluation_form.len().trailing_zeros() as usize);
+                    // pows.reverse();
+                    let value = evaluate_multivariate_at_base(&t, &pows);
+                    dbg!(value);
+                }
+            }
 
             // and add into sumcheck claim
+            contributions_to_eq_poly_with_base_points.push((base_root, delinearization_challenge));
+            current_delinearization_challenge.mul_assign(&delinearization_challenge);
         }
 
         drop(base_layer_oracles);
+
+        // we now update the equality poly - initially we had eq(X, original_evalution_point), from which we folded few coordinates.
+        // Now we should add more terms there to reflect OOD and in-domain samples
+        update_eq_poly(
+            eq_poly,
+            &contributions_to_eq_poly,
+            &contributions_to_eq_poly_with_base_points,
+        );
+
+
     }
 
-    // now we step into recursive procesure,
+    // now we step into recursive procesure over one batched polynomial
+    {
+
+    }
+
+    // and final step is almost the same as the first one - we can fold few times, output evaluation form, and draw final query indexes,
+    // check consistency between them, and perform final explicit sumcheck
+    {
+
+    }
+
 
     todo!()
 }
 
+fn fold_monomial_form<E: Field>(input: &mut Vec<E>, buffer: &mut Vec<E>, challenge: &E, worker: &Worker) {
+    // TODO: parallelize
+    assert!(input.len().is_power_of_two());
+    assert!(buffer.capacity() >= input.len() / 2);
+    assert!(buffer.is_empty());
+
+    for ([c0, c1], dst) in input
+        .as_chunks::<2>()
+        .0
+        .iter()
+        .zip(buffer.spare_capacity_mut()[..input.len() / 2].iter_mut())
+    {
+        let mut result = *c1;
+        result.mul_assign(challenge);
+        result.add_assign(c0);
+        dst.write(result);
+    }
+    unsafe {
+        buffer.set_len(input.len() / 2);
+    }
+
+    core::mem::swap(input, buffer);
+    buffer.clear();
+}
+
+fn fold_evaluation_form<'a, F: PrimeField, E: FieldExtension<F> + Field>(
+    input: &'a mut [E],
+    omegas_inv: &[F],
+    challenge: &E,
+    two_inv: &F,
+    worker: &Worker,
+) -> &'a mut [E] {
+    // TODO: parallelize
+    assert!(input.len().is_power_of_two());
+    assert_eq!(input.len() / 2, omegas_inv.len());
+    let half_len = input.len() / 2;
+    let stride = input.len() / 2;
+
+    for i in 0..input.len() / 2 {
+        let f_x = input[i];
+        let f_minus_x = input[i + stride];
+        let x_inv = omegas_inv[i];
+
+        let mut sum = f_x;
+        sum.add_assign(&f_minus_x);
+
+        let mut diff = f_x;
+        diff.sub_assign(&f_minus_x);
+        diff.mul_assign(challenge);
+        diff.mul_assign_by_base(&x_inv);
+
+        sum.add_assign(&diff);
+        sum.mul_assign_by_base(two_inv);
+
+        input[i] = sum;
+    }
+
+    &mut input[..half_len]
+}
+
+fn fold_eq_poly<'a, F: PrimeField, E: FieldExtension<F> + Field>(
+    eq_poly: &'a mut [E],
+    challenge: &E,
+    worker: &Worker,
+) -> &'a mut [E] {
+    // TODO: parallelize
+    assert!(eq_poly.len().is_power_of_two());
+    let stride = eq_poly.len() / 2;
+    let mut f0_coeff = E::ONE;
+    f0_coeff.sub_assign(challenge);
+    let f1_coeff = *challenge;
+
+    for i in 0..eq_poly.len() / 2 {
+        let mut a = f0_coeff;
+        a.mul_assign(&eq_poly[i]);
+        let mut b = f1_coeff;
+        b.mul_assign(&eq_poly[i + stride]);
+        a.add_assign(&b);
+        eq_poly[i] = a;
+    }
+
+    let next_len = eq_poly.len() / 2;
+    &mut eq_poly[..next_len]
+}
+
+fn dot_product<F: PrimeField, E: FieldExtension<F> + Field>(
+    a: &[E],
+    b: &[E],
+    worker: &Worker,
+) -> E {
+    // TODO: parallelize
+    assert!(a.len() > 0);
+    assert_eq!(a.len(), b.len());
+
+    dbg!(&a);
+    dbg!(&b);
+
+    let mut result = E::ZERO;
+
+    for (a, b) in a.iter().zip(b.iter()) {
+        let mut t = *a;
+        t.mul_assign(b);
+        result.add_assign(&t);
+    }
+
+    result
+}
+
+fn evaluate_monomial_form<E: Field>(
+    coeffs: &[E],
+    point: &E,
+    worker: &Worker,
+) -> E {
+    // TODO: parallelize
+
+    let mut result = E::ZERO;
+    let mut c = E::ONE;
+
+    for a in coeffs.iter() {
+        let mut t = *a;
+        t.mul_assign(&c);
+        c.mul_assign(point);
+        result.add_assign(&t);
+    }
+
+    result
+}
+
+fn special_lagrange_interpolate<E: Field>(
+    eval_at_0: E,
+    eval_at_1: E,
+    eval_at_random: E,
+    random_point: E,
+) -> [E; 3] {
+    // easier to compute special case than generic
+    let mut coeffs_for_0 = [E::ZERO, E::ZERO, E::ONE];
+    coeffs_for_0[1] = E::ONE;
+    coeffs_for_0[1].add_assign(&random_point);
+    coeffs_for_0[1].negate();
+
+    coeffs_for_0[0] = E::ONE;
+    coeffs_for_0[0].mul_assign(&random_point);
+
+    let mut coeffs_for_1 = [E::ZERO, E::ZERO, E::ONE];
+    coeffs_for_1[1] = E::ZERO;
+    coeffs_for_1[1].add_assign(&random_point);
+    coeffs_for_1[1].negate();
+
+    coeffs_for_1[0] = E::ZERO;
+    coeffs_for_1[0].mul_assign(&random_point);
+
+    let mut coeffs_for_random_point = [E::ZERO, E::ZERO, E::ONE];
+    coeffs_for_random_point[1] = E::ZERO;
+    coeffs_for_random_point[1].add_assign(&E::ONE);
+    coeffs_for_random_point[1].negate();
+
+    coeffs_for_random_point[0] = E::ZERO;
+    coeffs_for_random_point[0].mul_assign(&E::ONE);
+
+    let mut dens = [E::ONE, E::ONE, E::ONE];
+
+    let mut t = E::ZERO;
+    t.sub_assign(&E::ONE);
+    dens[0].mul_assign(&t);
+    let mut t = E::ZERO;
+    t.sub_assign(&random_point);
+    dens[0].mul_assign(&t);
+
+    let mut t = E::ONE;
+    t.sub_assign(&E::ZERO);
+    dens[1].mul_assign(&t);
+    let mut t = E::ONE;
+    t.sub_assign(&random_point);
+    dens[1].mul_assign(&t);
+
+    let mut t = random_point;
+    t.sub_assign(&E::ZERO);
+    dens[2].mul_assign(&t);
+    let mut t = random_point;
+    t.sub_assign(&E::ONE);
+    dens[2].mul_assign(&t);
+
+    let mut buffer = [E::ZERO; 3];
+    batch_inverse_inplace(&mut dens, &mut buffer);
+
+    let mut result = [E::ZERO; 3];
+    for (eval, den, coeffs) in [
+        (eval_at_0, dens[0], coeffs_for_0),
+        (eval_at_1, dens[1], coeffs_for_1),
+        (eval_at_random, dens[2], coeffs_for_random_point),
+    ]
+    .into_iter()
+    {
+        for (i, c) in coeffs.into_iter().enumerate() {
+            let mut t = c;
+            t.mul_assign(&den);
+            t.mul_assign(&eval);
+            result[i].add_assign(&t);
+        }
+    }
+
+    result
+}
+
+fn make_pows<E: Field>(
+    el: E,
+    num_powers: usize
+) -> Vec<E> {
+    let mut result = Vec::with_capacity(num_powers);
+    let mut current = el;
+    for _ in 0..num_powers {
+        result.push(current);
+        current.square();
+    }
+
+    result
+}
+
+fn update_eq_poly<F: PrimeField, E: FieldExtension<F> + Field>(
+    eq_poly: &mut [E],
+    ood_samples: &[(E, E)],
+    in_domain_samples: &[(F, E)],
+) {
+    assert!(eq_poly.len().is_power_of_two());
+    assert_eq!(ood_samples.len(), 1);
+    for (point, challenge) in ood_samples.iter() {
+        let pows = make_pows(*point, eq_poly.len().trailing_zeros() as usize);
+        let eq_polys = make_eq_poly_in_full::<E>(&pows);
+        for (dst, src) in eq_poly.iter_mut().zip(eq_polys.last().unwrap().iter()) {
+            let mut t = *challenge;
+            t.mul_assign(src);
+            dst.add_assign(&t);
+        }
+    }
+    for (point, challenge) in in_domain_samples.iter() {
+        let pows = make_pows(*point, eq_poly.len().trailing_zeros() as usize);
+        let eq_polys = make_eq_poly_in_full::<F>(&pows);
+        for (dst, src) in eq_poly.iter_mut().zip(eq_polys.last().unwrap().iter()) {
+            let mut t = *challenge;
+            t.mul_assign_by_base(src);
+            dst.add_assign(&t);
+        }
+    }
+}
+
+fn evaluate_base_multivariate<F: PrimeField, E: FieldExtension<F> + Field>(evals: &[F], point: &[E]) -> E {
+    let mut eqs = make_eq_poly_in_full::<E>(point);
+    let eq = eqs.pop().unwrap();
+    assert_eq!(eq.len(), evals.len());
+    let mut result = E::ZERO;
+    for (a, b) in eq.iter().zip(evals.iter()) {
+        let mut t = *a;
+        t.mul_assign_by_base(b);
+        result.add_assign(&t);
+    }
+    result
+}
+
+fn evaluate_multivariate<E: Field>(evals: &[E], point: &[E]) -> E {
+    let mut eqs = make_eq_poly_in_full::<E>(point);
+    let eq = eqs.pop().unwrap();
+    assert_eq!(eq.len(), evals.len());
+    let mut result = E::ZERO;
+    for (a, b) in eq.iter().zip(evals.iter()) {
+        let mut t = *a;
+        t.mul_assign(b);
+        result.add_assign(&t);
+    }
+    result
+}
+
+fn evaluate_multivariate_at_base<F: PrimeField, E: FieldExtension<F> + Field>(evals: &[E], point: &[F]) -> E {
+    let mut eqs = make_eq_poly_in_full::<F>(point);
+    let eq = eqs.pop().unwrap();
+    assert_eq!(eq.len(), evals.len());
+    let mut result = E::ZERO;
+    for (a, b) in eq.iter().zip(evals.iter()) {
+        let mut t = *b;
+        t.mul_assign_by_base(a);
+        result.add_assign(&t);
+    }
+    result
+}
 
 #[cfg(test)]
 mod test {
     use std::sync::Arc;
 
-    use field::baby_bear::{base::BabyBearField, ext4::BabyBearExt4};
-    use crate::{gkr::sumcheck::eq_poly::make_eq_poly_in_full, merkle_trees::blake2s_for_everything_tree::Blake2sU32MerkleTreeWithCap};
     use super::*;
     use crate::gkr::prover::stages::stage1::*;
+    use crate::{
+        gkr::sumcheck::eq_poly::make_eq_poly_in_full,
+        merkle_trees::blake2s_for_everything_tree::Blake2sU32MerkleTreeWithCap,
+    };
+    use field::baby_bear::{base::BabyBearField, ext4::BabyBearExt4};
     type F = BabyBearField;
     type E = BabyBearExt4;
 
-    fn make_base_oracle(worker: &Worker) -> ColumnMajorBaseOracleForLDE<F, Blake2sU32MerkleTreeWithCap> {
-        let main_domain = vec![
-            F::from_u32_unchecked(1),
-            F::from_u32_unchecked(2),
-            F::from_u32_unchecked(3),
-            F::from_u32_unchecked(4),
-        ];
-        let twiddles = Twiddles::<F, Global>::new(4, worker);
+    fn make_base_oracle(
+        size: usize,
+        worker: &Worker,
+    ) -> ColumnMajorBaseOracleForLDE<F, Blake2sU32MerkleTreeWithCap> {
+        let main_domain: Vec<F> = (1..=size).map(|el| {
+            F::from_u32_unchecked(el as u32)
+        }).collect();
+        let twiddles = Twiddles::<F, Global>::new(size, worker);
         let main_domain = Arc::new(main_domain.into_boxed_slice());
 
-        let other_domains = compute_column_major_lde_from_main_domain(main_domain.clone(), &twiddles, 2);
+        let other_domains =
+            compute_column_major_lde_from_main_domain(main_domain.clone(), &twiddles, 2);
         let original_values_normal_order = ColumnMajorCosetBoundTracePart {
             column: main_domain,
             offset: F::ONE,
         };
-        let source = Some(original_values_normal_order).into_iter().chain(other_domains.into_iter());
+        let source = Some(original_values_normal_order)
+            .into_iter()
+            .chain(other_domains.into_iter());
 
-        let mut result = ColumnMajorBaseOracleForLDE {
-            cosets: vec![],
-        };
+        let mut result = ColumnMajorBaseOracleForLDE { cosets: vec![] };
         for coset in source {
             let el = ColumnMajorBaseOracleForCoset {
                 original_values_normal_order: vec![coset],
                 tree: <Blake2sU32MerkleTreeWithCap as ColumnMajorMerkleTreeConstructor<F>>::dummy(),
                 values_per_leaf: 2,
-                trace_len_log2: 2,
+                trace_len_log2: size.trailing_zeros() as usize,
             };
             result.cosets.push(el);
         }
@@ -446,51 +912,29 @@ mod test {
         result
     }
 
-    fn evaluate_base_multivarite(evals: &[F], point: &[E]) -> E {
-        let mut eqs = make_eq_poly_in_full::<F, E>(point);
-        let eq = eqs.pop().unwrap();
-        assert_eq!(eq.len(), evals.len());
-        let mut result = E::ZERO;
-        for (a, b) in eq.iter().zip(evals.iter()) {
-            let mut t = *a;
-            t.mul_assign_by_base(b);
-            result.add_assign(&t);
-        }
-        result
-    }
-
-    fn evaluate_multivarite(evals: &[E], point: &[E]) -> E {
-        let mut eqs = make_eq_poly_in_full::<F, E>(point);
-        let eq = eqs.pop().unwrap();
-        assert_eq!(eq.len(), evals.len());
-        let mut result = E::ZERO;
-        for (a, b) in eq.iter().zip(evals.iter()) {
-            let mut t = *a;
-            t.mul_assign(b);
-            result.add_assign(&t);
-        }
-        result
-    }
-
     #[test]
     fn test_whir() {
         let worker = Worker::new_with_num_threads(1);
+        let size = 8;
 
-        let inputs: [_; 3] = std::array::from_fn(|_| {
-            make_base_oracle(&worker)
-        });
+        let inputs: [_; 3] = std::array::from_fn(|_| make_base_oracle(size, &worker));
         let original_evaluation_point = vec![
-            E::from_base(F::from_u32_unchecked(1)),
-            E::from_base(F::from_u32_unchecked(2)),
+            E::from_base(F::from_u32_unchecked(4)),
+            E::from_base(F::from_u32_unchecked(8)),
+            E::from_base(F::from_u32_unchecked(16)),
         ];
         let original_claims = inputs.each_ref().map(|el| {
-            el.cosets[0].original_values_normal_order.iter().map(|el| {
-                let evals = &el.column[..];
-                evaluate_base_multivarite(evals, &original_evaluation_point)
-            }).collect::<Vec<_>>()
+            el.cosets[0]
+                .original_values_normal_order
+                .iter()
+                .map(|el| {
+                    let evals = &el.column[..];
+                    evaluate_base_multivariate(evals, &original_evaluation_point)
+                })
+                .collect::<Vec<_>>()
         });
 
-        let twiddles = Twiddles::<F, Global>::new(4, &worker);
+        let twiddles = Twiddles::<F, Global>::new(size, &worker);
 
         dbg!(&original_claims);
 
@@ -504,8 +948,12 @@ mod test {
             vec![1],
             vec![8],
             &twiddles,
-            2,
-            &worker
+            size.trailing_zeros() as usize,
+            &worker,
         );
     }
 }
+
+// (c0 + c1), (c0 - c1)
+// evaluation point is omega = 1
+// eq = (1 - 1) * (c0 + c1) + 1 * (c0 - c1)
