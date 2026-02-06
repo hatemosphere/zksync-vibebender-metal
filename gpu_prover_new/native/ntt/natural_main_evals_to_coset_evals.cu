@@ -71,9 +71,149 @@ DEVICE_FORCEINLINE void reg_exchg_fwd(bf *vals, const int exchg_region_offset, c
   }
 }
 
+EXTERN __launch_bounds__(256, 3) __global__
+    void ab_main_to_monomials_first_10_stages_tile_8_kernel(bf_matrix_getter<ld_modifier::cg> gmem_in,
+                                                            bf_matrix_setter<st_modifier::cg> gmem_out,
+                                                            const int log_n,
+                                                            const int num_ntts) {
+  constexpr int VALS_PER_THREAD = 32;
+  constexpr int LOG_DATA_TILE_SIZE = 3;
+  constexpr int TILE_SIZE = 1 << LOG_DATA_TILE_SIZE;
+  constexpr int LOG_DATA_TILES_PER_BLOCK = 10;
+  constexpr int THREAD_TILES_PER_BLOCK = 32;
+
+  // TODO: make some of these kernel arguments
+  const int lane_in_tile = threadIdx.x & 7;
+  const int tile_id = threadIdx.x >> LOG_DATA_TILE_SIZE;
+  const int tile_gmem_stride = 1 << (log_n - LOG_DATA_TILES_PER_BLOCK);
+  const int gmem_block_offset = blockIdx.x << LOG_DATA_TILE_SIZE;
+  gmem_in.add_row(gmem_block_offset);
+  gmem_out.add_row(gmem_block_offset);
+
+  extern __shared__ bf smem_block[]; // 8192 * 4 bytes
+
+  const bf *twiddles = ab_inv_twiddles_first_10_stages;
+
+  bf vals[VALS_PER_THREAD];
+
+  // "ct" = consecutive tile layout
+  // "it" = interleaved tile layout
+  const int thread_il_gmem_start = lane_in_tile + tile_id * tile_gmem_stride;
+  const int thread_ct_gmem_start = lane_in_tile + tile_id * tile_gmem_stride * THREAD_TILES_PER_BLOCK;
+  const int thread_il_smem_start = lane_in_tile + tile_id * TILE_SIZE;
+  const int thread_ct_smem_start = lane_in_tile + tile_id * TILE_SIZE * THREAD_TILES_PER_BLOCK;
+
+  const int pipeline_memcpy_thread_il_gmem_start = 4 * (lane_in_tile & 3) + (THREAD_TILES_PER_BLOCK * (lane_in_tile >> 2) + tile_id) * tile_gmem_stride;
+  const int pipeline_memcpy_thread_il_smem_start = 4 * (lane_in_tile & 3) + (THREAD_TILES_PER_BLOCK * (lane_in_tile >> 2) + tile_id) * TILE_SIZE;
+  const int pipeline_memcpy_thread_ct_smem_start = 4 * lane_in_tile + tile_id * TILE_SIZE * THREAD_TILES_PER_BLOCK;
+
+#pragma unroll 1
+  for (int ntt_idx{0}; ntt_idx < num_ntts; ntt_idx++) {
+//     if (ntt_idx > 0) {
+//       __pipeline_wait_prior(0);
+//       __syncwarp(); // necessary because warp prefetches values cooperatively
+//     }
+
+//     if (ntt_idx & 1) {
+// #pragma unroll
+//       for (int i{0}, addr{thread_ct_smem_start}; i < 32; i++, addr += TILE_SIZE)
+//         vals[i] = smem_block[addr]; // read consecutive smem tiles
+// 
+//       reg_exchg_inv<16, 32, 1>(vals, 0, twiddles);
+//       reg_exchg_inv<8, 16, 2>(vals, 0, twiddles);
+//       reg_exchg_inv<4, 8, 4>(vals, 0, twiddles);
+//       reg_exchg_inv<2, 4, 8>(vals, 0, twiddles);
+//       reg_exchg_inv<1, 2, 16>(vals, 0, twiddles);
+// 
+// #pragma unroll
+//       for (int i{0}, addr{thread_ct_smem_start}; i < 32; i++, addr += TILE_SIZE)
+//         smem_block[addr] = vals[i]; // write consecutive smem tiles
+// 
+//       __syncthreads();
+// 
+// #pragma unroll
+//       for (int i{0}, addr{thread_il_smem_start}; i < 32; i++, addr += TILE_SIZE * THREAD_TILES_PER_BLOCK)
+//         vals[i] = smem_block[addr]; // read interleaved smem tiles
+// 
+//       __syncwarp(); // necessary because warp prefetches values cooperatively
+// 
+//       if (ntt_idx < num_ntts - 1) {
+//         gmem_in.inc_col();
+//         const bf *gmem_in_ptr = gmem_in.ptr;
+// #pragma unroll 4 // helps avoid register spilling, should be fine because prefetches are fire and forget
+//         for (int i{0}, addr{pipeline_memcpy_thread_il_smem_start}, row{pipeline_memcpy_thread_il_gmem_start};
+//              i < 8;
+//              i++, addr += 4 * THREAD_TILES_PER_BLOCK * TILE_SIZE, row += 4 * THREAD_TILES_PER_BLOCK * tile_gmem_stride)
+//           __pipeline_memcpy_async(smem_block + addr,  gmem_in_ptr + row, 4 * sizeof(bf)); // interleaved gmem tiles to interleaved smem tiles
+//         __pipeline_commit();
+//       }
+// 
+//       int tile_exchg_region_offset = tile_id;
+//       reg_exchg_inv<16, 32, 1>(vals, tile_exchg_region_offset, twiddles); tile_exchg_region_offset <<= 1;
+//       reg_exchg_inv<8, 16, 2>(vals, tile_exchg_region_offset, twiddles); tile_exchg_region_offset <<= 1;
+//       reg_exchg_inv<4, 8, 4>(vals, tile_exchg_region_offset, twiddles); tile_exchg_region_offset <<= 1;
+//       reg_exchg_inv<2, 4, 8>(vals, tile_exchg_region_offset, twiddles); tile_exchg_region_offset <<= 1;
+//       reg_exchg_inv<1, 2, 16>(vals, tile_exchg_region_offset, twiddles);
+//     } else {
+//       if (ntt_idx == 0) {
+#pragma unroll
+        for (int i{0}, row{thread_il_gmem_start}; i < 32; i++, row += THREAD_TILES_PER_BLOCK * tile_gmem_stride)
+          vals[i] = gmem_in.get_at_row(row); // read initial set of interleaved tiles
+//       } else {
+// #pragma unroll
+//          for (int i{0}, addr{thread_il_smem_start}; i < 32; i++, addr += TILE_SIZE * THREAD_TILES_PER_BLOCK)
+//            vals[i] = smem_block[addr]; // read interleaved smem tiles
+//       }
+
+      reg_exchg_inv<16, 32, 1>(vals, 0, twiddles);
+      reg_exchg_inv<8, 16, 2>(vals, 0, twiddles);
+      reg_exchg_inv<4, 8, 4>(vals, 0, twiddles);
+      reg_exchg_inv<2, 4, 8>(vals, 0, twiddles);
+      reg_exchg_inv<1, 2, 16>(vals, 0, twiddles);
+
+#pragma unroll
+      for (int i{0}, addr{thread_il_smem_start}; i < 32; i++, addr += TILE_SIZE * THREAD_TILES_PER_BLOCK)
+        smem_block[addr] = vals[i]; // write interleaved smem tiles
+
+      __syncthreads();
+
+#pragma unroll
+      for (int i{0}, addr{thread_ct_smem_start}; i < 32; i++, addr += TILE_SIZE)
+        vals[i] = smem_block[addr]; // read consecutive smem tiles
+
+      __syncthreads();
+      // __syncwarp(); // necessary because warp prefetches values cooperatively
+
+//       if (ntt_idx < num_ntts - 1) {
+//         gmem_in.inc_col();
+//         const bf *gmem_in_ptr = gmem_in.ptr;
+// #pragma unroll 4 // helps avoid register spilling, should be fine because prefetches are fire and forget
+//         for (int i{0}, addr{pipeline_memcpy_thread_ct_smem_start}, row{pipeline_memcpy_thread_il_gmem_start};
+//              i < 8;
+//              i++, addr += 4 * TILE_SIZE, row += 4 * THREAD_TILES_PER_BLOCK * tile_gmem_stride)
+//           __pipeline_memcpy_async(smem_block + addr,  gmem_in_ptr + row, 4 * sizeof(bf)); // interleaved gmem tiles to consecutive smem tiles
+//         __pipeline_commit();
+//       }
+
+      int tile_exchg_region_offset = tile_id;
+      reg_exchg_inv<16, 32, 1>(vals, tile_exchg_region_offset, twiddles); tile_exchg_region_offset <<= 1;
+      reg_exchg_inv<8, 16, 2>(vals, tile_exchg_region_offset, twiddles); tile_exchg_region_offset <<= 1;
+      reg_exchg_inv<4, 8, 4>(vals, tile_exchg_region_offset, twiddles); tile_exchg_region_offset <<= 1;
+      reg_exchg_inv<2, 4, 8>(vals, tile_exchg_region_offset, twiddles); tile_exchg_region_offset <<= 1;
+      reg_exchg_inv<1, 2, 16>(vals, tile_exchg_region_offset, twiddles);
+//     }
+
+#pragma unroll
+    for (int i{0}, row{thread_ct_gmem_start}; i < 32; i++, row += tile_gmem_stride)
+      gmem_out.set_at_row(row, vals[i]); // write consecutive gmem tiles
+    gmem_out.inc_col();
+
+    gmem_in.inc_col();
+  }
+}
+
 EXTERN __launch_bounds__(512, 1) __global__
     void ab_main_to_monomials_first_10_stages_kernel(bf_matrix_getter<ld_modifier::cg> gmem_in,
-                                                      // bf_matrix_setter<st_modifier::cs> gmem_monomials_out,
                                                       bf_matrix_setter<st_modifier::cg> gmem_out,
                                                       const int log_n,
                                                       const int num_ntts) {

@@ -30,6 +30,7 @@ cuda_kernel!(
 );
 
 main_to_monomials_first_10_stages!(ab_main_to_monomials_first_10_stages_kernel);
+main_to_monomials_first_10_stages!(ab_main_to_monomials_first_10_stages_tile_8_kernel);
 
 cuda_kernel!(
     MainToCosetMiddle28Stages,
@@ -61,9 +62,11 @@ pub fn main_to_coset(
     let inputs_matrix = inputs_matrix.as_ptr_and_stride();
     let outputs_matrix_const = outputs_matrix.as_ptr_and_stride();
     let outputs_matrix_mut = outputs_matrix.as_mut_ptr_and_stride();
-    let BF_VALS_PER_BLOCK = 16384;
+    // let BF_VALS_PER_BLOCK = 16384;
+    let BF_VALS_PER_BLOCK = 8192;
     let smem_bytes = BF_VALS_PER_BLOCK * size_of::<BF>();
-    let threads = 512;
+    // let threads = 512;
+    let threads = 256;
     let blocks = n.get_chunks_count(BF_VALS_PER_BLOCK);
     let mut config = CudaLaunchConfig::basic(blocks as u32, threads as u32, stream);
     config.dynamic_smem_bytes = smem_bytes;
@@ -73,7 +76,8 @@ pub fn main_to_coset(
         log_n as i32,
         num_ntts as i32,
     );
-    let function = MainToMonomialsFirst10StagesFunction(ab_main_to_monomials_first_10_stages_kernel);
+    // let function = MainToMonomialsFirst10StagesFunction(ab_main_to_monomials_first_10_stages_kernel);
+    let function = MainToMonomialsFirst10StagesFunction(ab_main_to_monomials_first_10_stages_tile_8_kernel);
     let func_ptr = function.as_ptr(); 
     unsafe {
         cudaFuncSetAttribute(

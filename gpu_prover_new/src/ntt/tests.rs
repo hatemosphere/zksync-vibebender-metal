@@ -158,5 +158,5 @@ fn run_main_to_coset(
 #[test]
 #[serial]
 fn test_main_to_coset() {
-    run_main_to_coset(24..25, 1);
+    run_main_to_coset(24..25, 6);
 }
