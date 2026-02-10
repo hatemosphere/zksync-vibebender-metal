@@ -1,4 +1,5 @@
 #![cfg_attr(not(feature = "prover"), no_std)]
+#![allow(warnings)]
 #![allow(incomplete_features)]
 #![feature(generic_const_exprs)]
 #![feature(allocator_api)]

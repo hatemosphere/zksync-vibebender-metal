@@ -8,8 +8,10 @@ use worker::WorkerGeometry;
 
 use super::*;
 use crate::fft::Twiddles;
-use crate::gkr::prover::setup::GKRSetupPrecomputations;
+use crate::gkr::prover::setup::GKRSetup;
+use crate::gkr::prover::stages::stage1;
 use crate::gkr::sumcheck::access_and_fold::GKRStorage;
+use crate::gkr::whir::ColumnMajorBaseOracleForLDE;
 use crate::gkr::witness_gen::family_circuits::GKRFullWitnessTrace;
 use crate::merkle_trees::ColumnMajorMerkleTreeConstructor;
 use crate::merkle_trees::MerkleTreeCapVarLength;
@@ -21,6 +23,9 @@ pub mod forward_loop;
 pub mod setup;
 pub mod stages;
 pub mod sumcheck_loop;
+
+pub(crate) struct SendPtr<T: Sized>(*mut T);
+unsafe impl<T: Send + Sync> Send for SendPtr<T> {}
 
 #[derive(
     Clone, Copy, Debug, Hash, Default, serde::Serialize, serde::Deserialize, PartialEq, Eq,
@@ -133,15 +138,19 @@ pub fn prove_configured_with_gkr<
     compiled_circuit: &GKRCircuitArtifact<F>,
     external_challenges: &GKRExternalChallenges<F, E>,
     witness_eval_data: GKRFullWitnessTrace<F, Global, Global>,
-    setup_precomputations: &GKRSetupPrecomputations<F, T>,
-    precomputations: &Twiddles<F, Global>,
-    // TODO: Column major LDE precomputations
+    setup: &GKRSetup<F>,
+    setup_commitment: &ColumnMajorBaseOracleForLDE<F, T>,
+    twiddles: &Twiddles<F, Global>,
     lde_factor: usize,
     num_queries: usize,
     pow_bits: u32,
     trace_len: usize,
     worker: &Worker,
-) -> (GKRProverData<F, E, T>, GKRProof<F, E>) {
+) -> (GKRProverData<F, E, T>, GKRProof<F, E>)
+where
+    [(); F::DEGREE]: Sized,
+    [(); E::DEGREE]: Sized,
+{
     assert_eq!(compiled_circuit.trace_len, trace_len);
     assert_eq!(
         witness_eval_data.column_major_memory_trace[0].len(),
@@ -149,6 +158,15 @@ pub fn prove_configured_with_gkr<
     );
 
     // first we would commit to the witness - WHIR commitment itself is just the same as FRI commitment
+    let (mem_oracle, wit_oracle) = stage1::stage1::<F, T>(
+        &witness_eval_data,
+        twiddles,
+        lde_factor,
+        lde_factor.trailing_zeros() as usize,
+        1,
+        trace_len.trailing_zeros() as usize,
+        worker,
+    );
 
     // now we need to draw prove-local challenges, and in our case it's just a challenge for lookups, and challenge to batch all constraints
     let [lookup_alpha, lookup_additive_part, constraints_batch_challenge] = [
@@ -164,7 +182,7 @@ pub fn prove_configured_with_gkr<
         preprocessed_range_check_16,
         preprocessed_timestamp_range_checks,
         preprocessed_generic_lookup,
-    ) = setup_precomputations.preprocess_lookups(
+    ) = setup.preprocess_lookups(
         compiled_circuit,
         lookup_alpha,
         lookup_additive_part,

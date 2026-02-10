@@ -133,7 +133,7 @@ pub trait BaseField<const N: usize>: Field {
     }
 }
 
-pub trait FieldExtension<BaseField: Field> {
+pub trait FieldExtension<BaseField: Field>: 'static + Clone + Copy + Send + Sync {
     const DEGREE: usize;
     fn mul_assign_by_base(&mut self, elem: &BaseField) -> &mut Self;
     fn into_coeffs_in_base(self) -> [BaseField; Self::DEGREE];

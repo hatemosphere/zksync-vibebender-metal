@@ -2,29 +2,34 @@ use field::{Field, FieldExtension, TwoAdicField};
 
 use super::*;
 
-pub fn make_eq_poly_reduced<E: Field>(previous_round_challenges: &[E]) -> Vec<Box<[E]>> {
-    assert!(previous_round_challenges.len() > 1);
+pub fn make_eq_poly_impl<E: Field, const FULL: bool>(challenges: &[E]) -> Vec<Box<[E]>> {
+    assert!(challenges.len() > 0);
     // challenges[0] is the challenge used to fold a variable, that is encoded as MSB in the values enumeration,
     // and we will produce the outputs in a same form. We also keep all intermediate forms for simplicity
-    let mut result = Vec::with_capacity(previous_round_challenges.len() + 1);
+    let mut result = Vec::with_capacity(challenges.len() + 1);
     result.push(vec![E::ONE].into_boxed_slice());
 
-    let mut size = 2;
-    let mut idx = previous_round_challenges.len() - 1;
-    let f1 = previous_round_challenges[idx];
-    let mut f0 = E::ONE;
-    f0.sub_assign(&f1);
-    let layer = vec![f0, f1].into_boxed_slice();
-    result.push(layer);
-    for _ in 2..previous_round_challenges.len() {
+    let mut size = 1;
+    let mut idx = challenges.len();
+
+    let bound = if FULL {
+        challenges.len() + 1
+    } else {
+        challenges.len()
+    };
+
+    for _ in 1..bound {
         size *= 2;
         idx -= 1;
+
+        let challenge = challenges[idx];
+
         let mut layer = Box::new_uninit_slice(size);
         let previous_layer = result.last().expect("is present");
 
-        let f1 = previous_round_challenges[idx];
+        let f1 = challenge;
         let mut f0 = E::ONE;
-        f0.sub_assign(&f1);
+        f0.sub_assign(&challenge);
 
         let half_size = size / 2;
 
@@ -45,35 +50,12 @@ pub fn make_eq_poly_reduced<E: Field>(previous_round_challenges: &[E]) -> Vec<Bo
     result
 }
 
-pub fn make_eq_poly_in_full<E: Field>(previous_round_challenges: &[E]) -> Vec<Box<[E]>> {
-    let mut result = make_eq_poly_reduced(previous_round_challenges);
-    assert_eq!(result.len(), previous_round_challenges.len());
+pub fn make_eq_poly_reduced<E: Field>(challenges: &[E]) -> Vec<Box<[E]>> {
+    make_eq_poly_impl::<E, false>(challenges)
+}
 
-    {
-        let previous_layer = result.last().expect("is present");
-        let size = previous_layer.len() * 2;
-        let mut layer = Box::new_uninit_slice(size);
-
-        let f1 = previous_round_challenges[0];
-        let mut f0 = E::ONE;
-        f0.sub_assign(&f1);
-
-        let half_size = size / 2;
-
-        assert_eq!(previous_layer.len(), half_size);
-
-        for index in 0..half_size {
-            let mut left = previous_layer[index];
-            let mut right = left;
-            left.mul_assign(&f0);
-            right.mul_assign(&f1);
-            layer[index].write(left);
-            layer[index + half_size].write(right);
-        }
-        result.push(unsafe { layer.assume_init() });
-    }
-
-    result
+pub fn make_eq_poly_in_full<E: Field>(challenges: &[E]) -> Vec<Box<[E]>> {
+    make_eq_poly_impl::<E, true>(challenges)
 }
 
 // Domain equality polys

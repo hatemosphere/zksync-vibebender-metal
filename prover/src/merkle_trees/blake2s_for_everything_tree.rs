@@ -103,7 +103,7 @@ impl<B: GoodAllocator> MerkleTreeConstructor for Blake2sU32MerkleTreeWithCap<B> 
     fn dump_caps(caps: &[Self]) -> Vec<MerkleTreeCapVarLength> {
         let mut result = Vec::with_capacity(caps.len());
         for el in caps.iter() {
-            result.push(el.get_cap());
+            result.push(<Self as MerkleTreeConstructor>::get_cap(el));
         }
 
         result
@@ -205,73 +205,6 @@ impl<A: GoodAllocator> Blake2sU32MerkleTreeWithCap<A> {
     }
 }
 
-// #[cfg(test)]
-// mod tests {
-//     use super::*;
-//     use fft::CACHE_LINE_MULTIPLE;
-
-//     #[test]
-//     fn test_constructing_separate_merkle_trees() {
-//         const LENGTH: usize = 1 << 22;
-//         const WIDTH1: usize = 34;
-//         const WIDTH2: usize = 75;
-//         const BIG_WIDTH: usize = WIDTH1 + WIDTH2;
-//         const CAP_SIZE: usize = 32;
-
-//         let worker = Worker::new();
-
-//         let big_trace = RowMajorTrace::new_zeroed_for_size(LENGTH, BIG_WIDTH, Global::default());
-//         let trace1 = RowMajorTrace::new_zeroed_for_size(LENGTH, WIDTH1, Global::default());
-//         let trace2 = RowMajorTrace::new_zeroed_for_size(LENGTH, WIDTH2, Global::default());
-
-//         let mut view1 = trace1.row_view(0..LENGTH);
-//         let mut view2 = trace2.row_view(0..LENGTH);
-//         let mut big_view = big_trace.row_view(0..LENGTH);
-
-//         for _ in 0..LENGTH {
-//             let slice = get_random_slice(BIG_WIDTH);
-
-//             view1.current_row().copy_from_slice(&slice[..WIDTH1]);
-//             view2.current_row().copy_from_slice(&slice[WIDTH1..]);
-//             big_view.current_row().copy_from_slice(&slice);
-
-//             view1.advance_row();
-//             view2.advance_row();
-//             big_view.advance_row();
-//         }
-
-//         let big_res = Blake2sU32MerkleTreeWithCap::construct_separate_for_coset::<
-//             CACHE_LINE_MULTIPLE,
-//         >(&big_trace, &[WIDTH1, BIG_WIDTH], CAP_SIZE, true, &worker);
-
-//         let res1 = Blake2sU32MerkleTreeWithCap::construct_for_coset::<CACHE_LINE_MULTIPLE>(
-//             &trace1, CAP_SIZE, true, &worker,
-//         );
-
-//         let res2 = Blake2sU32MerkleTreeWithCap::construct_for_coset::<CACHE_LINE_MULTIPLE>(
-//             &trace2, CAP_SIZE, true, &worker,
-//         );
-
-//         for _ in 0..9 {
-//             let _res2 = Blake2sU32MerkleTreeWithCap::construct_for_coset::<CACHE_LINE_MULTIPLE>(
-//                 &trace2, CAP_SIZE, true, &worker,
-//             );
-//         }
-
-//         assert_eq!(res1.get_cap_ref(), big_res[0].get_cap_ref());
-//         assert_eq!(res2.get_cap_ref(), big_res[1].get_cap_ref());
-//     }
-
-//     fn get_random_slice(len: usize) -> Vec<Mersenne31Field> {
-//         use rand::Rng;
-//         let mut rng = rand::thread_rng();
-
-//         (0..len)
-//             .map(|_| Mersenne31Field::from_u64(rng.gen_range(0..(1 << 31) - 1)).unwrap())
-//             .collect()
-//     }
-// }
-
 impl<F: PrimeField, B: GoodAllocator> ColumnMajorMerkleTreeConstructor<F>
     for Blake2sU32MerkleTreeWithCap<B>
 {
@@ -283,5 +216,70 @@ impl<F: PrimeField, B: GoodAllocator> ColumnMajorMerkleTreeConstructor<F>
             leaf_hashes: Vec::new_in(B::default()),
             node_hashes_enumerated_from_leafs: vec![],
         }
+    }
+
+    fn get_cap(&self) -> MerkleTreeCapVarLength {
+        let output = if let Some(cap) = self.node_hashes_enumerated_from_leafs.last() {
+            let mut result = Vec::new();
+            result.extend_from_slice(cap);
+
+            result
+        } else {
+            let mut result = Vec::new();
+            result.extend_from_slice(&self.leaf_hashes);
+
+            result
+        };
+
+        MerkleTreeCapVarLength { cap: output }
+    }
+
+    fn get_proof<C: GoodAllocator>(
+        &self,
+        idx: usize,
+    ) -> (
+        [u32; DIGEST_SIZE_U32_WORDS],
+        Vec<[u32; DIGEST_SIZE_U32_WORDS], C>,
+    ) {
+        let depth = self.node_hashes_enumerated_from_leafs.len(); // we do not need the element of the cap
+        let mut result = Vec::with_capacity_in(depth, C::default());
+        let mut idx = idx;
+        let this_el_leaf_hash = self.leaf_hashes[idx];
+        for i in 0..depth {
+            let pair_idx = idx ^ 1;
+            let proof_element = if i == 0 {
+                self.leaf_hashes[pair_idx]
+            } else {
+                self.node_hashes_enumerated_from_leafs[i - 1][pair_idx]
+            };
+
+            result.push(proof_element);
+            idx >>= 1;
+        }
+
+        (this_el_leaf_hash, result)
+    }
+
+    fn construct_for_column_major_coset<E: FieldExtension<F>, A: GoodAllocator>(
+        trace: &[&[E]],
+        combine_by: usize,
+        cap_size: usize,
+        bitreverse_input: bool,
+        bitreverse_output: bool,
+        worker: &Worker,
+    ) -> Self
+    where
+        [(); E::DEGREE]: Sized,
+    {
+        use crate::merkle_trees::blake2s_hash_leafs::blake2s_leaf_hashes_from_columns;
+        let leaf_hashes = blake2s_leaf_hashes_from_columns::<F, E, A, _>(
+            trace,
+            combine_by,
+            bitreverse_input,
+            bitreverse_output,
+            worker,
+        );
+
+        Self::continue_from_leaf_hashes(leaf_hashes, cap_size, worker)
     }
 }

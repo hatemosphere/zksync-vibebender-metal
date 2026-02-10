@@ -12,7 +12,7 @@ use cs::machine::ops::unrolled::opcodes_for_full_machine_with_mem_word_access_sp
 use cs::machine::ops::unrolled::opcodes_for_full_machine_with_unsigned_mul_div_only_with_mem_word_access_specialization;
 
 use crate::gkr::prover::prove_configured_with_gkr;
-use crate::gkr::prover::setup::GKRSetupPrecomputations;
+use crate::gkr::prover::setup::GKRSetup;
 use crate::gkr::prover::GKRExternalChallenges;
 use crate::gkr::witness_gen::family_circuits::evaluate_gkr_memory_witness_for_executor_family;
 use crate::gkr::witness_gen::family_circuits::evaluate_gkr_witness_for_executor_family;
@@ -407,15 +407,19 @@ pub fn gkr_run_basic_unrolled_test_impl(
             // let lde_precomputations =
             //     LdePrecomputations::new(trace_len, lde_factor, &[0, 1], &worker);
             println!("Preparing setup");
-            let setup = GKRSetupPrecomputations::from_tables_and_trace_len_with_decoder_table(
+            let setup = GKRSetup::construct(
                 &TableDriver::new(),
                 &decoder_table_data,
                 trace_len,
                 &add_sub_circuit,
+            );
+
+            let setup_commitment = setup.commit(
                 &twiddles,
-                lde_factor,
-                tree_cap_size,
                 2,
+                1,
+                tree_cap_size,
+                trace_len.trailing_zeros() as usize,
                 &worker,
             );
 
@@ -434,6 +438,7 @@ pub fn gkr_run_basic_unrolled_test_impl(
                     &external_challenges,
                     full_trace,
                     &setup,
+                    &setup_commitment,
                     &twiddles,
                     lde_factor,
                     53,

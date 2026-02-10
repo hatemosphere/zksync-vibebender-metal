@@ -13,112 +13,17 @@ use fft::{materialize_powers_serial_starting_with_one, GoodAllocator};
 use field::batch_inverse_checked;
 use std::sync::Arc;
 
-pub struct GKRSetupPrecomputations<
-    F: PrimeField + TwoAdicField,
-    T: ColumnMajorMerkleTreeConstructor<F>,
-> {
-    pub cosets: Vec<ColumnMajorBaseOracleForCoset<F, T>>,
+pub struct GKRSetup<F: PrimeField + TwoAdicField> {
+    pub hypercube_evals: Vec<Box<[F]>>,
 }
 
-impl<F: PrimeField + TwoAdicField, T: ColumnMajorMerkleTreeConstructor<F>>
-    GKRSetupPrecomputations<F, T>
-{
-    pub fn from_tables_and_trace_len(
-        table_driver: &TableDriver<F>,
-        trace_len: usize,
-        compiled_circuit: &GKRCircuitArtifact<F>,
-        twiddles: &Twiddles<F, Global>,
-        // lde_precomputations: &LdePrecomputations<A>,
-        lde_factor: usize,
-        tree_cap_size: usize,
-        values_per_leaf: usize,
-        worker: &Worker,
-    ) -> Self {
-        Self::from_tables_and_trace_len_with_decoder_table(
-            table_driver,
-            &[],
-            trace_len,
-            compiled_circuit,
-            twiddles,
-            // lde_precomputations,
-            lde_factor,
-            tree_cap_size,
-            values_per_leaf,
-            worker,
-        )
-    }
-
-    pub fn from_tables_and_trace_len_with_decoder_table(
+impl<F: PrimeField + TwoAdicField> GKRSetup<F> {
+    pub fn construct(
         table_driver: &TableDriver<F>,
         decoder_table: &[Option<DecoderTableEntry<F>>],
         trace_len: usize,
         compiled_circuit: &GKRCircuitArtifact<F>,
-        twiddles: &Twiddles<F, Global>,
-        // lde_precomputations: &LdePrecomputations<A>,
-        lde_factor: usize,
-        tree_cap_size: usize,
-        values_per_leaf: usize,
-        worker: &Worker,
     ) -> Self {
-        assert!(trace_len.is_power_of_two());
-
-        let optimal_folding =
-            crate::definitions::OPTIMAL_FOLDING_PROPERTIES[trace_len.trailing_zeros() as usize];
-        let subtree_cap_size = (1 << optimal_folding.total_caps_size_log2) / lde_factor;
-        assert!(subtree_cap_size > 0);
-
-        let main_domain_trace = Self::get_main_domain_trace(
-            table_driver,
-            decoder_table,
-            trace_len,
-            compiled_circuit,
-            // worker,
-        );
-        let trace_len_log2 = trace_len.trailing_zeros() as usize;
-
-        let main_domain = ColumnMajorBaseOracleForCoset {
-            original_values_normal_order: main_domain_trace,
-            tree: T::dummy(), // TODO
-            values_per_leaf,
-            trace_len_log2,
-        };
-
-        Self {
-            cosets: vec![main_domain],
-        }
-
-        // // NOTE: we do not use last row of the setup (and in general last of of circuit),
-        // // and we must adjust it to be c0 == 0
-        // adjust_to_zero_c0_var_length(&mut main_domain_trace, 0..setup_layout.total_width, worker);
-
-        // // LDE them
-        // let ldes = compute_wide_ldes(
-        //     main_domain_trace,
-        //     twiddles,
-        //     lde_precomputations,
-        //     0,
-        //     lde_factor,
-        //     worker,
-        // );
-
-        // assert_eq!(ldes.len(), lde_factor);
-
-        // let mut trees = Vec::with_capacity(lde_factor);
-        // for domain in ldes.iter() {
-        //     let tree = T::construct_for_coset(&domain.trace, subtree_cap_size, true, worker);
-        //     trees.push(tree);
-        // }
-
-        // Self { ldes, trees }
-    }
-
-    pub fn get_main_domain_trace(
-        table_driver: &TableDriver<F>,
-        decoder_table: &[Option<DecoderTableEntry<F>>],
-        trace_len: usize,
-        compiled_circuit: &GKRCircuitArtifact<F>,
-        // worker: &Worker,
-    ) -> Vec<ColumnMajorCosetBoundTracePart<F, F>> {
         // we always have range-check 16 bits and timestamp limbs
         let total_width = 2 + compiled_circuit.generic_lookup_tables_width;
 
@@ -206,13 +111,9 @@ impl<F: PrimeField + TwoAdicField, T: ColumnMajorMerkleTreeConstructor<F>>
             }
         }
 
-        result
-            .into_iter()
-            .map(|el| ColumnMajorCosetBoundTracePart {
-                column: Arc::new(el),
-                offset: F::ONE,
-            })
-            .collect()
+        Self {
+            hypercube_evals: result,
+        }
     }
 
     pub fn preprocess_lookups<E: FieldExtension<F> + Field>(
@@ -279,10 +180,10 @@ impl<F: PrimeField + TwoAdicField, T: ColumnMajorMerkleTreeConstructor<F>>
         assert!(trace_len >= generic_lookup_tables_size);
 
         if generic_lookup_tables_size > 0 {
-            assert!(self.cosets[0].original_values_normal_order.len() > 2);
+            assert!(self.hypercube_evals.len() > 2);
             let challenge_powers = materialize_powers_serial_starting_with_one::<E, Global>(
                 lookup_alpha,
-                self.cosets[0].original_values_normal_order.len() - 2,
+                self.hypercube_evals.len() - 2,
             );
 
             let mut generic_lookup_preprocessing = Vec::with_capacity_in(trace_len, A::default());
@@ -307,7 +208,7 @@ impl<F: PrimeField + TwoAdicField, T: ColumnMajorMerkleTreeConstructor<F>>
                                 let absolute_row_idx = chunk_start + i;
 
                                 for column in 0..compiled_circuit.generic_lookup_tables_width {
-                                    buffer[column] = self.cosets[0].original_values_normal_order[2 + column].column[absolute_row_idx];
+                                    buffer[column] = self.hypercube_evals[2 + column][absolute_row_idx];
                                 }
 
                                 let denom = compute_aggregated_key_value_dyn(
@@ -447,5 +348,31 @@ impl<F: PrimeField + TwoAdicField, T: ColumnMajorMerkleTreeConstructor<F>>
         }
 
         timestamp_range_check_preprocessing.into_boxed_slice()
+    }
+
+    pub fn commit<T: ColumnMajorMerkleTreeConstructor<F>>(
+        &self,
+        twiddles: &Twiddles<F, Global>,
+        lde_factor: usize,
+        whir_first_fold_step_log2: usize,
+        tree_cap_size: usize,
+        trace_len_log2: usize,
+        worker: &Worker,
+    ) -> ColumnMajorBaseOracleForLDE<F, T>
+    where
+        [(); F::DEGREE]: Sized,
+    {
+        let inputs: Vec<_> = self.hypercube_evals.iter().map(|el| &el[..]).collect();
+        use crate::gkr::prover::stage1::commit_trace_part;
+
+        commit_trace_part(
+            &inputs,
+            twiddles,
+            lde_factor,
+            whir_first_fold_step_log2,
+            tree_cap_size,
+            trace_len_log2,
+            worker,
+        )
     }
 }

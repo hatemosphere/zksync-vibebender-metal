@@ -4,6 +4,7 @@ use crate::definitions::{LeafInclusionVerifier, MerkleTreeCap, DIGEST_SIZE_U32_W
 const USE_REDUCED_BLAKE2_ROUNDS: bool = true;
 
 use fft::GoodAllocator;
+use field::FieldExtension;
 use field::Mersenne31Field;
 use field::Mersenne31Quartic;
 use field::PrimeField;
@@ -92,30 +93,18 @@ pub trait ColumnMajorMerkleTreeConstructor<F: PrimeField>:
 
     fn dummy() -> Self;
 
-    // fn construct_for_coset<A: GoodAllocator, const N: usize>(
-    //     trace: &RowMajorTrace<Mersenne31Field, N, A>,
-    //     cap_size: usize,
-    //     bitreverse: bool,
-    //     worker: &Worker,
-    // ) -> Self;
+    fn construct_for_column_major_coset<E: FieldExtension<F>, A: GoodAllocator>(
+        trace: &[&[E]],
+        combine_by: usize,
+        cap_size: usize,
+        bitreverse_input: bool,
+        bitreverse_output: bool,
+        worker: &Worker,
+    ) -> Self
+    where
+        [(); E::DEGREE]: Sized;
 
-    // fn construct_separated_for_coset<A: GoodAllocator, const N: usize>(
-    //     trace: &RowMajorTrace<Mersenne31Field, N, A>,
-    //     separators: &[usize],
-    //     cap_size: usize,
-    //     bitreverse: bool,
-    //     worker: &Worker,
-    // ) -> Vec<Self>;
-
-    // fn construct_for_column_major_coset<A: GoodAllocator>(
-    //     trace: &ColumnMajorTrace<Mersenne31Quartic, A>,
-    //     combine_by: usize,
-    //     cap_size: usize,
-    //     bitreverse: bool,
-    //     worker: &Worker,
-    // ) -> Self;
-
-    // fn get_cap(&self) -> MerkleTreeCapVarLength;
+    fn get_cap(&self) -> MerkleTreeCapVarLength;
 
     // fn dump_caps(caps: &[Self]) -> Vec<MerkleTreeCapVarLength> {
     //     let mut result = Vec::with_capacity(caps.len());
@@ -126,11 +115,11 @@ pub trait ColumnMajorMerkleTreeConstructor<F: PrimeField>:
     //     result
     // }
 
-    // fn get_proof<C: GoodAllocator>(
-    //     &self,
-    //     idx: usize,
-    // ) -> (
-    //     [u32; HASH_SIZE_U32_WORDS],
-    //     Vec<[u32; HASH_SIZE_U32_WORDS], C>,
-    // );
+    fn get_proof<C: GoodAllocator>(
+        &self,
+        idx: usize,
+    ) -> (
+        [u32; DIGEST_SIZE_U32_WORDS],
+        Vec<[u32; DIGEST_SIZE_U32_WORDS], C>,
+    );
 }

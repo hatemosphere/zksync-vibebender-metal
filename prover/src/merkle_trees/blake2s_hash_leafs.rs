@@ -1,3 +1,5 @@
+use crate::gkr::whir::offsets_vec_for_leaf_construction;
+
 use super::*;
 use blake2s_u32::*;
 use fft::bitreverse_enumeration_inplace;
@@ -367,6 +369,143 @@ pub fn blake2s_leaf_hashes_for_column_major_coset<A: GoodAllocator, B: GoodAlloc
     );
 
     if bitreverse {
+        bitreverse_enumeration_inplace(&mut leaf_hashes);
+    }
+
+    leaf_hashes
+}
+
+pub fn blake2s_leaf_hashes_from_columns<
+    F: PrimeField,
+    E: FieldExtension<F>,
+    A: GoodAllocator,
+    B: GoodAllocator,
+>(
+    trace: &[&[E]],
+    combine_by: usize,
+    bitreverse_input: bool,
+    bitreverse_output_leaf_hashes: bool,
+    worker: &Worker,
+) -> Vec<[u32; BLAKE2S_DIGEST_SIZE_U32_WORDS], B>
+where
+    [(); E::DEGREE]: Sized,
+{
+    let num_columns = trace.len();
+    let trace_len = trace[0].len();
+    assert!(combine_by.is_power_of_two());
+    assert_eq!(trace_len % combine_by, 0);
+
+    for el in trace.iter() {
+        assert_eq!(el.len(), trace_len);
+    }
+
+    #[cfg(feature = "timing_logs")]
+    let now = std::time::Instant::now();
+
+    let tree_size = trace_len / combine_by;
+    assert!(tree_size.is_power_of_two());
+
+    #[cfg(feature = "timing_logs")]
+    let elements_per_leaf = trace.width();
+
+    let leaf_width_in_field_elements = combine_by * num_columns * E::DEGREE;
+
+    let num_full_roudns = leaf_width_in_field_elements / BLAKE2S_BLOCK_SIZE_U32_WORDS;
+    let remainder = leaf_width_in_field_elements % BLAKE2S_BLOCK_SIZE_U32_WORDS;
+    let only_full_rounds = remainder == 0;
+
+    // simplest job ever - compute by layers with parallelism
+    // To prevent to complex parallelism we will work over each individual coset
+
+    let mut leaf_hashes = Vec::with_capacity_in(tree_size, B::default());
+
+    if bitreverse_input {
+        let offsets = offsets_vec_for_leaf_construction(trace_len, combine_by);
+        let offsets_ref = &offsets[..];
+
+        unsafe {
+            worker.scope(tree_size, |scope, geometry| {
+                let mut dst = &mut leaf_hashes.spare_capacity_mut()[..tree_size];
+                for thread_idx in 0..geometry.len() {
+                    let chunk_size = geometry.get_chunk_size(thread_idx);
+                    let chunk_start = geometry.get_chunk_start_pos(thread_idx);
+
+                    let src_range = chunk_start..(chunk_start + chunk_size);
+                    let (dst_chunk, rest) = dst.split_at_mut_unchecked(chunk_size);
+                    dst = rest;
+
+                    Worker::smart_spawn(scope, thread_idx == geometry.len() - 1, move |_| {
+                        let mut dst_ptr = dst_chunk.as_mut_ptr();
+                        let mut hasher = Blake2sState::new();
+                        let mut buffer = Vec::with_capacity(leaf_width_in_field_elements);
+                        for i in src_range {
+                            hasher.reset();
+                            buffer.clear();
+                            for column in trace.iter() {
+                                for offset in offsets_ref.iter() {
+                                    let el = column[i + *offset];
+                                    let as_base = el
+                                        .into_coeffs_in_base()
+                                        .map(|el| el.as_u32_raw_repr_reduced());
+                                    buffer.extend(as_base);
+                                }
+                            }
+                            debug_assert_eq!(buffer.len(), leaf_width_in_field_elements);
+
+                            let (chunks, remainder) =
+                                buffer.as_chunks::<BLAKE2S_BLOCK_SIZE_U32_WORDS>();
+                            let mut chunks = chunks.iter();
+
+                            let write_into = (&mut *dst_ptr).assume_init_mut();
+                            for i in 0..num_full_roudns {
+                                let last_round = i == num_full_roudns - 1;
+                                let block = chunks.next().unwrap_unchecked();
+
+                                if last_round && only_full_rounds {
+                                    hasher.absorb_final_block::<USE_REDUCED_BLAKE2_ROUNDS>(
+                                        block,
+                                        BLAKE2S_BLOCK_SIZE_U32_WORDS,
+                                        write_into,
+                                    );
+                                } else {
+                                    hasher.absorb::<USE_REDUCED_BLAKE2_ROUNDS>(&block);
+                                }
+                            }
+
+                            if only_full_rounds == false {
+                                let mut block = [0u32; BLAKE2S_BLOCK_SIZE_U32_WORDS];
+                                let len = remainder.len();
+                                block[..len].copy_from_slice(remainder);
+                                hasher.absorb_final_block::<USE_REDUCED_BLAKE2_ROUNDS>(
+                                    &block, len, write_into,
+                                );
+                            }
+
+                            dst_ptr = dst_ptr.add(1);
+                        }
+                    });
+                }
+
+                assert!(dst.is_empty());
+            });
+
+            leaf_hashes.set_len(tree_size)
+        };
+    } else {
+        // we just need continuous pieces
+
+        todo!();
+    }
+
+    #[cfg(feature = "timing_logs")]
+    println!(
+        "Merkle tree of size 2^{} leaf hashes taken {:?} for {} elements per leaf",
+        tree_size.trailing_zeros(),
+        now.elapsed(),
+        elements_per_leaf,
+    );
+
+    if bitreverse_output_leaf_hashes {
         bitreverse_enumeration_inplace(&mut leaf_hashes);
     }
 

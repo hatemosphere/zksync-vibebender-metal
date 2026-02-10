@@ -1,4 +1,5 @@
 use super::*;
+use crate::gkr::whir::{hypercube_to_monomial, ColumnMajorBaseOracleForLDE};
 use fft::Twiddles;
 use fft::{
     bitreverse_enumeration_inplace, distribute_powers_serial, domain_generator_for_size,
@@ -6,6 +7,7 @@ use fft::{
 };
 use field::{Field, FieldExtension, PrimeField, TwoAdicField};
 use std::sync::Arc;
+use trace_holder::SendSyncPtrWrapper;
 
 #[derive(Clone, Debug)]
 pub struct ColumnMajorCosetBoundTracePart<
@@ -193,7 +195,6 @@ pub(crate) fn compute_column_major_lde_from_monomial_form<
 >(
     monomial_form_normal_order: &[E],
     twiddles: &Twiddles<F, A>,
-    // lde_precomputations: &LdePrecomputations<A>,
     lde_factor: usize,
 ) -> Vec<(Box<[E]>, F)> {
     assert!(lde_factor.is_power_of_two());
@@ -285,4 +286,150 @@ pub(crate) fn compute_column_major_monomial_form_from_main_domain_owned<
     bitreverse_enumeration_inplace(&mut ifft[..]);
 
     ifft
+}
+
+fn lde_multiple_polys_parallel_from_hypercubes<F: PrimeField + TwoAdicField>(
+    evals: &[&[F]],
+    twiddles: &Twiddles<F, Global>,
+    lde_factor: usize,
+    worker: &Worker,
+) -> Vec<Vec<ColumnMajorCosetBoundTracePart<F, F>>> {
+    let mut cosets = Vec::with_capacity(lde_factor);
+    for _ in 0..lde_factor {
+        cosets.push(Vec::with_capacity(evals.len()));
+    }
+
+    unsafe {
+        worker.scope(evals.len(), |scope, geometry| {
+            for thread_idx in 0..geometry.len() {
+                let chunk_size = geometry.get_chunk_size(thread_idx);
+                let chunk_start = geometry.get_chunk_start_pos(thread_idx);
+
+                let range = chunk_start..(chunk_start + chunk_size);
+                let ptr = SendPtr(cosets.as_mut_ptr());
+
+                Worker::smart_spawn(scope, thread_idx == geometry.len() - 1, move |_| {
+                    let ptr = ptr;
+                    for i in range {
+                        let mut input = evals[i].to_vec();
+                        let size_log2 = input.len().trailing_zeros();
+                        hypercube_to_monomial::multivariate_hypercube_evals_into_coeffs(
+                            &mut input, size_log2,
+                        );
+
+                        // RS
+                        let cosets = compute_column_major_lde_from_monomial_form(
+                            &input, twiddles, lde_factor,
+                        );
+                        for (coset_idx, (coset, offset)) in cosets.into_iter().enumerate() {
+                            let trace_part = ColumnMajorCosetBoundTracePart {
+                                column: Arc::new(coset),
+                                offset,
+                            };
+                            ptr.0.add(coset_idx).as_mut_unchecked().spare_capacity_mut()[i]
+                                .write(trace_part);
+                        }
+                    }
+                });
+            }
+        });
+
+        for coset in cosets.iter_mut() {
+            coset.set_len(evals.len());
+        }
+    };
+
+    cosets
+}
+
+pub fn commit_trace_part<F: PrimeField + TwoAdicField, T: ColumnMajorMerkleTreeConstructor<F>>(
+    input_on_hypercube: &[&[F]],
+    twiddles: &Twiddles<F, Global>,
+    lde_factor: usize,
+    whir_first_fold_step_log2: usize,
+    tree_cap_size: usize,
+    trace_len_log2: usize,
+    worker: &Worker,
+) -> ColumnMajorBaseOracleForLDE<F, T>
+where
+    [(); F::DEGREE]: Sized,
+{
+    use crate::gkr::whir::ColumnMajorBaseOracleForCoset;
+    let evals = lde_multiple_polys_parallel_from_hypercubes(
+        input_on_hypercube,
+        twiddles,
+        lde_factor,
+        worker,
+    );
+    let mut oracle_for_lde = ColumnMajorBaseOracleForLDE {
+        cosets: Vec::with_capacity(lde_factor),
+    };
+    for coset in evals.into_iter() {
+        let trace: Vec<_> = coset.iter().map(|el| &el.column[..]).collect();
+        let tree = T::construct_for_column_major_coset::<F, Global>(
+            &trace,
+            1 << whir_first_fold_step_log2,
+            tree_cap_size,
+            true,
+            false,
+            worker,
+        );
+        let trace_part = ColumnMajorBaseOracleForCoset {
+            original_values_normal_order: coset,
+            tree,
+            values_per_leaf: 1 << whir_first_fold_step_log2,
+            trace_len_log2,
+        };
+        oracle_for_lde.cosets.push(trace_part);
+    }
+
+    oracle_for_lde
+}
+
+pub fn stage1<F: PrimeField + TwoAdicField, T: ColumnMajorMerkleTreeConstructor<F>>(
+    witness_eval_data: &GKRFullWitnessTrace<F, Global, Global>,
+    twiddles: &Twiddles<F, Global>,
+    lde_factor: usize,
+    whir_first_fold_step_log2: usize,
+    tree_cap_size: usize,
+    trace_len_log2: usize,
+    worker: &Worker,
+) -> (
+    ColumnMajorBaseOracleForLDE<F, T>,
+    ColumnMajorBaseOracleForLDE<F, T>,
+)
+where
+    [(); F::DEGREE]: Sized,
+{
+    let mem_inputs: Vec<_> = witness_eval_data
+        .column_major_memory_trace
+        .iter()
+        .map(|el| &el[..])
+        .collect();
+    let mem = commit_trace_part(
+        &mem_inputs,
+        twiddles,
+        lde_factor,
+        whir_first_fold_step_log2,
+        tree_cap_size,
+        trace_len_log2,
+        worker,
+    );
+
+    let wit_inputs: Vec<_> = witness_eval_data
+        .column_major_witness_trace
+        .iter()
+        .map(|el| &el[..])
+        .collect();
+    let wit = commit_trace_part(
+        &wit_inputs,
+        twiddles,
+        lde_factor,
+        whir_first_fold_step_log2,
+        tree_cap_size,
+        trace_len_log2,
+        worker,
+    );
+
+    (mem, wit)
 }
