@@ -903,6 +903,15 @@ pub fn prove_configured<const N: usize, A: GoodAllocator, T: MerkleTreeConstruct
     (prover_data, proof)
 }
 
+pub fn flatten_merkle_caps_iter_into(
+    tree_caps_iter: impl Iterator<Item = MerkleTreeCapVarLength>,
+    dst: &mut Vec<u32>,
+) {
+    for cap in tree_caps_iter {
+        cap.add_into_buffer(dst);
+    }
+}
+
 pub fn flatten_merkle_caps_into<T: MerkleTreeConstructor>(trees: &[T], dst: &mut Vec<u32>) {
     for subtree in trees.iter() {
         for cap_element in subtree.get_cap().cap.iter() {

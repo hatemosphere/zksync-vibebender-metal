@@ -210,6 +210,10 @@ pub(crate) fn compute_column_major_lde_from_monomial_form<
 
     let mut result = Vec::with_capacity(lde_factor);
 
+    assert!(twiddles.forward_twiddles.len() >= (1 << (trace_len_log2 - 1)));
+
+    let selected_twiddles = &twiddles.forward_twiddles[..(1 << (trace_len_log2 - 1))];
+
     #[cfg(feature = "timing_logs")]
     let now = std::time::Instant::now();
     for i in 0..lde_factor {
@@ -222,7 +226,7 @@ pub(crate) fn compute_column_major_lde_from_monomial_form<
         fft::naive::serial_ct_ntt_bitreversed_to_natural(
             &mut evals[..],
             trace_len_log2,
-            &twiddles.forward_twiddles,
+            selected_twiddles,
         );
         result.push((evals.into_boxed_slice(), offset));
     }

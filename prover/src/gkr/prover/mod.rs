@@ -7,14 +7,17 @@ use field::{Field, FieldExtension, PrimeField};
 use worker::WorkerGeometry;
 
 use super::*;
+use crate::definitions::Transcript;
 use crate::fft::Twiddles;
 use crate::gkr::prover::setup::GKRSetup;
 use crate::gkr::prover::stages::stage1;
+use crate::gkr::prover::transcript_utils::draw_random_field_els;
 use crate::gkr::sumcheck::access_and_fold::GKRStorage;
 use crate::gkr::whir::ColumnMajorBaseOracleForLDE;
 use crate::gkr::witness_gen::family_circuits::GKRFullWitnessTrace;
 use crate::merkle_trees::ColumnMajorMerkleTreeConstructor;
 use crate::merkle_trees::MerkleTreeCapVarLength;
+use crate::prover_stages::flatten_merkle_caps_iter_into;
 use crate::worker::Worker;
 
 use cs::definitions::NUM_MEM_ARGUMENT_LINEARIZATION_CHALLENGES;
@@ -37,6 +40,17 @@ pub struct GKRExternalChallenges<F: PrimeField, E: FieldExtension<F> + Field> {
         [E; NUM_MEM_ARGUMENT_LINEARIZATION_CHALLENGES],
     pub permutation_argument_additive_part: E,
     pub _marker: core::marker::PhantomData<F>,
+}
+
+impl<F: PrimeField, E: FieldExtension<F> + Field> GKRExternalChallenges<F, E> {
+    pub fn flatten_into_buffer(&self, dst: &mut Vec<u32>)
+    where
+        [(); E::DEGREE]: Sized,
+    {
+        use crate::gkr::prover::transcript_utils::flatten_field_els_into;
+        flatten_field_els_into(&self.permutation_argument_linearization_challenges, dst);
+        flatten_field_els_into(&[self.permutation_argument_additive_part], dst);
+    }
 }
 
 pub struct GKRProverData<
@@ -145,6 +159,7 @@ pub fn prove_configured_with_gkr<
     lde_factor: usize,
     num_queries: usize,
     pow_bits: u32,
+    inits_and_teardowns_top_bits: Option<u32>,
     trace_len: usize,
     worker: &Worker,
 ) -> (GKRProverData<F, E, T>, GKRProof<F, E>)
@@ -169,12 +184,46 @@ where
         worker,
     );
 
+    let mut transcript_input = vec![];
+    // we should commit all "external" variables,
+    // that are still part of the circuit, even though they are not formally the public input
+
+    // circuit sequence and delegation type
+    if let Some(inits_and_teardowns_top_bits) = inits_and_teardowns_top_bits {
+        transcript_input.push(inits_and_teardowns_top_bits);
+    }
+
+    external_challenges.flatten_into_buffer(&mut transcript_input);
+
+    // commit our setup
+    flatten_merkle_caps_iter_into(
+        setup_commitment.cosets.iter().map(|el| el.tree.get_cap()),
+        &mut transcript_input,
+    );
+
+    // memory
+    flatten_merkle_caps_iter_into(
+        mem_oracle.cosets.iter().map(|el| el.tree.get_cap()),
+        &mut transcript_input,
+    );
+
+    // and witness
+    flatten_merkle_caps_iter_into(
+        wit_oracle.cosets.iter().map(|el| el.tree.get_cap()),
+        &mut transcript_input,
+    );
+
+    let mut seed = Transcript::commit_initial(&transcript_input);
+
     // now we need to draw prove-local challenges, and in our case it's just a challenge for lookups, and challenge to batch all constraints
-    let [lookup_alpha, lookup_additive_part, constraints_batch_challenge] = [
-        E::from_base(F::from_u32_unchecked(42)),
-        E::from_base(F::from_u32_unchecked(127)),
-        E::from_base(F::from_u32_unchecked(0xff)),
-    ];
+    let challenges: Vec<E> = draw_random_field_els(&mut seed, 3);
+    let [lookup_alpha, lookup_additive_part, constraints_batch_challenge] =
+        challenges.try_into().unwrap();
+    // let [lookup_alpha, lookup_additive_part, constraints_batch_challenge] = [
+    //     E::from_base(F::from_u32_unchecked(42)),
+    //     E::from_base(F::from_u32_unchecked(127)),
+    //     E::from_base(F::from_u32_unchecked(0xff)),
+    // ];
 
     let mut gkr_storage = GKRStorage::<F, E>::default();
 

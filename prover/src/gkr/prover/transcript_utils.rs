@@ -7,15 +7,22 @@ use crate::{
 use blake2s_u32::BLAKE2S_DIGEST_SIZE_U32_WORDS;
 use transcript::Seed;
 
+pub fn flatten_field_els_into<F: PrimeField, E: FieldExtension<F>>(src: &[E], dst: &mut Vec<u32>)
+where
+    [(); E::DEGREE]: Sized,
+{
+    for el in src.iter() {
+        let coeffs = E::into_coeffs_in_base(*el).map(|el: F| el.as_u32_raw_repr_reduced());
+        dst.extend(coeffs);
+    }
+}
+
 pub fn commit_field_els<F: PrimeField, E: FieldExtension<F>>(seed: &mut Seed, els: &[E])
 where
     [(); E::DEGREE]: Sized,
 {
     let mut transcript_input = Vec::with_capacity(els.len() * E::DEGREE);
-    for el in els.iter() {
-        let coeffs = E::into_coeffs_in_base(*el).map(|el: F| el.as_u32_raw_repr_reduced());
-        transcript_input.extend(coeffs);
-    }
+    flatten_field_els_into(els, &mut transcript_input);
 
     Transcript::commit_with_seed(seed, &transcript_input);
 }

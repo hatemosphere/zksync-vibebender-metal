@@ -443,6 +443,7 @@ pub fn gkr_run_basic_unrolled_test_impl(
                     lde_factor,
                     53,
                     28,
+                    None,
                     trace_len,
                     &worker,
                 );

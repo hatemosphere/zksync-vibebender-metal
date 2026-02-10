@@ -176,7 +176,7 @@ pub fn serial_ct_ntt_bitreversed_to_natural<F: Field, E: Field + FieldExtension<
     }
 
     if a.len() > 16 {
-        debug_assert!(n == omegas_bit_reversed.len() * 2);
+        debug_assert_eq!(n, omegas_bit_reversed.len() * 2);
     }
     debug_assert!(n == (1 << log_n) as usize);
 

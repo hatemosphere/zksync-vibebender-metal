@@ -49,6 +49,8 @@ pub struct WhirPolyCommitProof<
     pub memory_commitment: WhirBaseLayerCommitmentAndQueries<F, E, T>,
     pub witness_commitment: WhirBaseLayerCommitmentAndQueries<F, E, T>,
     pub intermediate_whir_oracles: Vec<WhirIntermediateCommitmentAndQueries<F, E, T>>,
+    pub ood_samples: Vec<E>,
     pub sumcheck_polys: Vec<[E; 3]>,
+    pub pow_nonces: Vec<u64>,
     pub final_monomials: Vec<E>,
 }
