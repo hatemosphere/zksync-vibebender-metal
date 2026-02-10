@@ -23,6 +23,7 @@ pub mod forward_loop;
 pub mod setup;
 pub mod stages;
 pub mod sumcheck_loop;
+pub mod transcript_utils;
 
 pub(crate) struct SendPtr<T: Sized>(*mut T);
 unsafe impl<T: Send + Sync> Send for SendPtr<T> {}

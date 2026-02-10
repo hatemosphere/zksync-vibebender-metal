@@ -18,7 +18,7 @@ pub mod pow;
 #[derive(Clone, Copy, Debug, Default)]
 pub struct Blake2sTranscript;
 
-#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Default)]
 pub struct Seed(pub [u32; BLAKE2S_DIGEST_SIZE_U32_WORDS]);
 
 impl Blake2sTranscript {

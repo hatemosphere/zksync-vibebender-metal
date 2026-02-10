@@ -38,6 +38,12 @@ impl MerkleTreeCapVarLength {
             cap: self.cap.try_into().unwrap(),
         }
     }
+
+    pub fn add_into_buffer(&self, buffer: &mut Vec<u32>) {
+        for el in self.cap.iter() {
+            buffer.extend_from_slice(el);
+        }
+    }
 }
 
 pub trait MerkleTreeConstructor: Sized + Send + Sync {

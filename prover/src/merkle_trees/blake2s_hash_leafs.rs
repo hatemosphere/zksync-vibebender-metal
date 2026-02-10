@@ -400,13 +400,13 @@ where
     }
 
     #[cfg(feature = "timing_logs")]
+    println!("Constructing Merkle tree from {} columns of size 2^{}, and combining {} elements per poly per leaf", num_columns, trace_len.trailing_zeros(), combine_by);
+
+    #[cfg(feature = "timing_logs")]
     let now = std::time::Instant::now();
 
     let tree_size = trace_len / combine_by;
     assert!(tree_size.is_power_of_two());
-
-    #[cfg(feature = "timing_logs")]
-    let elements_per_leaf = trace.width();
 
     let leaf_width_in_field_elements = combine_by * num_columns * E::DEGREE;
 
@@ -502,7 +502,7 @@ where
         "Merkle tree of size 2^{} leaf hashes taken {:?} for {} elements per leaf",
         tree_size.trailing_zeros(),
         now.elapsed(),
-        elements_per_leaf,
+        combine_by,
     );
 
     if bitreverse_output_leaf_hashes {

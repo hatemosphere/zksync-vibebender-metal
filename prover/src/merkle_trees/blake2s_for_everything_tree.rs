@@ -120,12 +120,20 @@ impl<A: GoodAllocator> Blake2sU32MerkleTreeWithCap<A> {
         assert!(cap_size.is_power_of_two());
         debug_assert!(leaf_hashes.len() >= cap_size);
 
+        #[cfg(feature = "timing_logs")]
+        println!(
+            "Continuing Merkle tree construction from {} leaf hashes",
+            leaf_hashes.len(),
+        );
+
         let tree_depth = leaf_hashes.len().trailing_zeros();
         let layers_to_skip = cap_size.trailing_zeros();
         let num_layers_to_construct = tree_depth - layers_to_skip;
 
         if num_layers_to_construct == 0 {
+            #[cfg(feature = "timing_logs")]
             println!("Do not need to construct nodes, can use leaf hashes directly to form a cap");
+
             assert_eq!(cap_size, leaf_hashes.len());
             return Self {
                 cap_size,
