@@ -84,11 +84,11 @@ DEVICE_FORCEINLINE void reg_exchg_fwd(bf *vals, const int exchg_region_offset, c
 }
 
 template <int GROUP>
-DEVICE_FORCEINLINE void exchg_pipeline_group(bf *vals, const bf *twiddles) {
+DEVICE_FORCEINLINE void exchg_pipeline_group(bf *vals, const bf twiddle) {
   exchg_dit_0(vals[GROUP], vals[GROUP + 16]);
   exchg_dit_0(vals[GROUP + 8], vals[GROUP + 24]);
   exchg_dit_0(vals[GROUP], vals[GROUP + 8]);
-  exchg_dit(vals[GROUP + 16], vals[GROUP + 24], twiddles[1]);
+  exchg_dit(vals[GROUP + 16], vals[GROUP + 24], twiddle);
 }
 
 template <int GROUP, int IL_GMEM_STRIDE, int PL_GROUP_SIZE, int PL_STRIDE>
@@ -114,7 +114,7 @@ EXTERN __launch_bounds__(512, 1) __global__
   constexpr int PL_GROUP_SIZE = 4;
   constexpr int NUM_PL_GROUPS = 8;
   constexpr int PL_STRIDE = 8;
-  constexpr int PL_DEPTH = 2;
+  // constexpr int PL_DEPTH = 2;
 
   // TODO: make some of these kernel arguments
   const int lane_in_tile = threadIdx.x & 15;
@@ -123,6 +123,9 @@ EXTERN __launch_bounds__(512, 1) __global__
   const int gmem_block_offset = blockIdx.x << LOG_DATA_TILE_SIZE;
   gmem_in.add_row(gmem_block_offset);
   gmem_out.add_row(gmem_block_offset);
+
+  gmem_in.add_col(blockIdx.y);
+  gmem_out.add_col(blockIdx.y);
 
   extern __shared__ bf smem_block[]; // 16384 * 4 bytes
 
@@ -137,41 +140,25 @@ EXTERN __launch_bounds__(512, 1) __global__
   const int thread_il_smem_start = lane_in_tile + tile_id * TILE_SIZE;
   const int thread_ct_smem_start = lane_in_tile + tile_id * TILE_SIZE * THREAD_TILES_PER_BLOCK;
 
-#pragma unroll 1
-  for (int ntt_idx{0}; ntt_idx < num_ntts; ntt_idx++) {
-#pragma unroll
-    for (int group{0}; group < PL_DEPTH; group++)
-#pragma unroll
-      for (int i{0}, row{thread_il_gmem_start + group * IL_GMEM_STRIDE}; i < PL_GROUP_SIZE; i++, row += IL_GMEM_STRIDE * PL_STRIDE)
-        vals[group + i * PL_STRIDE] = gmem_in.get_at_row(row);
-
-// #pragma unroll
-//     for (int group{0}; group < NUM_PL_GROUPS; group++) {
-//       exchg_dit_0(vals[group], vals[group + 16]);
-//       exchg_dit_0(vals[group + 8], vals[group + 24]);
-//       exchg_dit_0(vals[group], vals[group + 8]);
-//       exchg_dit(vals[group + 16], vals[group + 24], twiddles[1]);
-//       if (group < NUM_PL_GROUPS - PL_DEPTH) {
-// #pragma unroll
-//         for (int i{0}, row{thread_il_gmem_start + (group + PL_DEPTH) * IL_GMEM_STRIDE}; i < PL_GROUP_SIZE; i++, row += IL_GMEM_STRIDE * PL_STRIDE)
-//           vals[group + PL_DEPTH + i * PL_STRIDE] = gmem_in.get_at_row(row);
-//       }
-//     }
-
-    exchg_pipeline_group<0>(vals, twiddles);
+// #pragma unroll 1
+//   for (int ntt_idx{0}; ntt_idx < num_ntts; ntt_idx++) {
+    const bf twiddle = twiddles[1];
+    prefetch_pipeline_group<0, IL_GMEM_STRIDE, PL_GROUP_SIZE, PL_STRIDE>(vals, gmem_in, thread_il_gmem_start);
+    exchg_pipeline_group<0>(vals, twiddle);
+    prefetch_pipeline_group<1, IL_GMEM_STRIDE, PL_GROUP_SIZE, PL_STRIDE>(vals, gmem_in, thread_il_gmem_start);
+    exchg_pipeline_group<1>(vals, twiddle);
     prefetch_pipeline_group<2, IL_GMEM_STRIDE, PL_GROUP_SIZE, PL_STRIDE>(vals, gmem_in, thread_il_gmem_start);
-    exchg_pipeline_group<1>(vals, twiddles);
+    exchg_pipeline_group<2>(vals, twiddle);
     prefetch_pipeline_group<3, IL_GMEM_STRIDE, PL_GROUP_SIZE, PL_STRIDE>(vals, gmem_in, thread_il_gmem_start);
-    exchg_pipeline_group<2>(vals, twiddles);
+    exchg_pipeline_group<3>(vals, twiddle);
     prefetch_pipeline_group<4, IL_GMEM_STRIDE, PL_GROUP_SIZE, PL_STRIDE>(vals, gmem_in, thread_il_gmem_start);
-    exchg_pipeline_group<3>(vals, twiddles);
+    exchg_pipeline_group<4>(vals, twiddle);
     prefetch_pipeline_group<5, IL_GMEM_STRIDE, PL_GROUP_SIZE, PL_STRIDE>(vals, gmem_in, thread_il_gmem_start);
-    exchg_pipeline_group<4>(vals, twiddles);
+    exchg_pipeline_group<5>(vals, twiddle);
     prefetch_pipeline_group<6, IL_GMEM_STRIDE, PL_GROUP_SIZE, PL_STRIDE>(vals, gmem_in, thread_il_gmem_start);
-    exchg_pipeline_group<5>(vals, twiddles);
+    exchg_pipeline_group<6>(vals, twiddle);
     prefetch_pipeline_group<7, IL_GMEM_STRIDE, PL_GROUP_SIZE, PL_STRIDE>(vals, gmem_in, thread_il_gmem_start);
-    exchg_pipeline_group<6>(vals, twiddles);
-    exchg_pipeline_group<7>(vals, twiddles);
+    exchg_pipeline_group<7>(vals, twiddle);
 
     // reg_exchg_inv<16, 32, 1>(vals, 0, twiddles);
     // reg_exchg_inv<8, 16, 2>(vals, 0, twiddles);
@@ -180,10 +167,10 @@ EXTERN __launch_bounds__(512, 1) __global__
     reg_exchg_inv<1, 2, 16>(vals, 0, twiddles);
 
 #pragma unroll
-      for (int i{0}, addr{thread_il_smem_start}; i < 32; i++, addr += TILE_SIZE * THREAD_TILES_PER_BLOCK)
-        smem_block[addr] = vals[i]; // write interleaved smem tiles
+    for (int i{0}, addr{thread_il_smem_start}; i < 32; i++, addr += TILE_SIZE * THREAD_TILES_PER_BLOCK)
+      smem_block[addr] = vals[i]; // write interleaved smem tiles
 
-      __syncthreads();
+    __syncthreads();
 
 #pragma unroll
     for (int i{0}, addr{thread_ct_smem_start}; i < 32; i++, addr += TILE_SIZE)
@@ -199,8 +186,97 @@ EXTERN __launch_bounds__(512, 1) __global__
 #pragma unroll
     for (int i{0}, row{thread_ct_gmem_start}; i < 32; i++, row += tile_gmem_stride)
       gmem_out.set_at_row(row, vals[i]); // write consecutive gmem tiles
-    gmem_out.inc_col();
-  }
+//     gmem_out.inc_col();
+//   }
+}
+
+EXTERN __launch_bounds__(512, 1) __global__
+    void ab_main_to_monomials_first_10_stages_pipeline_tile_8_kernel(bf_matrix_getter<ld_modifier::cg> gmem_in,
+                                                                       bf_matrix_setter<st_modifier::cg> gmem_out,
+                                                                       const int log_n,
+                                                                       const int num_ntts) {
+  constexpr int VALS_PER_THREAD = 32;
+  constexpr int LOG_DATA_TILE_SIZE = 3;
+  constexpr int TILE_SIZE = 1 << LOG_DATA_TILE_SIZE;
+  constexpr int LOG_DATA_TILES_PER_BLOCK = 10;
+  constexpr int THREAD_TILES_PER_BLOCK = 32;
+  constexpr int TILE_GMEM_STRIDE = 1 << (24 - 10);
+  constexpr int IL_GMEM_STRIDE = TILE_GMEM_STRIDE * THREAD_TILES_PER_BLOCK;
+
+  constexpr int PL_GROUP_SIZE = 4;
+  constexpr int NUM_PL_GROUPS = 8;
+  constexpr int PL_STRIDE = 8;
+  // constexpr int PL_DEPTH = 2;
+
+  // TODO: make some of these kernel arguments
+  const int lane_in_tile = threadIdx.x & 7;
+  const int tile_id = threadIdx.x >> LOG_DATA_TILE_SIZE;
+  const int tile_gmem_stride = 1 << (log_n - LOG_DATA_TILES_PER_BLOCK);
+  const int gmem_block_offset = blockIdx.x << LOG_DATA_TILE_SIZE;
+  gmem_in.add_row(gmem_block_offset);
+  gmem_out.add_row(gmem_block_offset);
+
+  extern __shared__ bf smem_block[]; // 8192 * 4 bytes
+
+  const bf *twiddles = ab_inv_twiddles_first_10_stages;
+
+  bf vals[VALS_PER_THREAD];
+
+  // "ct" = consecutive tile layout
+  // "it" = interleaved tile layout
+  const int thread_il_gmem_start = lane_in_tile + tile_id * TILE_GMEM_STRIDE;
+  const int thread_ct_gmem_start = lane_in_tile + tile_id * IL_GMEM_STRIDE;
+  const int thread_il_smem_start = lane_in_tile + tile_id * TILE_SIZE;
+  const int thread_ct_smem_start = lane_in_tile + tile_id * TILE_SIZE * THREAD_TILES_PER_BLOCK;
+
+// #pragma unroll 1
+//   for (int ntt_idx{0}; ntt_idx < num_ntts; ntt_idx++) {
+    const bf twiddle = twiddles[1];
+    prefetch_pipeline_group<0, IL_GMEM_STRIDE, PL_GROUP_SIZE, PL_STRIDE>(vals, gmem_in, thread_il_gmem_start);
+    exchg_pipeline_group<0>(vals, twiddle);
+    prefetch_pipeline_group<1, IL_GMEM_STRIDE, PL_GROUP_SIZE, PL_STRIDE>(vals, gmem_in, thread_il_gmem_start);
+    exchg_pipeline_group<1>(vals, twiddle);
+    prefetch_pipeline_group<2, IL_GMEM_STRIDE, PL_GROUP_SIZE, PL_STRIDE>(vals, gmem_in, thread_il_gmem_start);
+    exchg_pipeline_group<2>(vals, twiddle);
+    prefetch_pipeline_group<3, IL_GMEM_STRIDE, PL_GROUP_SIZE, PL_STRIDE>(vals, gmem_in, thread_il_gmem_start);
+    exchg_pipeline_group<3>(vals, twiddle);
+    prefetch_pipeline_group<4, IL_GMEM_STRIDE, PL_GROUP_SIZE, PL_STRIDE>(vals, gmem_in, thread_il_gmem_start);
+    exchg_pipeline_group<4>(vals, twiddle);
+    prefetch_pipeline_group<5, IL_GMEM_STRIDE, PL_GROUP_SIZE, PL_STRIDE>(vals, gmem_in, thread_il_gmem_start);
+    exchg_pipeline_group<5>(vals, twiddle);
+    prefetch_pipeline_group<6, IL_GMEM_STRIDE, PL_GROUP_SIZE, PL_STRIDE>(vals, gmem_in, thread_il_gmem_start);
+    exchg_pipeline_group<6>(vals, twiddle);
+    prefetch_pipeline_group<7, IL_GMEM_STRIDE, PL_GROUP_SIZE, PL_STRIDE>(vals, gmem_in, thread_il_gmem_start);
+    exchg_pipeline_group<7>(vals, twiddle);
+
+    // reg_exchg_inv<16, 32, 1>(vals, 0, twiddles);
+    // reg_exchg_inv<8, 16, 2>(vals, 0, twiddles);
+    reg_exchg_inv<4, 8, 4>(vals, 0, twiddles);
+    reg_exchg_inv<2, 4, 8>(vals, 0, twiddles);
+    reg_exchg_inv<1, 2, 16>(vals, 0, twiddles);
+
+#pragma unroll
+    for (int i{0}, addr{thread_il_smem_start}; i < 32; i++, addr += TILE_SIZE * THREAD_TILES_PER_BLOCK)
+      smem_block[addr] = vals[i]; // write interleaved smem tiles
+
+    __syncthreads();
+
+#pragma unroll
+    for (int i{0}, addr{thread_ct_smem_start}; i < 32; i++, addr += TILE_SIZE)
+      vals[i] = smem_block[addr]; // read consecutive smem tiles
+
+    int tile_exchg_region_offset = tile_id;
+    reg_exchg_inv<16, 32, 1>(vals, tile_exchg_region_offset, twiddles); tile_exchg_region_offset <<= 1;
+    reg_exchg_inv<8, 16, 2>(vals, tile_exchg_region_offset, twiddles); tile_exchg_region_offset <<= 1;
+    reg_exchg_inv<4, 8, 4>(vals, tile_exchg_region_offset, twiddles); tile_exchg_region_offset <<= 1;
+    reg_exchg_inv<2, 4, 8>(vals, tile_exchg_region_offset, twiddles); tile_exchg_region_offset <<= 1;
+    reg_exchg_inv<1, 2, 16>(vals, tile_exchg_region_offset, twiddles);
+
+#pragma unroll
+    for (int i{0}, row{thread_ct_gmem_start}; i < 32; i++, row += tile_gmem_stride)
+      gmem_out.set_at_row(row, vals[i]); // write consecutive gmem tiles
+//     gmem_out.inc_col();
+//   }
 }
 
 EXTERN __launch_bounds__(512, 1) __global__
