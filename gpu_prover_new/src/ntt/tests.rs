@@ -224,7 +224,7 @@ fn run_main_to_coset(
 #[test]
 #[serial]
 fn test_main_to_coset_tile_16() {
-    run_main_to_coset(24..25, 1, 0);
+    run_main_to_coset(24..25, 8, 0);
 }
 
 #[test]
