@@ -365,6 +365,7 @@ where
     let num_whir_steps = whir_steps_lde_factors.len();
     assert_eq!(whir_steps_schedule.len(), whir_steps_lde_factors.len() + 1);
     assert_eq!(whir_steps_schedule.len(), whir_queries_schedule.len());
+    assert_eq!(whir_steps_schedule.len(), whir_pow_schedule.len());
 
     let mut rs_oracle;
 
