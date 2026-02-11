@@ -358,7 +358,7 @@ pub fn evaluate_mixed_input_type_fixed_in_out_kernel_with_extension_inputs<
                     assert_eq!(sources.extension_field_inputs.len(), IN_EXT);
                     assert_eq!(batch_challenges.len(), OUT);
 
-                    let inputs = sources.extension_field_inputs.as_array().unwrap_unchecked();
+                    let inputs = sources.base_field_inputs.as_array().unwrap_unchecked();
                     let ext_inputs = sources.extension_field_inputs.as_array().unwrap_unchecked();
                     let challenges = batch_challenges.as_array().unwrap_unchecked();
 
@@ -385,12 +385,6 @@ pub fn evaluate_mixed_input_type_fixed_in_out_kernel_with_extension_inputs<
                         },
                     );
                 }
-                // for input in sources.extension_field_inputs.iter() {
-                //     dbg!(input.current_values());
-                // }
-                // for output in sources.extension_field_outputs.iter() {
-                //     dbg!(output.current_values());
-                // }
             }
             1 => {
                 let sources = storage.get_for_sumcheck_round_1(inputs, folding_challenges);
@@ -399,7 +393,7 @@ pub fn evaluate_mixed_input_type_fixed_in_out_kernel_with_extension_inputs<
                     assert_eq!(sources.extension_field_inputs.len(), IN_EXT);
                     assert_eq!(batch_challenges.len(), OUT);
 
-                    let inputs = sources.extension_field_inputs.as_array().unwrap_unchecked();
+                    let inputs = sources.base_field_inputs.as_array().unwrap_unchecked();
                     let ext_inputs = sources.extension_field_inputs.as_array().unwrap_unchecked();
                     let challenges = batch_challenges.as_array().unwrap_unchecked();
 
@@ -425,10 +419,6 @@ pub fn evaluate_mixed_input_type_fixed_in_out_kernel_with_extension_inputs<
                             }
                         },
                     );
-                }
-                for source in sources.extension_field_inputs.iter() {
-                    dbg!(source.previous_values());
-                    dbg!(source.current_values());
                 }
             }
             2 => {
@@ -438,7 +428,7 @@ pub fn evaluate_mixed_input_type_fixed_in_out_kernel_with_extension_inputs<
                     assert_eq!(sources.extension_field_inputs.len(), IN_EXT);
                     assert_eq!(batch_challenges.len(), OUT);
 
-                    let inputs = sources.extension_field_inputs.as_array().unwrap_unchecked();
+                    let inputs = sources.base_field_inputs.as_array().unwrap_unchecked();
                     let ext_inputs = sources.extension_field_inputs.as_array().unwrap_unchecked();
                     let challenges = batch_challenges.as_array().unwrap_unchecked();
 
@@ -464,10 +454,6 @@ pub fn evaluate_mixed_input_type_fixed_in_out_kernel_with_extension_inputs<
                             }
                         },
                     );
-                }
-                for source in sources.extension_field_inputs.iter() {
-                    dbg!(source.previous_values());
-                    dbg!(source.current_values());
                 }
             }
             i if i + 1 == total_sumcheck_rounds => {
@@ -479,7 +465,7 @@ pub fn evaluate_mixed_input_type_fixed_in_out_kernel_with_extension_inputs<
                     assert_eq!(sources.extension_field_inputs.len(), IN_EXT);
                     assert_eq!(batch_challenges.len(), OUT);
 
-                    let inputs = sources.extension_field_inputs.as_array().unwrap_unchecked();
+                    let inputs = sources.base_field_inputs.as_array().unwrap_unchecked();
                     let ext_inputs = sources.extension_field_inputs.as_array().unwrap_unchecked();
                     let challenges = batch_challenges.as_array().unwrap_unchecked();
 
@@ -507,16 +493,8 @@ pub fn evaluate_mixed_input_type_fixed_in_out_kernel_with_extension_inputs<
                     );
                 }
 
-                println!("COLLECTING LAST LAYER VALUES");
-
-                for source in sources.extension_field_inputs.iter() {
-                    dbg!(source.current_values());
-                }
-
                 // Fill the storage
-                todo!();
-
-                // sources.collect_last_values(inputs, last_evaluations);
+                sources.collect_last_values(inputs, last_evaluations);
             }
             3.. => {
                 let sources =
@@ -526,7 +504,7 @@ pub fn evaluate_mixed_input_type_fixed_in_out_kernel_with_extension_inputs<
                     assert_eq!(sources.extension_field_inputs.len(), IN_EXT);
                     assert_eq!(batch_challenges.len(), OUT);
 
-                    let inputs = sources.extension_field_inputs.as_array().unwrap_unchecked();
+                    let inputs = sources.base_field_inputs.as_array().unwrap_unchecked();
                     let ext_inputs = sources.extension_field_inputs.as_array().unwrap_unchecked();
                     let challenges = batch_challenges.as_array().unwrap_unchecked();
 

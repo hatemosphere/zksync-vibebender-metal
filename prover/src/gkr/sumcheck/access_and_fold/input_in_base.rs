@@ -176,9 +176,13 @@ impl<F: PrimeField, E: FieldExtension<F> + Field> BaseFieldPolyIntermediateFoldi
         }
     }
 
+    pub fn initial_pointer(&mut self) -> *mut E {
+        self.continuous_buffer.as_mut_ptr().cast()
+    }
+
     pub fn pointers_for_sumcheck_accessor_step(&mut self, step: usize) -> (*mut E, *mut E) {
         unsafe {
-            assert!(step >= 2);
+            assert!(step > 2);
             let mut input_offset = self.continuous_buffer.as_mut_ptr();
             let mut input_size = self.size_after_two_folds;
             let mut next_step_offset = input_offset.add(input_size);
@@ -242,93 +246,76 @@ impl<F: PrimeField, E: FieldExtension<F> + Field>
 
     #[inline(always)]
     fn get_at_index(&self, index: usize) -> ExtensionFieldRepresentation<F, E> {
-        todo!();
+        debug_assert!(index < self.next_layer_size * 2);
+        // fold two times
+        unsafe {
+            if self.first_access {
+                // recompute corresponding input from the previous layer
+
+                // TODO: can compute faster
+
+                let f00 = self.base_input_start.add(index).read();
+                let f01 = self
+                    .base_input_start
+                    .add(self.base_layer_half_size + index)
+                    .read();
+
+                let f0_c0 = f00;
+                let mut f0_c1 = f01;
+                f0_c1.sub_assign(&f00);
+                let mut f0 = self.first_folding_challenge;
+                f0.mul_assign_by_base(&f0_c1);
+                f0.add_assign_base(&f0_c0);
+
+                let f10 = self
+                    .base_input_start
+                    .add(self.base_quarter_size + index)
+                    .read();
+                let f11 = self
+                    .base_input_start
+                    .add(self.base_layer_half_size + self.base_quarter_size + index)
+                    .read();
+
+                let f1_c0 = f10;
+                let mut f1_c1 = f11;
+                f1_c1.sub_assign(&f10);
+                let mut f1 = self.first_folding_challenge;
+                f1.mul_assign_by_base(&f1_c1);
+                f1.add_assign_base(&f1_c0);
+
+                // and again
+
+                let mut t = f1;
+                t.sub_assign(&f0);
+                let mut result = self.second_folding_challenge;
+                result.mul_assign(&t);
+                result.add_assign(&f0);
+
+                // write down
+                self.this_layer_cache_start.add(index).write(result);
+
+                ExtensionFieldRepresentation {
+                    value: result,
+                    _marker: core::marker::PhantomData,
+                }
+            } else {
+                let result = self.this_layer_cache_start.add(index).read();
+
+                ExtensionFieldRepresentation {
+                    value: result,
+                    _marker: core::marker::PhantomData,
+                }
+            }
+        }
     }
 
     #[inline(always)]
     fn get_f0_and_f1(&self, index: usize) -> [ExtensionFieldRepresentation<F, E>; 2] {
-        // Same recomputation logic as in the previous implementation, but we also fold by using folding challenges,
-        // and save computed extension elements
-
-        todo!();
-
-        // debug_assert!(index < self.next_layer_size);
-        // unsafe {
-        //     if self.first_access {
-        //         let t = [index, index + self.next_layer_size].map(|index| {
-        //             // we take computation
-        //             let f00 = self.base_input_start.add(index).read();
-        //             let f01 = self
-        //                 .base_input_start
-        //                 .add(self.base_quarter_size + index)
-        //                 .read();
-        //             let f10 = self
-        //                 .base_input_start
-        //                 .add(self.base_layer_half_size + index)
-        //                 .read();
-        //             let f11 = self
-        //                 .base_input_start
-        //                 .add(self.base_layer_half_size + self.base_quarter_size + index)
-        //                 .read();
-        //             let f0_c0 = f00;
-        //             let mut f0_c1 = f10;
-        //             f0_c1.sub_assign(&f00);
-
-        //             let mut f1_c0 = f01;
-        //             f1_c0.sub_assign(&f00);
-        //             let mut f1_c1 = f11;
-        //             f1_c1.sub_assign(&f01);
-        //             f1_c1.sub_assign(&f0_c0);
-
-        //             let mut f0 = self.first_folding_challenge;
-        //             f0.mul_assign_by_base(&f0_c1);
-        //             f0.add_assign_base(&f0_c0);
-
-        //             let mut f1_minus_f0 = self.first_folding_challenge;
-        //             f1_minus_f0.mul_assign_by_base(&f1_c1);
-        //             f1_minus_f0.add_assign_base(&f1_c0);
-
-        //             (f0, f1_minus_f0)
-        //         });
-        //         let [f0, f1] = t.map(|(f0, f1_minus_f0)| {
-        //             let mut result = self.second_folding_challenge;
-        //             result.mul_assign(&f1_minus_f0);
-        //             result.sub_assign(&f0);
-
-        //             result
-        //         });
-
-        //         // we do not want to recompute f0 and f1, so we want to memorize f0, and write f1 - f0 into next poly cache
-        //         self.this_layer_cache_start.add(index).write(f0);
-        //         self.this_layer_cache_start
-        //             .add(self.next_layer_size + index)
-        //             .write(f1);
-
-        //         [
-        //             ExtensionFieldRepresentation {
-        //                 value: f0,
-        //                 _marker: core::marker::PhantomData,
-        //             },
-        //             ExtensionFieldRepresentation {
-        //                 value: f1,
-        //                 _marker: core::marker::PhantomData,
-        //             },
-        //         ]
-        //     } else {
-        //         let f0 = self.this_layer_cache_start.add(index).read();
-        //         let f1 = self.this_layer_cache_start.add(self.next_layer_size + index).read();
-
-        //         [
-        //             ExtensionFieldRepresentation {
-        //                 value: f0,
-        //                 _marker: core::marker::PhantomData,
-        //             },
-        //             ExtensionFieldRepresentation {
-        //                 value: f1,
-        //                 _marker: core::marker::PhantomData,
-        //             },
-        //         ]
-        //     }
-        // }
+        // just read and do NOT cache f1 - f0
+        debug_assert!(index < self.next_layer_size);
+        [
+            self.get_at_index(index),
+            self.get_at_index(self.next_layer_size + index),
+        ]
     }
 }

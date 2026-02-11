@@ -1,5 +1,6 @@
 use super::*;
 
+#[derive(Debug)]
 pub struct BaseFieldCopyGKRRelation {
     pub input: GKRAddress,
     pub output: GKRAddress,
@@ -22,10 +23,10 @@ impl<F: PrimeField, E: FieldExtension<F> + Field> BatchedGKRKernel<F, E>
     fn get_inputs(&self) -> GKRInputs {
         debug_assert!(self.validate());
         GKRInputs {
-            inputs_in_base: Vec::new(),
-            inputs_in_extension: vec![self.input],
-            outputs_in_base: Vec::new(),
-            outputs_in_extension: vec![self.output],
+            inputs_in_base: vec![self.input],
+            inputs_in_extension: Vec::new(),
+            outputs_in_base: vec![self.output],
+            outputs_in_extension: Vec::new(),
         }
     }
 
@@ -65,6 +66,12 @@ impl<F: PrimeField, E: FieldExtension<F> + Field> BatchedGKRKernel<F, E>
         );
         let kernel = BaseFieldCopyGKRRelationKernel::default();
         let inputs = <Self as BatchedGKRKernel<F, E>>::get_inputs(self);
+
+        println!(
+            "Evaluating {} with inputs {:?}",
+            std::any::type_name::<Self>(),
+            &inputs
+        );
 
         evaluate_single_input_type_fixed_in_out_kernel_with_base_inputs(
             &kernel,
@@ -150,6 +157,7 @@ impl<F: PrimeField, E: FieldExtension<F> + Field>
     }
 }
 
+#[derive(Debug)]
 pub struct ExtensionCopyGKRRelation {
     pub input: GKRAddress,
     pub output: GKRAddress,
@@ -215,6 +223,12 @@ impl<F: PrimeField, E: FieldExtension<F> + Field> BatchedGKRKernel<F, E>
         );
         let kernel = ExtensionCopyGKRRelationKernel::default();
         let inputs = <Self as BatchedGKRKernel<F, E>>::get_inputs(self);
+
+        println!(
+            "Evaluating {} with inputs {:?}",
+            std::any::type_name::<Self>(),
+            &inputs
+        );
 
         evaluate_single_input_type_fixed_in_out_kernel_with_extension_inputs(
             &kernel,

@@ -319,16 +319,12 @@ pub fn evaluate_single_input_type_fixed_in_out_kernel_with_extension_inputs<
                         },
                     );
                 }
-                // for input in sources.extension_field_inputs.iter() {
-                //     dbg!(input.current_values());
-                // }
-                // for output in sources.extension_field_outputs.iter() {
-                //     dbg!(output.current_values());
-                // }
             }
             i if i + 1 == total_sumcheck_rounds => {
-                let sources = storage.get_for_sumcheck_round_1(inputs, folding_challenges);
+                assert!(i >= 3);
 
+                let sources =
+                    storage.get_for_sumcheck_round_3_and_beyond(inputs, folding_challenges);
                 {
                     assert!(sources.base_field_inputs.is_empty());
                     assert_eq!(sources.extension_field_inputs.len(), IN);
@@ -355,12 +351,6 @@ pub fn evaluate_single_input_type_fixed_in_out_kernel_with_extension_inputs<
                             }
                         },
                     );
-                }
-
-                println!("COLLECTING LAST LAYER VALUES");
-
-                for source in sources.extension_field_inputs.iter() {
-                    dbg!(source.current_values());
                 }
 
                 // Fill the storage
@@ -394,10 +384,6 @@ pub fn evaluate_single_input_type_fixed_in_out_kernel_with_extension_inputs<
                             }
                         },
                     );
-                }
-                for source in sources.extension_field_inputs.iter() {
-                    dbg!(source.previous_values());
-                    dbg!(source.current_values());
                 }
             }
         }

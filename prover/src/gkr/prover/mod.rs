@@ -265,7 +265,8 @@ where
     }
 
     // LogUp sanity check: verify sum N(x)/D(x) = 0 for each lookup type
-    if cfg!(debug_assertions) {
+    // if cfg!(debug_assertions) {
+    {
         for output_type in [
             OutputType::Lookup16Bits,
             OutputType::LookupTimestamps,

@@ -213,7 +213,7 @@ pub fn evaluate_single_input_type_fixed_in_out_kernel_with_base_inputs<
                     assert_eq!(sources.base_field_inputs.len(), IN);
                     assert_eq!(batch_challenges.len(), OUT);
 
-                    let inputs = sources.extension_field_inputs.as_array().unwrap_unchecked();
+                    let inputs = sources.base_field_inputs.as_array().unwrap_unchecked();
                     let challenges = batch_challenges.as_array().unwrap_unchecked();
 
                     apply_row_wise::<F, _>(
@@ -224,14 +224,13 @@ pub fn evaluate_single_input_type_fixed_in_out_kernel_with_base_inputs<
                         |_, mut ext_dest, chunk_start, chunk_size| {
                             assert_eq!(ext_dest.len(), 1);
                             let accumulator = ext_dest.pop().unwrap();
-                            let ctx = inputs[0].get_collapse_context();
                             for index in 0..chunk_size {
                                 let absolute_index = chunk_start + index;
                                 let value = kernel.evaluate::<_, _, false>(
                                     absolute_index,
                                     inputs,
                                     challenges,
-                                    ctx,
+                                    &(),
                                 );
                                 for i in 0..2 {
                                     accumulator[index][i].add_assign(&value[i]);
@@ -240,12 +239,6 @@ pub fn evaluate_single_input_type_fixed_in_out_kernel_with_base_inputs<
                         },
                     );
                 }
-                // for input in sources.extension_field_inputs.iter() {
-                //     dbg!(input.current_values());
-                // }
-                // for output in sources.extension_field_outputs.iter() {
-                //     dbg!(output.current_values());
-                // }
             }
             1 => {
                 let sources = storage.get_for_sumcheck_round_1(inputs, folding_challenges);
@@ -254,7 +247,7 @@ pub fn evaluate_single_input_type_fixed_in_out_kernel_with_base_inputs<
                     assert_eq!(sources.base_field_inputs.len(), IN);
                     assert_eq!(batch_challenges.len(), OUT);
 
-                    let inputs = sources.extension_field_inputs.as_array().unwrap_unchecked();
+                    let inputs = sources.base_field_inputs.as_array().unwrap_unchecked();
                     let challenges = batch_challenges.as_array().unwrap_unchecked();
 
                     apply_row_wise::<F, _>(
@@ -280,10 +273,6 @@ pub fn evaluate_single_input_type_fixed_in_out_kernel_with_base_inputs<
                             }
                         },
                     );
-                }
-                for source in sources.extension_field_inputs.iter() {
-                    dbg!(source.previous_values());
-                    dbg!(source.current_values());
                 }
             }
             2 => {
@@ -293,7 +282,7 @@ pub fn evaluate_single_input_type_fixed_in_out_kernel_with_base_inputs<
                     assert_eq!(sources.base_field_inputs.len(), IN);
                     assert_eq!(batch_challenges.len(), OUT);
 
-                    let inputs = sources.extension_field_inputs.as_array().unwrap_unchecked();
+                    let inputs = sources.base_field_inputs.as_array().unwrap_unchecked();
                     let challenges = batch_challenges.as_array().unwrap_unchecked();
 
                     apply_row_wise::<F, _>(
@@ -319,10 +308,6 @@ pub fn evaluate_single_input_type_fixed_in_out_kernel_with_base_inputs<
                             }
                         },
                     );
-                }
-                for source in sources.extension_field_inputs.iter() {
-                    dbg!(source.previous_values());
-                    dbg!(source.current_values());
                 }
             }
             i if i + 1 == total_sumcheck_rounds => {
@@ -334,7 +319,7 @@ pub fn evaluate_single_input_type_fixed_in_out_kernel_with_base_inputs<
                     assert_eq!(sources.base_field_inputs.len(), IN);
                     assert_eq!(batch_challenges.len(), OUT);
 
-                    let inputs = sources.extension_field_inputs.as_array().unwrap_unchecked();
+                    let inputs = sources.base_field_inputs.as_array().unwrap_unchecked();
                     let challenges = batch_challenges.as_array().unwrap_unchecked();
 
                     apply_row_wise::<F, _>(
@@ -362,16 +347,9 @@ pub fn evaluate_single_input_type_fixed_in_out_kernel_with_base_inputs<
                     );
                 }
 
-                println!("COLLECTING LAST LAYER VALUES");
-
-                for source in sources.extension_field_inputs.iter() {
-                    dbg!(source.current_values());
-                }
-
                 // Fill the storage
-                todo!();
 
-                // sources.collect_last_values(inputs, last_evaluations);
+                sources.collect_last_values(inputs, last_evaluations);
             }
             3.. => {
                 let sources =
@@ -381,7 +359,7 @@ pub fn evaluate_single_input_type_fixed_in_out_kernel_with_base_inputs<
                     assert_eq!(sources.base_field_inputs.len(), IN);
                     assert_eq!(batch_challenges.len(), OUT);
 
-                    let inputs = sources.extension_field_inputs.as_array().unwrap_unchecked();
+                    let inputs = sources.base_field_inputs.as_array().unwrap_unchecked();
                     let challenges = batch_challenges.as_array().unwrap_unchecked();
 
                     apply_row_wise::<F, _>(

@@ -3,10 +3,12 @@ use std::collections::BTreeMap;
 
 use crate::gkr::sumcheck::access_and_fold::GKRStorage;
 use crate::gkr::sumcheck::eq_poly::{
-    evaluate_constant_and_quadratic_coeffs_with_precomputed_eq, make_eq_poly_in_full,
+    evaluate_constant_and_quadratic_coeffs_with_precomputed_eq, evaluate_with_precomputed_eq,
+    evaluate_with_precomputed_eq_ext, make_eq_poly_in_full,
 };
 use crate::gkr::sumcheck::evaluation_kernels::{
-    BaseFieldCopyGKRRelation, BatchedGKRKernel, ExtensionCopyGKRRelation, GKRInputs,
+    BaseFieldCopyGKRRelation, BatchConstraintEvalGKRRelation, BatchedGKRKernel,
+    ExtensionCopyGKRRelation, GKRInputs, LookupBaseExtMinusBaseExtGKRRelation,
     LookupBaseMinusMultiplicityByBaseGKRRelation, LookupBasePairGKRRelation, LookupPairGKRRelation,
     LookupRationalPairWithUnbalancedBaseGKRRelation, MaskIntoIdentityProductGKRRelation,
     SameSizeProductGKRRelation,
@@ -19,6 +21,7 @@ use crate::worker::Worker;
 use cs::definitions::GKRAddress;
 use cs::gkr_compiler::{GKRLayerDescription, NoFieldGKRRelation};
 
+#[derive(Debug)]
 pub enum KernelVariant<F: PrimeField, E: FieldExtension<F> + Field> {
     BaseCopy(BaseFieldCopyGKRRelation),
     ExtCopy(ExtensionCopyGKRRelation),
@@ -28,6 +31,8 @@ pub enum KernelVariant<F: PrimeField, E: FieldExtension<F> + Field> {
     LookupBasePair(LookupBasePairGKRRelation<F, E>),
     LookupBaseMinusMultiplicity(LookupBaseMinusMultiplicityByBaseGKRRelation<F, E>),
     LookupUnbalanced(LookupRationalPairWithUnbalancedBaseGKRRelation<F, E>),
+    LookupWithCachedDensAndSetup(LookupBaseExtMinusBaseExtGKRRelation),
+    EnforceConstraintsMaxQuadratic(BatchConstraintEvalGKRRelation<F, E>),
 }
 
 macro_rules! dispatch_kernel {
@@ -41,6 +46,8 @@ macro_rules! dispatch_kernel {
             KernelVariant::LookupBasePair(ref $k) => $body,
             KernelVariant::LookupBaseMinusMultiplicity(ref $k) => $body,
             KernelVariant::LookupUnbalanced(ref $k) => $body,
+            KernelVariant::LookupWithCachedDensAndSetup(ref $k) => $body,
+            KernelVariant::EnforceConstraintsMaxQuadratic(ref $k) => $body,
         }
     };
 }
@@ -81,7 +88,8 @@ impl<F: PrimeField, E: FieldExtension<F> + Field> KernelVariant<F, E> {
 struct KernelCollector<F: PrimeField, E: FieldExtension<F> + Field> {
     kernels: Vec<KernelVariant<F, E>>,
     batch_challenges_per_kernel: Vec<Vec<E>>,
-    kernel_outputs: Vec<Vec<GKRAddress>>,
+    kernel_outputs_in_base: Vec<Vec<GKRAddress>>,
+    kernel_outputs_in_ext: Vec<Vec<GKRAddress>>,
     current_batch_challenge: E,
     batch_challenge_base: E,
 }
@@ -91,7 +99,8 @@ impl<F: PrimeField, E: FieldExtension<F> + Field> KernelCollector<F, E> {
         Self {
             kernels: Vec::new(),
             batch_challenges_per_kernel: Vec::new(),
-            kernel_outputs: Vec::new(),
+            kernel_outputs_in_base: Vec::new(),
+            kernel_outputs_in_ext: Vec::new(),
             current_batch_challenge: E::ONE,
             batch_challenge_base,
         }
@@ -107,8 +116,16 @@ impl<F: PrimeField, E: FieldExtension<F> + Field> KernelCollector<F, E> {
                 c
             })
             .collect();
-        self.kernel_outputs
-            .push(kernel.get_inputs().outputs_in_extension);
+        let inputs = kernel.get_inputs();
+        if inputs.outputs_in_extension.is_empty() || inputs.outputs_in_base.is_empty() {
+            assert!(
+                inputs.outputs_in_base.is_empty() ^ inputs.outputs_in_extension.is_empty(),
+                "failed to register kernel {:?}",
+                &kernel
+            );
+        }
+        self.kernel_outputs_in_base.push(inputs.outputs_in_base);
+        self.kernel_outputs_in_ext.push(inputs.outputs_in_extension);
         self.kernels.push(kernel);
         self.batch_challenges_per_kernel.push(challenges);
     }
@@ -119,11 +136,11 @@ impl<F: PrimeField, E: FieldExtension<F> + Field> KernelCollector<F, E> {
 
     fn compute_combined_claim(&self, output_claims: &BTreeMap<GKRAddress, E>) -> E {
         let mut combined = E::ZERO;
-        for (challenges, outputs) in self
-            .batch_challenges_per_kernel
-            .iter()
-            .zip(self.kernel_outputs.iter())
-        {
+        for (challenges, outputs) in self.batch_challenges_per_kernel.iter().zip(
+            self.kernel_outputs_in_base
+                .iter()
+                .chain(self.kernel_outputs_in_ext.iter()),
+        ) {
             for (challenge, addr) in challenges.iter().zip(outputs.iter()) {
                 if let Some(claim) = output_claims.get(addr) {
                     let mut weighted = *claim;
@@ -141,8 +158,12 @@ impl<F: PrimeField, E: FieldExtension<F> + Field> KernelCollector<F, E> {
         batch_challenge_base: E,
         gkr_storage: &GKRStorage<F, E>,
         lookup_challenges_additive_part: E,
+        challenge_for_constraints: E,
+        num_base_layer_memory_polys: usize,
+        num_base_layer_witness_polys: usize,
     ) -> Self {
         let mut collector = Self::new(batch_challenge_base);
+        assert!(layer.gates.is_empty() ^ layer.gates_with_external_connections.is_empty());
 
         for gate in layer
             .gates
@@ -154,6 +175,11 @@ impl<F: PrimeField, E: FieldExtension<F> + Field> KernelCollector<F, E> {
                     let is_base_field = gkr_storage.layers[layer_idx]
                         .base_field_inputs
                         .contains_key(input);
+                    let is_extension = gkr_storage.layers[layer_idx]
+                        .extension_field_inputs
+                        .contains_key(input);
+
+                    assert!(is_base_field ^ is_extension);
 
                     let kernel = if is_base_field {
                         KernelVariant::BaseCopy(BaseFieldCopyGKRRelation {
@@ -232,11 +258,32 @@ impl<F: PrimeField, E: FieldExtension<F> + Field> KernelCollector<F, E> {
                         },
                     ));
                 }
-                NoFieldGKRRelation::EnforceConstraintsMaxQuadratic { .. } => todo!(),
+                NoFieldGKRRelation::EnforceConstraintsMaxQuadratic { input } => {
+                    collector.register(KernelVariant::EnforceConstraintsMaxQuadratic(
+                        BatchConstraintEvalGKRRelation::new(
+                            input,
+                            num_base_layer_memory_polys,
+                            num_base_layer_witness_polys,
+                            challenge_for_constraints,
+                        ),
+                    ));
+                }
                 NoFieldGKRRelation::UnbalancedGrandProductWithCache { .. } => todo!(),
                 NoFieldGKRRelation::MaterializeSingleLookupInput { .. } => todo!(),
                 NoFieldGKRRelation::MaterializedVectorLookupInput { .. } => todo!(),
-                NoFieldGKRRelation::LookupWithCachedDensAndSetup { .. } => todo!(),
+                NoFieldGKRRelation::LookupWithCachedDensAndSetup {
+                    input,
+                    setup,
+                    output,
+                } => {
+                    collector.register(KernelVariant::LookupWithCachedDensAndSetup(
+                        LookupBaseExtMinusBaseExtGKRRelation {
+                            nums: [input[0], setup[0]],
+                            dens: [input[1], setup[1]],
+                            outputs: *output,
+                        },
+                    ));
+                }
                 NoFieldGKRRelation::LookupPairFromBaseInputs { .. } => todo!(),
                 NoFieldGKRRelation::LookupUnbalancedPairWithBaseInputs { .. } => todo!(),
                 NoFieldGKRRelation::LookupFromBaseInputsWithSetup { .. } => todo!(),
@@ -392,11 +439,11 @@ pub fn evaluate_sumcheck_for_layer<F: PrimeField, E: FieldExtension<F> + Field>(
     claim_points: &mut BTreeMap<usize, Vec<E>>,
     claims_storage: &mut BTreeMap<usize, BTreeMap<GKRAddress, E>>,
     gkr_storage: &mut GKRStorage<F, E>,
-    _compiled_circuit: &cs::gkr_compiler::GKRCircuitArtifact<F>,
+    compiled_circuit: &cs::gkr_compiler::GKRCircuitArtifact<F>,
     _external_challenges: &crate::gkr::prover::GKRExternalChallenges<F, E>,
     trace_len: usize,
     lookup_challenges_additive_part: E,
-    _constraints_batch_challenge: E,
+    constraints_batch_challenge: E,
     worker: &Worker,
 ) {
     println!("Evaluating layer {} in sumcheck direction", layer_idx);
@@ -412,7 +459,7 @@ pub fn evaluate_sumcheck_for_layer<F: PrimeField, E: FieldExtension<F> + Field>(
 
     debug_assert!(trace_len.is_power_of_two());
     let folding_steps = trace_len.trailing_zeros() as usize;
-    assert!(folding_steps > 1, "need at least 2 folding steps");
+    assert!(folding_steps >= 4, "need at least 4 folding steps");
 
     // Precompute eq polynomial evaluations over the boolean hypercube
     let eq_polys = make_eq_poly_in_full::<E>(prev_challenges);
@@ -426,6 +473,9 @@ pub fn evaluate_sumcheck_for_layer<F: PrimeField, E: FieldExtension<F> + Field>(
         batch_challenge_base,
         gkr_storage,
         lookup_challenges_additive_part,
+        constraints_batch_challenge,
+        compiled_circuit.memory_layout.total_width,
+        compiled_circuit.witness_layout.total_width,
     );
     debug_assert!(!collector.is_empty());
 
@@ -451,11 +501,33 @@ pub fn evaluate_sumcheck_for_layer<F: PrimeField, E: FieldExtension<F> + Field>(
         .map(|(addr, &[f0, f1])| (*addr, interpolate_linear::<F, E>(f0, f1, last_r)))
         .collect();
 
+    // self-check
+    {
+        let eq_polys = make_eq_poly_in_full::<E>(&folding_challenges);
+        for (k, v) in new_claims.iter() {
+            if let Some(poly) = gkr_storage.try_get_base_poly(*k) {
+                let eval = evaluate_with_precomputed_eq(poly, &eq_polys.last().unwrap()[..]);
+                assert_eq!(eval, *v, "claim diverged for poly {:?}", k);
+            } else {
+                if let Some(poly) = gkr_storage.try_get_ext_poly(*k) {
+                    let eval =
+                        evaluate_with_precomputed_eq_ext(poly, &eq_polys.last().unwrap()[..]);
+                    assert_eq!(eval, *v, "claim diverged for poly {:?}", k);
+                } else {
+                    unreachable!()
+                }
+            }
+        }
+    }
+
     claims_storage.insert(layer_idx, new_claims);
     claim_points.insert(layer_idx, folding_challenges);
+
+    // and we can purge the storage
+    gkr_storage.purge_up_to_layer(layer_idx);
 }
 
-#[inline]
+#[inline(always)]
 fn interpolate_linear<F: PrimeField, E: FieldExtension<F> + Field>(f0: E, f1: E, r: &E) -> E {
     let mut result = f1;
     result.sub_assign(&f0);

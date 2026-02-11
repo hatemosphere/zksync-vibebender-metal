@@ -1,71 +1,162 @@
-use cs::definitions::GKRAddress;
+use std::alloc::Global;
+
+use cs::{definitions::GKRAddress, gkr_compiler::NoFieldMaxQuadraticConstraintsGKRRelation};
+use fft::materialize_powers_serial_starting_with_one;
 
 use super::*;
 
-pub struct BatchConstraintEvalGKRRelation<F: PrimeField, E: FieldExtension<F> + PrimeField> {
-    pub quadratic_parts: Vec<((GKRAddress, GKRAddress), Vec<(F, usize)>)>,
-    pub linear_parts: Vec<(GKRAddress, Vec<(F, usize)>)>,
-    pub num_memory_polys: usize,
-    pub num_witness_polys: usize,
-    _marker: core::marker::PhantomData<(F, E)>,
+#[derive(Debug)]
+pub struct BatchConstraintEvalGKRRelation<F: PrimeField, E: FieldExtension<F> + Field> {
+    pub kernel: BatchConstraintEvalGKRRelationKernel<F, E>,
+    pub inputs: Vec<GKRAddress>,
 }
 
-impl<F: PrimeField, E: FieldExtension<F> + PrimeField> BatchConstraintEvalGKRRelation<F, E> {
-    pub fn make_kernel(
-        &self,
-        challenges_for_constraints: &[E],
-    ) -> BatchConstraintEvalGKRRelationKernel<F, E> {
-        // this remapping is memory || witness || setup, and it should be consistent with selection order
-        let mut quadratic_parts = Vec::with_capacity(self.quadratic_parts.len());
-        for ((a, b), set) in self.quadratic_parts.iter() {
-            let a_offset = match *a {
+impl<F: PrimeField, E: FieldExtension<F> + Field> BatchConstraintEvalGKRRelation<F, E> {
+    pub fn new(
+        input: &NoFieldMaxQuadraticConstraintsGKRRelation,
+        num_memory_polys: usize,
+        num_witness_polys: usize,
+        challenge_for_constraints: E,
+    ) -> Self {
+        let challenges_for_constraints = materialize_powers_serial_starting_with_one::<_, Global>(
+            challenge_for_constraints,
+            input.quadratic_terms.len(),
+        );
+
+        let mut inputs = vec![GKRAddress::placeholder(); num_memory_polys + num_witness_polys];
+        let mut kernel = BatchConstraintEvalGKRRelationKernel {
+            quadratic_parts: vec![],
+            linear_parts: vec![],
+            constant_offset: E::ZERO,
+            _marker: core::marker::PhantomData,
+        };
+
+        let remap_offset = |a: GKRAddress| {
+            match a {
                 GKRAddress::BaseLayerMemory(offset) => offset,
-                GKRAddress::BaseLayerWitness(offset) => offset + self.num_memory_polys,
+                GKRAddress::BaseLayerWitness(offset) => offset + num_memory_polys,
                 GKRAddress::Setup(offset) => {
-                    offset + self.num_memory_polys + self.num_witness_polys
+                    unreachable!()
+                    // offset + self.num_memory_polys + self.num_witness_polys
                 }
                 _ => {
                     unreachable!()
                 }
-            };
-            let b_offset = match *b {
-                GKRAddress::BaseLayerMemory(offset) => offset,
-                GKRAddress::BaseLayerWitness(offset) => offset + self.num_memory_polys,
-                GKRAddress::Setup(offset) => {
-                    offset + self.num_memory_polys + self.num_witness_polys
-                }
-                _ => {
-                    unreachable!()
-                }
-            };
+            }
+        };
+
+        for ((a, b), set) in input.quadratic_terms.iter() {
+            let a_offset = remap_offset(*a);
+            inputs[a_offset] = *a;
+            let b_offset = remap_offset(*b);
+            inputs[b_offset] = *b;
             let mut total_prefactor = E::ZERO;
             for (c, pow) in set.iter() {
                 let mut t = challenges_for_constraints[*pow];
-                t.mul_assign_by_base(c);
+                let c = F::from_u32_with_reduction(*c);
+                t.mul_assign_by_base(&c);
                 total_prefactor.add_assign(&t);
             }
-            quadratic_parts.push(((a_offset, b_offset), total_prefactor));
+            kernel
+                .quadratic_parts
+                .push(((a_offset, b_offset), total_prefactor));
         }
 
-        let linear_parts = vec![]; // todo!();
-
-        BatchConstraintEvalGKRRelationKernel {
-            quadratic_parts,
-            linear_parts,
-            _marker: core::marker::PhantomData,
+        for (a, set) in input.linear_terms.iter() {
+            let a_offset = remap_offset(*a);
+            inputs[a_offset] = *a;
+            let mut total_prefactor = E::ZERO;
+            for (c, pow) in set.iter() {
+                let mut t = challenges_for_constraints[*pow];
+                let c = F::from_u32_with_reduction(*c);
+                t.mul_assign_by_base(&c);
+                total_prefactor.add_assign(&t);
+            }
+            kernel.linear_parts.push((a_offset, total_prefactor));
         }
+
+        for (c, pow) in input.constants.iter() {
+            let mut t = challenges_for_constraints[*pow];
+            let c = F::from_u32_with_reduction(*c);
+            t.mul_assign_by_base(&c);
+            kernel.constant_offset.add_assign(&t);
+        }
+
+        Self { inputs, kernel }
     }
 }
 
+impl<F: PrimeField, E: FieldExtension<F> + Field> BatchedGKRKernel<F, E>
+    for BatchConstraintEvalGKRRelation<F, E>
+{
+    fn num_challenges(&self) -> usize {
+        1
+    }
+
+    fn get_inputs(&self) -> GKRInputs {
+        GKRInputs {
+            inputs_in_base: self.inputs.clone(),
+            inputs_in_extension: Vec::new(),
+            outputs_in_base: Vec::new(),
+            outputs_in_extension: Vec::new(),
+        }
+    }
+
+    fn evaluate_forward_over_storage(
+        &self,
+        storage: &mut GKRStorage<F, E>,
+        expected_output_layer: usize,
+        trace_len: usize,
+        worker: &Worker,
+    ) {
+        unreachable!();
+    }
+
+    fn evaluate_over_storage(
+        &self,
+        storage: &mut GKRStorage<F, E>,
+        step: usize,
+        batch_challenges: &[E],
+        folding_challenges: &[E],
+        accumulator: &mut [[E; 2]],
+        total_sumcheck_rounds: usize,
+        last_evaluations: &mut BTreeMap<GKRAddress, [E; 2]>,
+        worker: &Worker,
+    ) {
+        println!("Evaluating {}", std::any::type_name::<Self>());
+
+        assert_eq!(
+            batch_challenges.len(),
+            <Self as BatchedGKRKernel<F, E>>::num_challenges(self)
+        );
+        let kernel = &self.kernel;
+        let inputs = <Self as BatchedGKRKernel<F, E>>::get_inputs(self);
+
+        evaluate_single_input_kernel_with_base_inputs(
+            kernel,
+            &inputs,
+            storage,
+            step,
+            batch_challenges,
+            folding_challenges,
+            accumulator,
+            total_sumcheck_rounds,
+            last_evaluations,
+            worker,
+        );
+    }
+}
+
+#[derive(Debug)]
 // Assumes reordering of access implementors, to have lhs at 0 and rhs at 1
-pub struct BatchConstraintEvalGKRRelationKernel<F: PrimeField, E: FieldExtension<F> + PrimeField> {
+pub struct BatchConstraintEvalGKRRelationKernel<F: PrimeField, E: FieldExtension<F> + Field> {
     pub quadratic_parts: Vec<((usize, usize), E)>,
     pub linear_parts: Vec<(usize, E)>,
+    pub constant_offset: E,
     _marker: core::marker::PhantomData<F>,
 }
 
-impl<F: PrimeField, E: FieldExtension<F> + PrimeField>
-    SingleInputTypeBatchSumcheckEvaluationKernel<F, E>
+impl<F: PrimeField, E: FieldExtension<F> + Field> SingleInputTypeBatchSumcheckEvaluationKernel<F, E>
     for BatchConstraintEvalGKRRelationKernel<F, E>
 {
     fn num_challenges(&self) -> usize {
@@ -88,8 +179,16 @@ impl<F: PrimeField, E: FieldExtension<F> + PrimeField>
         let mut result = [E::ZERO; 2];
         let ctx = r0_sources[0].get_collapse_context();
         for ((a, b), challenge) in self.quadratic_parts.iter() {
-            let a = r0_sources[*a].get_f1_minus_f0_only(index);
-            let b = r0_sources[*b].get_f1_minus_f0_only(index);
+            let (a, b) = if *a != *b {
+                let a = r0_sources[*a].get_f1_minus_f0_only(index);
+                let b = r0_sources[*b].get_f1_minus_f0_only(index);
+
+                (a, b)
+            } else {
+                let a = r0_sources[*a].get_f1_minus_f0_only(index);
+                (a, a)
+            };
+
             {
                 let mut t = a;
                 t.repr_mul_assign::<true>(&b);
@@ -131,8 +230,16 @@ impl<F: PrimeField, E: FieldExtension<F> + PrimeField>
         let mut result = [E::ZERO; 2];
         let ctx = r0_sources[0].get_collapse_context();
         for ((a, b), challenge) in self.quadratic_parts.iter() {
-            let a = r0_sources[*a].get_two_points::<EXPLICIT_FORM>(index);
-            let b = r0_sources[*b].get_two_points::<EXPLICIT_FORM>(index);
+            let (a, b) = if *a != *b {
+                let a = r0_sources[*a].get_two_points::<EXPLICIT_FORM>(index);
+                let b = r0_sources[*b].get_two_points::<EXPLICIT_FORM>(index);
+
+                (a, b)
+            } else {
+                let a = r0_sources[*a].get_two_points::<EXPLICIT_FORM>(index);
+                (a, a)
+            };
+
             for i in 0..2 {
                 let mut t = a[i];
                 t.repr_mul_assign::<true>(&b[i]);
@@ -151,6 +258,7 @@ impl<F: PrimeField, E: FieldExtension<F> + PrimeField>
                 result[0].add_assign(&contribution);
             }
         }
+        result[0].add_assign(&self.constant_offset);
 
         result[0].mul_assign(&batch_challenges[0]);
         result[1].mul_assign(&batch_challenges[0]);

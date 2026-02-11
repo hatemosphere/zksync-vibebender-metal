@@ -41,9 +41,7 @@ pub trait EvaluationRepresentation<F: PrimeField, E: FieldExtension<F> + Field>:
         &self,
         other: &E,
         ctx: &Self::CollapseContext,
-    ) -> E {
-        todo!()
-    }
+    ) -> E;
     fn mul_by_ext<const ASSUME_NO_PRODUCTS_BEFORE: bool>(
         &self,
         other: &E,
@@ -81,6 +79,14 @@ impl<F: PrimeField, E: FieldExtension<F> + Field> EvaluationRepresentation<F, E>
     }
     #[inline(always)]
     fn mul_by_ext<const ASSUME_NO_PRODUCTS_BEFORE: bool>(
+        &self,
+        _other: &E,
+        _ctx: &Self::CollapseContext,
+    ) -> E {
+        unreachable!()
+    }
+    #[inline(always)]
+    fn sub_from_ext<const ASSUME_NO_PRODUCTS_BEFORE: bool>(
         &self,
         _other: &E,
         _ctx: &Self::CollapseContext,
@@ -137,6 +143,17 @@ impl<F: PrimeField, E: FieldExtension<F> + Field> EvaluationRepresentation<F, E>
     ) -> E {
         let mut result = *other;
         result.mul_assign_by_base(&self.0);
+        result
+    }
+    #[inline(always)]
+    fn sub_from_ext<const ASSUME_NO_PRODUCTS_BEFORE: bool>(
+        &self,
+        other: &E,
+        _ctx: &Self::CollapseContext,
+    ) -> E {
+        let mut result = *other;
+        result.sub_assign_base(&self.0);
+
         result
     }
 }
@@ -243,6 +260,21 @@ impl<F: PrimeField, E: FieldExtension<F> + Field> EvaluationRepresentation<F, E>
 
         t
     }
+    #[inline(always)]
+    fn sub_from_ext<const ASSUME_NO_PRODUCTS_BEFORE: bool>(
+        &self,
+        other: &E,
+        ctx: &Self::CollapseContext,
+    ) -> E {
+        let mut result = *other;
+        let mut t = ctx.0;
+        t.mul_assign_by_base(&self.c1);
+        t.add_assign_base(&self.c0);
+
+        result.sub_assign(&t);
+
+        result
+    }
 }
 
 #[derive(Clone, Copy, Debug)]
@@ -314,6 +346,17 @@ impl<F: PrimeField, E: FieldExtension<F> + Field> EvaluationRepresentation<F, E>
 
         t
     }
+    #[inline(always)]
+    fn sub_from_ext<const ASSUME_NO_PRODUCTS_BEFORE: bool>(
+        &self,
+        other: &E,
+        _ctx: &Self::CollapseContext,
+    ) -> E {
+        let mut result = *other;
+        result.sub_assign(&self.value);
+
+        result
+    }
 }
 
 pub trait EvaluationFormStorage<
@@ -374,20 +417,6 @@ impl<F: PrimeField, E: FieldExtension<F> + Field, R: EvaluationRepresentation<F,
         unreachable!()
     }
 }
-
-// pub struct SumcheckAccumulatorDst<F: PrimeField, E: FieldExtension<F> + Field> {
-//     pub(crate) dest: *mut [E; 2],
-//     pub(crate) _marker: core::marker::PhantomData<F>,
-// }
-
-// unsafe impl<F: PrimeField, E: FieldExtension<F> + Field> Send for SumcheckAccumulatorDst<F, E> {}
-
-// impl<F: PrimeField, E: FieldExtension<F> + Field> SumcheckAccumulatorDst<F, E> {
-//     #[inline(always)]
-//     pub(crate) fn get_dst(&self, index: usize) -> &mut [E; 2] {
-//         unsafe { self.dest.add(index).as_mut_unchecked() }
-//     }
-// }
 
 pub trait SingleInputTypeBatchSumcheckEvaluationKernel<F: PrimeField, E: FieldExtension<F> + Field>
 {
