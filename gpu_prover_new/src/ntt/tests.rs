@@ -22,7 +22,7 @@ use crate::device_structures::{
 use crate::field::BaseField;
 use crate::ntt::{
     main_to_coset, main_to_coset_tile_8, main_to_coset_coalesced, main_to_coset_register_pipeline,
-    main_to_coset_pipeline_tile_8,
+    main_to_coset_pipeline_tile_8, main_to_coset_pc,
 };
 
 type BF = BaseField;
@@ -109,6 +109,13 @@ fn run_main_to_coset(
                 &stream,
             )
             .unwrap(),
+            5 => main_to_coset_pc(
+                &inputs_device_matrix,
+                &mut outputs_device_matrix,
+                log_n,
+                &stream,
+            )
+            .unwrap(),
             _ => {},
         };
         memory_copy_async(
@@ -163,6 +170,13 @@ fn run_main_to_coset(
             )
             .unwrap(),
             4 => main_to_coset_pipeline_tile_8(
+                &inplace_input_view_matrix,
+                &mut inplace_output_view_matrix,
+                log_n,
+                &stream,
+            )
+            .unwrap(),
+            5 => main_to_coset_pc(
                 &inplace_input_view_matrix,
                 &mut inplace_output_view_matrix,
                 log_n,
@@ -249,4 +263,10 @@ fn test_main_to_coset_register_pipeline() {
 #[serial]
 fn test_main_to_coset_pipeline_tile_8() {
     run_main_to_coset(24..25, 1, 4);
+}
+
+#[test]
+#[serial]
+fn test_main_to_coset_pc() {
+    run_main_to_coset(24..25, 8, 5);
 }
