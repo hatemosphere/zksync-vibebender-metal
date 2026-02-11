@@ -485,9 +485,10 @@ EXTERN __launch_bounds__(640, 1) __global__
   gmem_in.add_row(gmem_block_offset);
   gmem_out.add_row(gmem_block_offset);
 
-  extern __shared__ bf smem_block[]; // 16384 * 4 bytes
+  extern __shared__ uint8_t dynamic_smem[]; // 16384 * 4 bytes
+  bf *smem_block = reinterpret_cast<bf *>(dynamic_smem);
 
-  __shared__ __mbarrier_t bars[2];
+  __mbarrier_t *bars = reinterpret_cast<__mbarrier_t *>(dynamic_smem + 16384 * sizeof(bf));
   if (threadIdx.x < 2)
     __mbarrier_init(bars + threadIdx.x, blockDim.x);
   unsigned ptx_bar_all{0}, ptx_bar_count_all{blockDim.x};

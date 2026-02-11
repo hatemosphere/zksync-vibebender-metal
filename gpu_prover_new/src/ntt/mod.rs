@@ -67,7 +67,7 @@ pub fn main_to_coset_pc(
     let outputs_matrix_const = outputs_matrix.as_ptr_and_stride();
     let outputs_matrix_mut = outputs_matrix.as_mut_ptr_and_stride();
     let BF_VALS_PER_BLOCK = 16384;
-    let smem_bytes = BF_VALS_PER_BLOCK * size_of::<BF>();
+    let smem_bytes = BF_VALS_PER_BLOCK * size_of::<BF>() + 16;
     let consumer_threads = 512;
     let producer_threads = 128;
     let threads = consumer_threads + producer_threads;
