@@ -14,7 +14,7 @@ use crate::gkr::prover::setup::GKRSetup;
 use crate::gkr::prover::stages::stage1;
 use crate::gkr::prover::transcript_utils::draw_random_field_els;
 use crate::gkr::sumcheck::access_and_fold::GKRStorage;
-use crate::gkr::whir::ColumnMajorBaseOracleForLDE;
+use crate::gkr::whir::{ColumnMajorBaseOracleForLDE, whir_fold};
 use crate::gkr::witness_gen::family_circuits::GKRFullWitnessTrace;
 use crate::merkle_trees::ColumnMajorMerkleTreeConstructor;
 use crate::merkle_trees::MerkleTreeCapVarLength;
@@ -409,5 +409,50 @@ where
         );
     }
 
+    assert_eq!(claims_for_layers[&0].len(), compiled_circuit.memory_layout.total_width + compiled_circuit.witness_layout.total_width + setup.hypercube_evals.len());
+
+    let mut mem_polys_claims = Vec::with_capacity(compiled_circuit.memory_layout.total_width);
+    for i in 0..compiled_circuit.memory_layout.total_width {
+        let value = claims_for_layers[&0].get(&GKRAddress::BaseLayerMemory(i)).copied().expect("must be present");
+        mem_polys_claims.push(value);
+    }
+    let mut wit_polys_claims = Vec::with_capacity(compiled_circuit.witness_layout.total_width);
+    for i in 0..compiled_circuit.witness_layout.total_width {
+        let value = claims_for_layers[&0].get(&GKRAddress::BaseLayerWitness(i)).copied().expect("must be present");
+        wit_polys_claims.push(value);
+    }
+    let mut setup_polys_claims = Vec::with_capacity(setup.hypercube_evals.len());
+    for i in 0..setup.hypercube_evals.len() {
+        let value = claims_for_layers[&0].get(&GKRAddress::Setup(i)).copied().expect("must be present");
+        setup_polys_claims.push(value);
+    }
+    let original_evaluation_point = points_for_claims_at_layer[&0].clone();
+
+    let whir_batching_challenge = draw_random_field_els::<F, E>(&mut seed, 1);
+    let whir_batching_challenge = whir_batching_challenge[0];
+
     todo!();
+
+    // let whir_proof = whir_fold(
+    //     mem_oracle,
+    //     mem_polys_claims,
+    //     wit_oracle,
+    //     wit_polys_claims,
+    //     setup_commitment,
+    //     setup_polys_claims,
+    //     original_evaluation_point,
+    //     lde_factor,
+    //     whir_batching_challenge,
+    //     whir_steps_schedule,
+    //     whir_queries_schedule,
+    //     whir_steps_lde_factors,
+    //     whir_pow_schedule,
+    //     twiddles,
+    //     seed,
+    //     tree_cap_size,
+    //     trace_len.trailing_zeros() as usize,
+    //     worker
+    // );
+
+    // todo!();
 }
