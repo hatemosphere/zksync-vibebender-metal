@@ -27,6 +27,7 @@ pub mod setup;
 pub mod stages;
 pub mod sumcheck_loop;
 pub mod transcript_utils;
+pub mod backward_loop;
 
 pub(crate) struct SendPtr<T: Sized>(*mut T);
 unsafe impl<T: Send + Sync> Send for SendPtr<T> {}
@@ -184,7 +185,10 @@ pub fn prove_configured_with_gkr<
 ) -> GKRProof<F, E, T>
 where
     [(); F::DEGREE]: Sized,
-    [(); E::DEGREE]: Sized,
+    [(); <E as FieldExtension<F>>::DEGREE]: Sized,
+    E: backward_loop::FEXT, 
+    [(); <E as FieldExtension<<E as backward_loop::FEXT>::F>>::DEGREE]:,
+    [(); 8/<E as FieldExtension<<E as backward_loop::FEXT>::F>>::DEGREE]:,
 {
     assert_eq!(compiled_circuit.trace_len, trace_len);
     assert_eq!(
@@ -235,7 +239,7 @@ where
     let mut seed = Transcript::commit_initial(&transcript_input);
 
     // now we need to draw prove-local challenges, and in our case it's just a challenge for lookups, and challenge to batch all constraints
-    let challenges: Vec<E> = draw_random_field_els(&mut seed, 3);
+    let challenges: Vec<E> = draw_random_field_els::<F, E>(&mut seed, 3);
     let [lookup_alpha, lookup_additive_part, constraints_batch_challenge] =
         challenges.try_into().unwrap();
     // let [lookup_alpha, lookup_additive_part, constraints_batch_challenge] = [
@@ -297,7 +301,38 @@ where
         claim_lookupnum,
         claim_lookupden,
         evaluation_point,
-    ) = debug_utils::mock_output_claims(compiled_circuit, &gkr_storage, trace_len);
+    ) = {
+
+        // for key in [
+        //     OutputType::PermutationProduct,
+        //     OutputType::Lookup16Bits,
+        //     OutputType::LookupTimestamps,
+        //     OutputType::GenericLookup,
+        // ] {
+        //     let addresses = &compiled_circuit.global_output_map[&key];
+        //     for address in addresses.iter() {
+        //         let poly = gkr_storage.get_ext_poly(*address);
+        //     }
+        // }
+        let &[addr_readset, addr_writeset] = &compiled_circuit.global_output_map[&OutputType::PermutationProduct][..] else {unreachable!()};
+        let &[addr_lookupnum, addr_lookupden] = &compiled_circuit.global_output_map[&OutputType::GenericLookup][..] else {unreachable!()};
+        let &[addr_rangechecknum, addr_rangecheckden] = &compiled_circuit.global_output_map[&OutputType::Lookup16Bits][..] else {unreachable!()};
+        let &[addr_timechecknum, addr_timecheckden] = &compiled_circuit.global_output_map[&OutputType::LookupTimestamps][..] else {unreachable!()};
+        let mut trace_readset = gkr_storage.get_ext_poly(addr_readset).to_vec();
+        let mut trace_writeset = gkr_storage.get_ext_poly(addr_writeset).to_vec();
+        let mut trace_lookupnum = gkr_storage.get_ext_poly(addr_lookupnum).to_vec();
+        let mut trace_lookupden = gkr_storage.get_ext_poly(addr_lookupden).to_vec();
+        let mut trace_rangechecknum = gkr_storage.get_ext_poly(addr_rangechecknum).to_vec();
+        let mut trace_rangecheckden = gkr_storage.get_ext_poly(addr_rangecheckden).to_vec();
+        let mut trace_timechecknum = gkr_storage.get_ext_poly(addr_timechecknum).to_vec();
+        let mut trace_timecheckden = gkr_storage.get_ext_poly(addr_timecheckden).to_vec();
+        let mut tx = backward_loop::Transcript::from_seed(seed.0);
+        // 2^24 size will get checked at runtime by backward_loop
+        let claims_and_point = backward_loop::gkr_full_hightolow::<24, _, 5>(&mut tx, &mut trace_readset, &mut trace_writeset, &mut trace_lookupnum, &mut trace_lookupden, &mut trace_rangechecknum, &mut trace_rangecheckden, &mut trace_timechecknum, &mut trace_timecheckden);
+        seed.0 = tx.to_seed();
+        claims_and_point
+    };
+    let evaluation_point = evaluation_point.to_vec();
 
     let output_map = &compiled_circuit.global_output_map;
     let mut top_layer_claims: BTreeMap<GKRAddress, E> = BTreeMap::new();

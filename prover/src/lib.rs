@@ -9,6 +9,7 @@
 #![feature(vec_push_within_capacity)]
 #![feature(maybe_uninit_fill)]
 #![feature(lazy_type_alias)] // NECESSARY TO AVOID UGLY LIFETIME BOUND ISSUE
+#![feature(split_array)]
 
 #[cfg(feature = "debug_satisfiable")]
 pub const DEBUG_QUOTIENT: bool = true;
