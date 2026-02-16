@@ -163,7 +163,7 @@ pub fn serial_ct_ntt_natural_to_bitreversed<F: Field, E: Field + FieldExtension<
         pairs_per_group /= 2;
         num_groups *= 2;
         distance /= 2;
-        if stage == 18 { break; }
+        if stage == 23 { break; }
         stage += 1;
     }
 }

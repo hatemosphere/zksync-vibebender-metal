@@ -35,12 +35,14 @@ fn run_main_to_coset(
     let ctx = DeviceContext::create(12).unwrap();
     let n_max = 1 << (log_n_range.end - 1);
     let worker = Worker::new();
+    let stream = CudaStream::default();
     let twiddles = precompute_twiddles_for_fft::<BF, Global, true>(n_max, &worker);
 
     let mut rng = rand::rng();
     const OFFSET: usize = 0;
     let max_stride: usize = n_max + OFFSET;
     let max_memory_size = (max_stride * num_bf_cols) as usize;
+    let flush_l2_size = 1 << 26;
     // Using parallel rng generation, as in the benches, does not reduce runtime noticeably
     let mut inputs_orig_host =
         HostAllocation::<BF>::alloc(max_memory_size, CudaHostAllocFlags::DEFAULT).unwrap();
@@ -51,10 +53,15 @@ fn run_main_to_coset(
         HostAllocation::<BF>::alloc(max_memory_size, CudaHostAllocFlags::DEFAULT).unwrap();
     let mut inplace_host =
         HostAllocation::<BF>::alloc(max_memory_size, CudaHostAllocFlags::DEFAULT).unwrap();
+    let mut flush_l2_host =
+        HostAllocation::<BF>::alloc(flush_l2_size, CudaHostAllocFlags::DEFAULT).unwrap();
     let mut inputs_device = DeviceAllocation::<BF>::alloc(max_memory_size).unwrap();
     let mut outputs_device = DeviceAllocation::<BF>::alloc(max_memory_size).unwrap();
     let mut inplace_device = DeviceAllocation::<BF>::alloc(max_memory_size).unwrap();
-    let stream = CudaStream::default();
+    let mut flush_l2_device = DeviceAllocation::<BF>::alloc(1 << 26).unwrap();
+    let mut flush_l2 = || {
+        memory_copy_async(&mut flush_l2_device[..], &flush_l2_host[..], &stream).unwrap();
+    };
     for log_n in log_n_range {
         let n = (1 << log_n) as usize;
         let stride = n + OFFSET;
@@ -69,6 +76,7 @@ fn run_main_to_coset(
             &stream,
         )
         .unwrap();
+        flush_l2();
         let inputs_device_matrix =
             DeviceMatrixChunk::new(&inputs_device[0..memory_size], stride, OFFSET, n);
         let mut outputs_device_matrix =
@@ -132,6 +140,7 @@ fn run_main_to_coset(
             &stream,
         )
         .unwrap();
+        flush_l2();
         let inplace_output_view = &mut inplace_device[0..memory_size];
         let inplace_input_view = unsafe {
             DeviceSlice::from_raw_parts(inplace_output_view.as_ptr(), inplace_output_view.len())
