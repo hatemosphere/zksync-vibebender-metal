@@ -294,26 +294,14 @@ where
     let (
         claim_readset,
         claim_writeset,
+        claim_lookupnum,
+        claim_lookupden,
         claim_rangechecknum,
         claim_rangecheckden,
         claim_timechecknum,
         claim_timecheckden,
-        claim_lookupnum,
-        claim_lookupden,
         evaluation_point,
     ) = {
-
-        // for key in [
-        //     OutputType::PermutationProduct,
-        //     OutputType::Lookup16Bits,
-        //     OutputType::LookupTimestamps,
-        //     OutputType::GenericLookup,
-        // ] {
-        //     let addresses = &compiled_circuit.global_output_map[&key];
-        //     for address in addresses.iter() {
-        //         let poly = gkr_storage.get_ext_poly(*address);
-        //     }
-        // }
         let &[addr_readset, addr_writeset] = &compiled_circuit.global_output_map[&OutputType::PermutationProduct][..] else {unreachable!()};
         let &[addr_lookupnum, addr_lookupden] = &compiled_circuit.global_output_map[&OutputType::GenericLookup][..] else {unreachable!()};
         let &[addr_rangechecknum, addr_rangecheckden] = &compiled_circuit.global_output_map[&OutputType::Lookup16Bits][..] else {unreachable!()};
