@@ -331,7 +331,7 @@ impl<F: PrimeField, E: FieldExtension<F> + Field> EvaluationRepresentation<F, E>
         _ctx: &Self::CollapseContext,
     ) -> E {
         let mut t = self.value;
-        t.mul_assign(other);
+        t.add_assign(other);
 
         t
     }

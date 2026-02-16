@@ -143,7 +143,6 @@ impl<F: PrimeField, E: FieldExtension<F> + Field>
             &[d1],
             &[a1, b1],
             &(),
-            &self.lookup_additive_challenge,
         );
 
         eval_0_term_0.mul_assign(&batch_challenges[0]);
@@ -202,7 +201,6 @@ impl<F: PrimeField, E: FieldExtension<F> + Field>
                 &[d1],
                 &[a1, b1],
                 ctx,
-                &self.lookup_additive_challenge,
             );
 
             eval_0_term_0.mul_assign(&batch_challenges[0]);
@@ -272,17 +270,12 @@ fn pointwise_eval_quadratic_only_impl<
     input: &[RB; 1],
     ext_input: &[ExtensionFieldRepresentation<F, E>; 2],
     ctx: &RB::CollapseContext,
-    lookup_additive_challenge: &E,
 ) -> [E; 2] {
-    // a/b + 1/d -> (ad), bd
+    // a/b + 1/(d+constant) -> (ad), bd
     let [d] = input;
     let [a, b] = ext_input;
-    let d = d.add_with_ext::<true>(lookup_additive_challenge, ctx);
-    let mut num = a.value;
-    num.mul_assign(&d);
-
-    let mut den = b.into_value();
-    den.mul_assign(&d);
+    let num = d.mul_by_ext::<true>(&a.value, ctx);
+    let den = d.mul_by_ext::<true>(&b.value, ctx);
 
     [num, den]
 }
