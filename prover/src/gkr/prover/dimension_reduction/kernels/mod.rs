@@ -18,12 +18,12 @@ pub trait DimensionReducingEvaluationKernel<
     #[inline(always)]
     fn evaluate_forward<S: EvaluationFormStorage<F, E, ExtensionFieldRepresentation<F, E>>>(
         &self,
-        index: usize,
+        output_index: usize,
         sources: &[S; IN],
     ) -> [E; OUT] {
-        debug_assert_eq!(index % 2, 0);
         assert!(IN > 0);
         assert!(OUT > 0);
+        let index = output_index * 2;
         let pairwise_index = index + 1;
         let a = std::array::from_fn(|i| sources[i].get_at_index(index));
         let b = std::array::from_fn(|i| sources[i].get_at_index(pairwise_index));
@@ -38,20 +38,22 @@ pub trait DimensionReducingEvaluationKernel<
         SOUT: EvaluationFormStorage<F, E, ExtensionFieldRepresentation<F, E>>,
     >(
         &self,
-        index: usize,
+        output_index: usize,
         sources: &[S; IN],
         output_sources: &[SOUT; OUT],
         batch_challenges: &[E; OUT],
     ) -> [E; 2] {
-        debug_assert_eq!(index % 2, 0);
         assert!(IN > 0);
         assert!(OUT > 0);
+        let index = output_index * 2;
         let pairwise_index = index + 1;
         unsafe {
             let mut result = [const { MaybeUninit::uninit() }; 2];
             // we have access to output
             {
-                let outputs = output_sources.each_ref().map(|el| el.get_f0_only(index));
+                let outputs = output_sources
+                    .each_ref()
+                    .map(|el| el.get_f0_only(output_index));
                 let mut eval = batch_challenges[0];
                 eval.mul_assign(&outputs[0].into_value());
                 for i in 1..OUT {
@@ -87,13 +89,13 @@ pub trait DimensionReducingEvaluationKernel<
         const EXPLICIT_FORM: bool,
     >(
         &self,
-        index: usize,
+        output_index: usize,
         sources: &[S; IN],
         batch_challenges: &[E; OUT],
     ) -> [E; 2] {
-        debug_assert_eq!(index % 2, 0);
         assert!(IN > 0);
         assert!(OUT > 0);
+        let index = output_index * 2;
         let pairwise_index = index + 1;
         unsafe {
             let mut result = [const { MaybeUninit::uninit() }; 2];
@@ -194,7 +196,7 @@ pub fn forward_evaluate_dimension_reducing_kernel<
                 let mut destinations: [&mut [MaybeUninit<E>]; OUT] = ext_dest.try_into().unwrap();
                 for index in 0..chunk_size {
                     let absolute_index = chunk_start + index;
-                    let value = kernel.evaluate_forward(absolute_index * 2, inputs);
+                    let value = kernel.evaluate_forward(absolute_index, inputs);
                     for (dst, val) in destinations.iter_mut().zip(value.into_iter()) {
                         dst[index].write(val);
                     }
@@ -234,6 +236,7 @@ pub fn evaluate_single_dimension_reducing_kernel<
 ) {
     let work_size = accumulator.len();
     assert!(work_size.is_power_of_two());
+    assert_eq!(work_size * 2, 1 << (total_sumcheck_rounds - step));
     unsafe {
         match step {
             0 => {
@@ -271,7 +274,7 @@ pub fn evaluate_single_dimension_reducing_kernel<
                             for index in 0..chunk_size {
                                 let absolute_index = chunk_start + index;
                                 let value = kernel.evaluate_first_round(
-                                    absolute_index * 2,
+                                    absolute_index,
                                     inputs,
                                     outputs,
                                     challenges,
@@ -302,11 +305,8 @@ pub fn evaluate_single_dimension_reducing_kernel<
                             let accumulator = ext_dest.pop().unwrap();
                             for index in 0..chunk_size {
                                 let absolute_index = chunk_start + index;
-                                let value = kernel.evaluate::<_, false>(
-                                    absolute_index * 2,
-                                    inputs,
-                                    challenges,
-                                );
+                                let value =
+                                    kernel.evaluate::<_, false>(absolute_index, inputs, challenges);
                                 for i in 0..2 {
                                     accumulator[index][i].add_assign(&value[i]);
                                 }
@@ -316,7 +316,7 @@ pub fn evaluate_single_dimension_reducing_kernel<
                 }
             }
             i if i + 1 == total_sumcheck_rounds => {
-                assert!(i >= 1);
+                assert!(i >= 3);
 
                 let sources =
                     storage.get_for_sumcheck_round_3_and_beyond(inputs, folding_challenges);
@@ -379,11 +379,8 @@ pub fn evaluate_single_dimension_reducing_kernel<
                             let accumulator = ext_dest.pop().unwrap();
                             for index in 0..chunk_size {
                                 let absolute_index = chunk_start + index;
-                                let value = kernel.evaluate::<_, false>(
-                                    absolute_index * 2,
-                                    inputs,
-                                    challenges,
-                                );
+                                let value =
+                                    kernel.evaluate::<_, false>(absolute_index, inputs, challenges);
                                 for i in 0..2 {
                                     accumulator[index][i].add_assign(&value[i]);
                                 }

@@ -68,7 +68,7 @@ impl<F: PrimeField, E: FieldExtension<F> + Field>
     }
     #[inline(always)]
     fn get_at_index(&self, index: usize) -> BaseFieldRepresentation<F> {
-        debug_assert!(index < self.next_layer_size * 2);
+        assert!(index < self.next_layer_size * 2);
         unsafe {
             let f0 = self.start.add(index).read();
 
@@ -77,7 +77,7 @@ impl<F: PrimeField, E: FieldExtension<F> + Field>
     }
     #[inline(always)]
     fn get_f0_and_f1(&self, index: usize) -> [BaseFieldRepresentation<F>; 2] {
-        debug_assert!(index < self.next_layer_size);
+        assert!(index < self.next_layer_size);
         [
             EvaluationFormStorage::<F, E, _>::get_at_index(self, index),
             EvaluationFormStorage::<F, E, _>::get_at_index(self, self.next_layer_size + index),
@@ -146,7 +146,7 @@ impl<F: PrimeField, E: FieldExtension<F> + Field>
     }
     #[inline(always)]
     fn get_at_index(&self, index: usize) -> BaseFieldFoldedOnceRepresentation<F> {
-        debug_assert!(index < self.next_layer_size * 2);
+        assert!(index < self.next_layer_size * 2);
         unsafe {
             // we take computation
             let f0 = self.base_input_start.add(index).read();
@@ -163,7 +163,7 @@ impl<F: PrimeField, E: FieldExtension<F> + Field>
     }
     #[inline(always)]
     fn get_f0_and_f1(&self, index: usize) -> [BaseFieldFoldedOnceRepresentation<F>; 2] {
-        debug_assert!(index < self.next_layer_size);
+        assert!(index < self.next_layer_size);
         [
             EvaluationFormStorage::<F, E, _>::get_at_index(self, index),
             EvaluationFormStorage::<F, E, _>::get_at_index(self, self.next_layer_size + index),
@@ -293,7 +293,7 @@ impl<F: PrimeField, E: FieldExtension<F> + Field>
 
     #[inline(always)]
     fn get_at_index(&self, index: usize) -> ExtensionFieldRepresentation<F, E> {
-        debug_assert!(index < self.next_layer_size * 2);
+        assert!(index < self.next_layer_size * 2);
         // fold two times
         unsafe {
             if self.first_access {
@@ -359,7 +359,7 @@ impl<F: PrimeField, E: FieldExtension<F> + Field>
     #[inline(always)]
     fn get_f0_and_f1(&self, index: usize) -> [ExtensionFieldRepresentation<F, E>; 2] {
         // just read and do NOT cache f1 - f0
-        debug_assert!(index < self.next_layer_size);
+        assert!(index < self.next_layer_size);
         [
             self.get_at_index(index),
             self.get_at_index(self.next_layer_size + index),

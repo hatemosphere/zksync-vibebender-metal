@@ -2,7 +2,8 @@ use std::collections::BTreeMap;
 
 use cs::definitions::GKRAddress;
 use cs::gkr_compiler::NoFieldMaxQuadraticConstraintsGKRRelation;
-use field::{Field, FieldExtension, Mersenne31Field, Mersenne31Quartic};
+use field::{Field, FieldExtension, Mersenne31Field, Mersenne31Quartic, Rand};
+use rand::SeedableRng;
 use worker::Worker;
 
 use crate::gkr::sumcheck::access_and_fold::BaseFieldPoly;
@@ -19,6 +20,11 @@ use super::*;
 fn test_quadratic_constraint_with_constant() {
     type F = Mersenne31Field;
     type E = Mersenne31Quartic;
+
+    use rand::Rng;
+    let mut seed = [0u8; 32];
+    seed[0] = 42;
+    let mut rng = rand::rngs::StdRng::from_seed(seed);
 
     const FOLDING_STEPS: usize = 5;
     const POLY_SIZE: usize = 1 << FOLDING_STEPS;
@@ -97,20 +103,13 @@ fn test_quadratic_constraint_with_constant() {
         constants: vec![(F::ZERO.to_reduced_u32(), 0)].into_boxed_slice(),
     };
 
-    let kernel = BatchConstraintEvalGKRRelation::new(
-        &constraint,
-        2,
-        0,
-        E::from_base(F::from_u32_with_reduction(0xff)),
-    );
+    let kernel =
+        BatchConstraintEvalGKRRelation::new(&constraint, 2, 0, E::random_element(&mut rng));
 
     let previous_round_challenges: Vec<E> = (0..FOLDING_STEPS)
-        .map(|el| E::from_base(F::from_u64_with_reduction(1u64 << (el + 1))))
+        .map(|el| E::random_element(&mut rng))
         .collect();
     // dbg!(&previous_round_challenges);
-
-    let eq_precomputed = make_eq_poly_in_full::<E>(&previous_round_challenges);
-    // dbg!(&eq_precomputed);
 
     // let batching_challenges = vec![E::from_base(F::from_u32_with_reduction(42))];
     let batching_challenges = vec![E::ONE];
@@ -181,7 +180,8 @@ fn test_quadratic_constraint_with_constant() {
                 assert_eq!(v, claim);
             }
 
-            let folding_challenge = E::from_base(F::from_u64_with_reduction(2 * (step as u64) + 1));
+            // let folding_challenge = E::from_base(F::from_u64_with_reduction(2 * (step as u64) + 1));
+            let folding_challenge = E::random_element(&mut rng);
             folding_challenges.push(folding_challenge);
             let next_claim = evaluate_small_univariate_poly::<F, E, 4>(&coeffs, &folding_challenge);
 
@@ -240,7 +240,8 @@ fn test_quadratic_constraint_with_constant() {
             let mut claim_inner = t0;
             claim_inner.add_assign(&t1);
 
-            let folding_challenge = E::from_base(F::from_u64_with_reduction(2 * (step as u64) + 1));
+            // let folding_challenge = E::from_base(F::from_u64_with_reduction(2 * (step as u64) + 1));
+            let folding_challenge = E::random_element(&mut rng);
             folding_challenges.push(folding_challenge);
             // derive new claims
 

@@ -505,10 +505,8 @@ impl<F: PrimeField, E: FieldExtension<F> + Field> GKRStorage<F, E> {
                     | GKRAddress::Setup(..) => {
                         unreachable!()
                     }
-                    GKRAddress::Cached { layer, .. } => {
+                    GKRAddress::Cached { .. } => {
                         unreachable!()
-                        // assert_eq!(layer, 1);
-                        // 1
                     }
                     GKRAddress::InnerLayer { layer, .. } => layer,
                 };

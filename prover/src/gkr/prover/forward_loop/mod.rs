@@ -298,7 +298,7 @@ pub fn evaluate_layer<F: PrimeField, E: FieldExtension<F> + Field>(
     preprocessed_timestamp_range_checks: &[E],
     preprocessed_generic_lookup: &[E],
     lookup_challenges_additive_part: E,
-    constraints_batch_challenge: E,
+    _constraints_batch_challenge: E,
     worker: &Worker,
 ) {
     println!("Evaluating layer {} in forward direction", layer_idx);

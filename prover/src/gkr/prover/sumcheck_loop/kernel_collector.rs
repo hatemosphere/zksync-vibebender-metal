@@ -324,7 +324,6 @@ impl<F: PrimeField, E: FieldExtension<F> + Field> KernelCollector<F, E> {
     pub(super) fn register(&mut self, kernel: KernelVariant<F, E>) {
         // TODO: these kernels have a bug in them
         match kernel {
-            // KernelVariant::EnforceConstraintsMaxQuadratic(..) => {}
             _ => self.kernels.push(kernel),
         }
     }
@@ -335,7 +334,7 @@ impl<F: PrimeField, E: FieldExtension<F> + Field> KernelCollector<F, E> {
             KernelVariant::EnforceConstraintsMaxQuadratic(..) => {
                 self.kernels.push(kernel);
             }
-            _ => {},
+            _ => {}
         }
     }
 

@@ -1,7 +1,5 @@
 use super::*;
-use crate::gkr::prover::stages::stage1::ColumnMajorCosetBoundTracePart;
 use crate::gkr::sumcheck::access_and_fold::BaseFieldPoly;
-use crate::gkr::whir::ColumnMajorBaseOracleForCoset;
 use crate::prover_stages::compute_aggregated_key_value_dyn;
 use common_constants::TIMESTAMP_COLUMNS_NUM_BITS;
 use cs::definitions::GKRAddress;

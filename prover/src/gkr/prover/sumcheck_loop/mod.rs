@@ -60,8 +60,10 @@ pub fn evaluate_dimension_reducing_sumcheck_for_layer<F: PrimeField, E: FieldExt
     // Precompute eq polynomial evaluations over the boolean hypercube
     let eq_polys = make_eq_poly_in_full::<E>(prev_challenges);
 
+    let batch_challenge_base = *batching_challenge;
+
     let collector =
-        KernelCollector::from_dimension_reducing_relations(layer, layer_idx, *batching_challenge);
+        KernelCollector::from_dimension_reducing_relations(layer, layer_idx, batch_challenge_base);
     debug_assert!(!collector.is_empty());
 
     let claim = collector.compute_combined_claim(output_claims);
@@ -364,6 +366,7 @@ where
 
             let mut recomputed_claim = claim_inner;
             recomputed_claim.mul_assign(&eq_prefactor);
+
             assert_eq!(
                 recomputed_claim, claim,
                 "s(0) + s(1) != claim / eq_prefactor"

@@ -402,9 +402,6 @@ where
     claims_for_layers.insert(initial_layer_for_sumcheck + 1, top_layer_claims);
     points_for_claims_at_layer.insert(initial_layer_for_sumcheck + 1, evaluation_point);
 
-    dbg!(&claims_for_layers);
-    dbg!(&points_for_claims_at_layer);
-
     let mut sumcheck_batching_challenge = batching_challenge;
     let mut reduced_trace_size_log_2 = final_trace_size_log_2;
     for (layer_idx, layer) in dimension_reducing_inputs.into_iter().rev() {

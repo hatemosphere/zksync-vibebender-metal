@@ -14,8 +14,6 @@ impl<F: PrimeField, E: FieldExtension<F> + Field> BatchConstraintEvalGKRRelation
         num_witness_polys: usize,
         challenge_for_constraints: E,
     ) -> Self {
-        dbg!(num_memory_polys);
-        dbg!(num_witness_polys);
         let mut inputs = vec![GKRAddress::placeholder(); num_memory_polys + num_witness_polys];
         let mut kernel = BatchConstraintEvalGKRRelationKernel {
             quadratic_parts: vec![],
@@ -33,7 +31,7 @@ impl<F: PrimeField, E: FieldExtension<F> + Field> BatchConstraintEvalGKRRelation
                 GKRAddress::BaseLayerWitness(offset) => {
                     assert!(offset < num_witness_polys);
                     offset + num_memory_polys
-                },
+                }
                 GKRAddress::Setup(..) => {
                     unreachable!()
                     // offset + self.num_memory_polys + self.num_witness_polys
@@ -99,9 +97,6 @@ impl<F: PrimeField, E: FieldExtension<F> + Field> BatchConstraintEvalGKRRelation
             t.mul_assign_by_base(&c);
             kernel.constant_offset.add_assign(&t);
         }
-
-        dbg!(&inputs);
-        dbg!(&kernel);
 
         Self { inputs, kernel }
     }

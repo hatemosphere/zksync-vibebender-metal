@@ -2,7 +2,7 @@ use super::*;
 
 #[derive(Debug)]
 pub struct LookupPairDimensionReducingGKRRelation {
-    pub inputs: [GKRAddress; 2], // [[a, b], [c, d]] -> a/b + c/d
+    pub inputs: [GKRAddress; 2],
     pub outputs: [GKRAddress; 2],
 }
 
