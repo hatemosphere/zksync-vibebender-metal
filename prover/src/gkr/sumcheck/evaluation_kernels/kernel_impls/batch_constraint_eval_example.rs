@@ -1,9 +1,5 @@
-use std::alloc::Global;
-
-use cs::{definitions::GKRAddress, gkr_compiler::NoFieldMaxQuadraticConstraintsGKRRelation};
-use fft::materialize_powers_serial_starting_with_one;
-
 use super::*;
+use cs::{definitions::GKRAddress, gkr_compiler::NoFieldMaxQuadraticConstraintsGKRRelation};
 
 #[derive(Debug)]
 pub struct BatchConstraintEvalGKRRelation<F: PrimeField, E: FieldExtension<F> + Field> {
@@ -18,11 +14,6 @@ impl<F: PrimeField, E: FieldExtension<F> + Field> BatchConstraintEvalGKRRelation
         num_witness_polys: usize,
         challenge_for_constraints: E,
     ) -> Self {
-        let challenges_for_constraints = materialize_powers_serial_starting_with_one::<_, Global>(
-            challenge_for_constraints,
-            input.quadratic_terms.len(),
-        );
-
         let mut inputs = vec![GKRAddress::placeholder(); num_memory_polys + num_witness_polys];
         let mut kernel = BatchConstraintEvalGKRRelationKernel {
             quadratic_parts: vec![],
@@ -52,7 +43,7 @@ impl<F: PrimeField, E: FieldExtension<F> + Field> BatchConstraintEvalGKRRelation
             inputs[b_offset] = *b;
             let mut total_prefactor = E::ZERO;
             for (c, pow) in set.iter() {
-                let mut t = challenges_for_constraints[*pow];
+                let mut t = challenge_for_constraints.pow(*pow as u32);
                 let c = F::from_u32_with_reduction(*c);
                 t.mul_assign_by_base(&c);
                 total_prefactor.add_assign(&t);
@@ -67,7 +58,7 @@ impl<F: PrimeField, E: FieldExtension<F> + Field> BatchConstraintEvalGKRRelation
             inputs[a_offset] = *a;
             let mut total_prefactor = E::ZERO;
             for (c, pow) in set.iter() {
-                let mut t = challenges_for_constraints[*pow];
+                let mut t = challenge_for_constraints.pow(*pow as u32);
                 let c = F::from_u32_with_reduction(*c);
                 t.mul_assign_by_base(&c);
                 total_prefactor.add_assign(&t);
@@ -76,7 +67,7 @@ impl<F: PrimeField, E: FieldExtension<F> + Field> BatchConstraintEvalGKRRelation
         }
 
         for (c, pow) in input.constants.iter() {
-            let mut t = challenges_for_constraints[*pow];
+            let mut t = challenge_for_constraints.pow(*pow as u32);
             let c = F::from_u32_with_reduction(*c);
             t.mul_assign_by_base(&c);
             kernel.constant_offset.add_assign(&t);
@@ -198,19 +189,10 @@ impl<F: PrimeField, E: FieldExtension<F> + Field> SingleInputTypeBatchSumcheckEv
         }
         // and linear part doesn't contribute to quadratic coefficient. We may still have to access(!) source to trigger folding
         if S0::SHOULD_ACCESS_TO_PREPARE_FOR_NEXT_STEP {
-            for (a, challenge) in self.linear_parts.iter() {
-                let [a, _] = r0_sources[*a].get_f0_and_f1(index);
-                let contribution = a.collapse_for_batch_eval(ctx, challenge);
-                result[0].add_assign(&contribution);
-            }
-        } else {
-            for (a, challenge) in self.linear_parts.iter() {
-                let a = r0_sources[*a].get_f0_only(index);
-                let contribution = a.collapse_for_batch_eval(ctx, challenge);
-                result[0].add_assign(&contribution);
+            for (a, _challenge) in self.linear_parts.iter() {
+                let _ = r0_sources[*a].get_f0_and_f1(index);
             }
         }
-        result[0].mul_assign(&batch_challenges[0]);
         result[1].mul_assign(&batch_challenges[0]);
 
         result

@@ -137,7 +137,7 @@ impl<F: PrimeField, E: FieldExtension<F> + Field>
             .each_ref()
             .map(|el| el.get_f0_only(index).into_value());
         let [mut eval_1_term_0, mut eval_1_term_1] =
-            pointwise_eval_impl(&[b1, c1, d1], &(), &self.lookup_additive_challenge);
+            pointwise_eval_quadratic_only_impl::<F, E, _>(&[b1, c1, d1], &());
 
         eval_0_term_0.mul_assign(&batch_challenges[0]);
         eval_0_term_1.mul_assign(&batch_challenges[1]);
@@ -261,7 +261,7 @@ fn pointwise_eval_quadratic_only_impl<
     input: &[RB; 3],
     ctx: &RB::CollapseContext,
 ) -> [E; 2] {
-    // X^2 coefficient of: 1/b - c/d -> (-c_delta * b_delta), (b_delta * d_delta)
+    // only quadratic terms for: 1/(b + gamma) - c/(d + gamma) -> (-c * b), (b * d)
     let [b, c, d] = input;
     let b_ext = b.mul_by_ext::<true>(&E::ONE, ctx);
     let mut num = c.mul_by_ext::<true>(&b_ext, ctx);

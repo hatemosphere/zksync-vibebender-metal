@@ -40,6 +40,12 @@ pub struct BaseFieldPolySource<F: PrimeField> {
     next_layer_size: usize,
 }
 
+impl<F: PrimeField> BaseFieldPolySource<F> {
+    pub(crate) fn current_values(&'_ self) -> &'_ [F] {
+        unsafe { core::slice::from_raw_parts(self.start, self.next_layer_size * 2) }
+    }
+}
+
 unsafe impl<F: PrimeField> Send for BaseFieldPolySource<F> {}
 unsafe impl<F: PrimeField> Sync for BaseFieldPolySource<F> {}
 
@@ -87,6 +93,27 @@ pub struct BaseFieldPolySourceAfterOneFolding<F: PrimeField, E: FieldExtension<F
     pub(crate) first_folding_challenge_and_squared: (E, E),
 }
 
+impl<F: PrimeField, E: FieldExtension<F> + Field> BaseFieldPolySourceAfterOneFolding<F, E> {
+    pub(crate) fn current_values(&self) -> Vec<E> {
+        let mut result_evals = Vec::with_capacity(self.base_layer_half_size);
+        unsafe {
+            let evals =
+                core::slice::from_raw_parts(self.base_input_start, self.base_layer_half_size * 2);
+            let (f0s, f1s) = evals.split_at(self.base_layer_half_size);
+            for (f0, f1) in f0s.iter().zip(f1s.iter()) {
+                let mut diff = *f1;
+                diff.sub_assign(f0);
+                let mut result = self.first_folding_challenge_and_squared.0;
+                result.mul_assign_by_base(&diff);
+                result.add_assign_base(f0);
+                result_evals.push(result);
+            }
+        }
+
+        result_evals
+    }
+}
+
 unsafe impl<F: PrimeField, E: FieldExtension<F> + Field> Send
     for BaseFieldPolySourceAfterOneFolding<F, E>
 {
@@ -120,44 +147,27 @@ impl<F: PrimeField, E: FieldExtension<F> + Field>
     #[inline(always)]
     fn get_at_index(&self, index: usize) -> BaseFieldFoldedOnceRepresentation<F> {
         debug_assert!(index < self.next_layer_size * 2);
-        todo!();
-    }
-    #[inline(always)]
-    fn get_f0_and_f1(&self, index: usize) -> [BaseFieldFoldedOnceRepresentation<F>; 2] {
-        // our representation is "lazy" - it is a poly over `r` with coefficients f'(X) = (f(0, X), f(1, X) - f(0, X)).
-        // Now we need to output:
-        // - f'(0, Y) = (f(0, 0, Y), f(1, 0, Y) - f(0, 0, Y))
-        // - f'(1, Y) = (f(0, 1, Y), f(1, 1, Y) - f(0, 1, Y))
-        // we take a decision to trade memory consumption for speed, and so we access input array at 4 values and recompute
-        debug_assert!(index < self.next_layer_size);
         unsafe {
             // we take computation
-            let f00 = self.base_input_start.add(index).read();
-            let f01 = self
+            let f0 = self.base_input_start.add(index).read();
+            let f1 = self
                 .base_input_start
                 .add(self.base_layer_half_size + index)
                 .read();
-            let f10 = self
-                .base_input_start
-                .add(self.next_layer_size + index)
-                .read();
-            let f11 = self
-                .base_input_start
-                .add(self.base_layer_half_size + self.next_layer_size + index)
-                .read();
-            let f0_c0 = f00;
-            let mut f0_c1 = f01;
-            f0_c1.sub_assign(&f00);
+            let c0 = f0;
+            let mut c1 = f1;
+            c1.sub_assign(&f0);
 
-            let f1_c0 = f10;
-            let mut f1_c1 = f11;
-            f1_c1.sub_assign(&f10);
-
-            [
-                BaseFieldFoldedOnceRepresentation::new(f0_c0, f0_c1),
-                BaseFieldFoldedOnceRepresentation::new(f1_c0, f1_c1),
-            ]
+            BaseFieldFoldedOnceRepresentation::new(c0, c1)
         }
+    }
+    #[inline(always)]
+    fn get_f0_and_f1(&self, index: usize) -> [BaseFieldFoldedOnceRepresentation<F>; 2] {
+        debug_assert!(index < self.next_layer_size);
+        [
+            EvaluationFormStorage::<F, E, _>::get_at_index(self, index),
+            EvaluationFormStorage::<F, E, _>::get_at_index(self, self.next_layer_size + index),
+        ]
     }
 }
 
@@ -212,6 +222,38 @@ pub struct BaseFieldPolySourceAfterTwoFoldings<F: PrimeField, E: FieldExtension<
     pub(crate) first_folding_challenge: E,
     pub(crate) second_folding_challenge: E,
     pub(crate) first_access: bool,
+}
+
+impl<F: PrimeField, E: FieldExtension<F> + Field> BaseFieldPolySourceAfterTwoFoldings<F, E> {
+    pub(crate) fn current_values(&self) -> Vec<E> {
+        let mut result_evals = Vec::with_capacity(self.base_layer_half_size);
+        unsafe {
+            let evals =
+                core::slice::from_raw_parts(self.base_input_start, self.base_layer_half_size * 2);
+            for i in 0..self.base_quarter_size {
+                let mut diff = evals[i + self.base_layer_half_size];
+                diff.sub_assign(&evals[i]);
+                let mut f0 = self.first_folding_challenge;
+                f0.mul_assign_by_base(&diff);
+                f0.add_assign_base(&evals[i]);
+
+                let mut diff = evals[i + self.base_quarter_size + self.base_layer_half_size];
+                diff.sub_assign(&evals[i + self.base_quarter_size]);
+                let mut f1 = self.first_folding_challenge;
+                f1.mul_assign_by_base(&diff);
+                f1.add_assign_base(&evals[i + self.base_quarter_size]);
+
+                let mut diff = f1;
+                diff.sub_assign(&f0);
+                let mut result = diff;
+                result.mul_assign(&self.second_folding_challenge);
+                result.add_assign(&f0);
+                result_evals.push(result);
+            }
+        }
+
+        result_evals
+    }
 }
 
 unsafe impl<F: PrimeField, E: FieldExtension<F> + Field> Send

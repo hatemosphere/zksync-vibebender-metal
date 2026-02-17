@@ -237,6 +237,8 @@ impl<F: PrimeField, E: FieldExtension<F> + Field> EvaluationRepresentation<F, E>
         if ASSUME_NO_PRODUCTS_BEFORE == false {
             panic!();
         }
+        debug_assert_eq!(self.computed_r2_coeff, F::ZERO);
+
         let mut t = ctx.0;
         t.mul_assign_by_base(&self.c1);
         t.add_assign_base(&self.c0);
@@ -253,6 +255,8 @@ impl<F: PrimeField, E: FieldExtension<F> + Field> EvaluationRepresentation<F, E>
         if ASSUME_NO_PRODUCTS_BEFORE == false {
             panic!();
         }
+        debug_assert_eq!(self.computed_r2_coeff, F::ZERO);
+
         let mut t = ctx.0;
         t.mul_assign_by_base(&self.c1);
         t.add_assign_base(&self.c0);

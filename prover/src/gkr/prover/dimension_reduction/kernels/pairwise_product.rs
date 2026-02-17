@@ -98,7 +98,7 @@ impl<F: PrimeField, E: FieldExtension<F> + Field> DimensionReducingEvaluationKer
         b: &[ExtensionFieldRepresentation<F, E>; 1],
     ) -> [E; 1] {
         let mut a = a[0];
-        a.repr_mul_assign::<false>(&b[0]);
+        a.repr_mul_assign::<true>(&b[0]);
         [a.into_value()]
     }
 }

@@ -118,7 +118,7 @@ define_kernel_variants! {
     pair {
         LookupPair(LookupPairGKRRelation),
         LookupBasePair(LookupBasePairGKRRelation<F, E>),
-        LookupBaseMinusMultiplicity(LookupBaseMinusMultiplicityByBaseGKRRelation<F, E>),
+        LookupBaseMinusMultiplicityByBase(LookupBaseMinusMultiplicityByBaseGKRRelation<F, E>),
         LookupUnbalanced(LookupRationalPairWithUnbalancedBaseGKRRelation<F, E>),
         LookupWithCachedDensAndSetup(LookupBaseExtMinusBaseExtGKRRelation),
         LookupPairDimensionReducing(LookupPairDimensionReducingGKRRelation),
@@ -231,7 +231,7 @@ impl<F: PrimeField, E: FieldExtension<F> + Field> KernelVariant<F, E> {
                 output,
             } => {
                 let challenges = [get_challenge(), get_challenge()];
-                KernelVariant::LookupBaseMinusMultiplicity(
+                KernelVariant::LookupBaseMinusMultiplicityByBase(
                     LookupBaseMinusMultiplicityByBaseGKRRelation {
                         input: *input,
                         setup: *setup,
@@ -322,8 +322,7 @@ impl<F: PrimeField, E: FieldExtension<F> + Field> KernelCollector<F, E> {
     pub(super) fn register(&mut self, kernel: KernelVariant<F, E>) {
         // TODO: these kernels have a bug in them
         match kernel {
-            KernelVariant::EnforceConstraintsMaxQuadratic(..) => {}
-            KernelVariant::LookupBaseMinusMultiplicity(..) => {}
+            // KernelVariant::EnforceConstraintsMaxQuadratic(..) => {}
             _ => self.kernels.push(kernel),
         }
     }

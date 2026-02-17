@@ -75,7 +75,10 @@ pub fn evaluate_dimension_reducing_sumcheck_for_layer<F: PrimeField, E: FieldExt
         folding_steps,
         worker,
         seed,
+        true,
     );
+
+    // TODO: re-evaluate kernels over last evaluations
 
     let transcript_inputs: Vec<E> = last_evaluations
         .iter()
@@ -85,10 +88,15 @@ pub fn evaluate_dimension_reducing_sumcheck_for_layer<F: PrimeField, E: FieldExt
         .collect();
     commit_field_els(seed, &transcript_inputs);
 
-    let challenges = draw_random_field_els::<F, E>(seed, 2);
+    let challenges = draw_random_field_els::<F, E>(seed, 3);
     let [r_before_last, r_last, next_batching_challenge] = challenges.try_into().unwrap();
     folding_challenges.push(r_before_last);
     folding_challenges.push(r_last);
+
+    assert_eq!(
+        trace_len_after_reduction.trailing_zeros() as usize,
+        folding_challenges.len() - 1
+    );
 
     // After sumcheck completes, extract claims for the input layer
 
@@ -192,7 +200,10 @@ pub fn evaluate_sumcheck_for_layer<F: PrimeField, E: FieldExtension<F> + Field>(
         folding_steps,
         worker,
         seed,
+        false,
     );
+
+    // TODO: re-evaluate kernels over last evaluations
 
     // After sumcheck completes, extract claims for the input layer
     let transcript_inputs: Vec<E> = last_evaluations
@@ -203,8 +214,13 @@ pub fn evaluate_sumcheck_for_layer<F: PrimeField, E: FieldExtension<F> + Field>(
         .collect();
     commit_field_els(seed, &transcript_inputs);
 
-    let next_batching_challenge = draw_random_field_els::<F, E>(seed, 1)[0];
-    let last_r = folding_challenges.last().expect("There should be at least one challenge");
+    let challenges = draw_random_field_els::<F, E>(seed, 2);
+    let [last_r, next_batching_challenge] = challenges.try_into().unwrap();
+    folding_challenges.push(last_r);
+    assert_eq!(
+        folding_challenges.len(),
+        trace_len.trailing_zeros() as usize
+    );
 
     let new_claims: BTreeMap<_, _> = last_evaluations
         .iter()
@@ -249,6 +265,7 @@ fn run_sumcheck_loop<F: PrimeField, E: FieldExtension<F> + Field, const N: usize
     folding_steps: usize,
     worker: &Worker,
     seed: &mut Seed,
+    ignore_self_checks: bool,
 ) -> (Vec<E>, BTreeMap<GKRAddress, [E; N]>)
 where
     [(); E::DEGREE]: Sized,
@@ -265,7 +282,9 @@ where
     for step in 0..folding_steps - 1 {
         let acc_size = 1 << (folding_steps - step - 1);
         let accumulator = &mut accumulator_buffer[..acc_size];
-        accumulator.fill([E::ZERO; 2]);
+        if step > 0 {
+            accumulator.fill([E::ZERO; 2]);
+        }
 
         collector.evaluate_kernels_over_storage(
             gkr_storage,
@@ -279,7 +298,7 @@ where
 
         let eq = &eq_poly[folding_steps - step - 1];
 
-        debug_assert_eq!(eq.len(), acc_size);
+        assert_eq!(eq.len(), acc_size);
 
         let [c0, c2] =
             evaluate_constant_and_quadratic_coeffs_with_precomputed_eq::<F, E>(&accumulator, eq);
@@ -305,7 +324,7 @@ where
         }
 
         commit_field_els(seed, &coeffs);
-        let folding_challenge = unsafe { *draw_random_field_els(seed, 1).get_unchecked(0) };
+        let folding_challenge = draw_random_field_els(seed, 1)[0];
 
         let new_claim = evaluate_small_univariate_poly::<F, E, _>(&coeffs, &folding_challenge);
 
@@ -331,28 +350,25 @@ where
             worker,
         );
 
-        let [f0, f1] = accumulator[0];
-
-        commit_field_els(seed, &[f0, f1]);
-        let folding_challenge = unsafe { *draw_random_field_els(seed, 1).get_unchecked(0) };
-
-        let [eq0, eq1]: [E; 2] = eq_poly[1].to_vec().try_into().unwrap();
-
-        let mut t0 = eq0;
-        t0.mul_assign(&f0);
-        let mut t1 = eq1;
-        t1.mul_assign(&f1);
-        let mut claim_inner = t0;
-        claim_inner.add_assign(&t1);
-
         #[cfg(feature = "gkr_self_checks")]
-        {
+        if ignore_self_checks == false {
+            let [f0, f1] = accumulator[0];
+            let [eq0, eq1]: [E; 2] = eq_poly[1].to_vec().try_into().unwrap();
+
+            let mut t0 = eq0;
+            t0.mul_assign(&f0);
+            let mut t1 = eq1;
+            t1.mul_assign(&f1);
+            let mut claim_inner = t0;
+            claim_inner.add_assign(&t1);
+
             let mut recomputed_claim = claim_inner;
             recomputed_claim.mul_assign(&eq_prefactor);
-            assert_eq!(recomputed_claim, claim);
+            assert_eq!(
+                recomputed_claim, claim,
+                "s(0) + s(1) != claim / eq_prefactor"
+            );
         }
-
-        folding_challenges.push(folding_challenge);
     }
 
     (folding_challenges, last_evaluations)

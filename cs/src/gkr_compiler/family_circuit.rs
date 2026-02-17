@@ -457,7 +457,7 @@ impl<F: PrimeField> GKRCompiler<F> {
 
         let (
             (grand_product_read_accumulation_nodes, grand_product_write_accumulation_nodes),
-            mut copied_predicate_for_grand_product_masking,
+            copied_predicate_for_grand_product_masking,
         ) = layout_initial_grand_product_accumulation(
             &mut graph,
             executor_machine_state.execute,
@@ -726,6 +726,9 @@ impl<F: PrimeField> GKRCompiler<F> {
         // - first all quadratic parts from all constraints are delinearized and summed
         // - then we compute execute * (quadratic + \sum linears + \sum constants
         // let _ = layout_constraints(&mut graph, constraints, executor_machine_state.execute);
+
+        let constraints = vec![constraints[5].clone()];
+        dbg!(&constraints);
 
         let (degree_2_constraints, degree_1_constraints) =
             layout_constraints_on_single_layer(&mut graph, constraints);

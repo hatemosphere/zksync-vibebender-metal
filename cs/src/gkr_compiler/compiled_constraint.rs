@@ -411,6 +411,9 @@ pub(crate) fn layout_constraints_on_single_layer<F: PrimeField>(
         constant_parts.push(c);
     }
 
+    assert_eq!(quadratic_parts.len(), linear_parts.len());
+    assert_eq!(quadratic_parts.len(), constant_parts.len());
+
     let node = OneStepConstraintsEvaluationNode {
         quadratic_parts,
         linear_parts,

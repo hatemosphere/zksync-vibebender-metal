@@ -354,6 +354,16 @@ pub fn evaluate_mixed_input_type_fixed_in_out_kernel_with_extension_inputs<
                             }
                         },
                     );
+
+                    // for base in inputs.iter() {
+                    //     dbg!(base.current_values());
+                    // }
+                    // for ext in ext_inputs.iter() {
+                    //     dbg!(ext.current_values());
+                    // }
+                    // for out in outputs.iter() {
+                    //     dbg!(out.current_values());
+                    // }
                 } else {
                     assert_eq!(sources.base_field_inputs.len(), IN_BASE);
                     assert_eq!(sources.extension_field_inputs.len(), IN_EXT);
@@ -398,6 +408,13 @@ pub fn evaluate_mixed_input_type_fixed_in_out_kernel_with_extension_inputs<
                     let ext_inputs = sources.extension_field_inputs.as_array().unwrap_unchecked();
                     let challenges = batch_challenges.as_array().unwrap_unchecked();
 
+                    // for base in inputs.iter() {
+                    //     dbg!(base.current_values());
+                    // }
+                    // for ext in ext_inputs.iter() {
+                    //     dbg!(ext.current_values());
+                    // }
+
                     apply_row_wise::<F, _>(
                         vec![],
                         vec![accumulator],
@@ -420,6 +437,13 @@ pub fn evaluate_mixed_input_type_fixed_in_out_kernel_with_extension_inputs<
                             }
                         },
                     );
+
+                    // for base in inputs.iter() {
+                    //     dbg!(base.current_values());
+                    // }
+                    // for ext in ext_inputs.iter() {
+                    //     dbg!(ext.current_values());
+                    // }
                 }
             }
             2 => {
@@ -433,6 +457,13 @@ pub fn evaluate_mixed_input_type_fixed_in_out_kernel_with_extension_inputs<
                     let ext_inputs = sources.extension_field_inputs.as_array().unwrap_unchecked();
                     let challenges = batch_challenges.as_array().unwrap_unchecked();
 
+                    // for base in inputs.iter() {
+                    //     dbg!(base.current_values());
+                    // }
+                    // for ext in ext_inputs.iter() {
+                    //     dbg!(ext.current_values());
+                    // }
+
                     apply_row_wise::<F, _>(
                         vec![],
                         vec![accumulator],
@@ -455,6 +486,13 @@ pub fn evaluate_mixed_input_type_fixed_in_out_kernel_with_extension_inputs<
                             }
                         },
                     );
+
+                    // for base in inputs.iter() {
+                    //     dbg!(base.current_values());
+                    // }
+                    // for ext in ext_inputs.iter() {
+                    //     dbg!(ext.current_values());
+                    // }
                 }
             }
             i if i + 1 == total_sumcheck_rounds => {
@@ -492,8 +530,14 @@ pub fn evaluate_mixed_input_type_fixed_in_out_kernel_with_extension_inputs<
                             }
                         },
                     );
-                }
 
+                    // for base in inputs.iter() {
+                    //     dbg!(base.current_values());
+                    // }
+                    // for ext in ext_inputs.iter() {
+                    //     dbg!(ext.current_values());
+                    // }
+                }
                 // Fill the storage
                 sources.collect_last_values(inputs, last_evaluations);
             }
@@ -531,6 +575,13 @@ pub fn evaluate_mixed_input_type_fixed_in_out_kernel_with_extension_inputs<
                             }
                         },
                     );
+
+                    // for base in inputs.iter() {
+                    //     dbg!(base.current_values());
+                    // }
+                    // for ext in ext_inputs.iter() {
+                    //     dbg!(ext.current_values());
+                    // }
                 }
             }
         }
