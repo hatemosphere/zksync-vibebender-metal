@@ -265,7 +265,7 @@ fn test_main_to_coset_coalesced() {
 #[test]
 #[serial]
 fn test_main_to_coset_register_pipeline() {
-    run_main_to_coset(24..25, 1, 3);
+    run_main_to_coset(23..24, 1, 3);
 }
 
 #[test]
