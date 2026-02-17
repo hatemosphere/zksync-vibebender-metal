@@ -603,7 +603,7 @@ mod test {
             23,
         );
 
-        serialize_to_file(&compiled, "reduced_machine_preprocessed_layout.json");
+        serialize_to_file(&compiled, "unified_reduced_preprocessed_layout.json");
     }
 
     #[test]
@@ -636,6 +636,6 @@ mod test {
                 >(cs)
             },
         );
-        serialize_to_file(&ssa_forms, "reduced_machine_preprocessed_ssa.json");
+        serialize_to_file(&ssa_forms, "unified_reduced_preprocessed_ssa.json");
     }
 }

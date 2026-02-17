@@ -200,8 +200,6 @@ impl LeafInclusionVerifier for Blake2sForEverythingVerifier {
                 equal &= output_hash[i] == cap[i];
             }
 
-            panic!("Testing purposes only");
-
             equal
         } else {
             // every step we:
