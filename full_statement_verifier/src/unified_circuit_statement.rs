@@ -271,7 +271,9 @@ pub unsafe fn verify_unified_circuit_statement<const BASE_LAYER: bool>(
         proof_output_0.delegation_challenges[0]
     );
     assert_eq!(
-        expected_challenges.machine_state_permutation_argument.unwrap_unchecked(),
+        expected_challenges
+            .machine_state_permutation_argument
+            .unwrap_unchecked(),
         proof_output_0.machine_state_permutation_challenges[0]
     );
 
