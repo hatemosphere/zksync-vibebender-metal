@@ -53,3 +53,7 @@ test_no_inline = ["field/no_inline"]
 [[bench]]
 name = "field"
 harness = false
+
+[[bench]]
+name = "hypercube"
+harness = false
