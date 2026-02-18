@@ -45,3 +45,7 @@ blake2s_u32 = { workspace = true }
 [[bench]]
 name = "field"
 harness = false
+
+[[bench]]
+name = "hypercube"
+harness = false

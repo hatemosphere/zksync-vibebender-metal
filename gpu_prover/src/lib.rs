@@ -13,5 +13,10 @@ pub(crate) mod prover;
 pub(crate) mod utils;
 pub(crate) mod witness;
 
+pub use crate::device_structures::{DeviceMatrix, DeviceMatrixMut};
+pub use crate::ops::hypercube::{
+    hypercube_evals_into_coeffs_bitrev_bf, hypercube_evals_into_coeffs_bitrev_bf_in_place,
+};
+
 #[cfg(test)]
 mod tests;
