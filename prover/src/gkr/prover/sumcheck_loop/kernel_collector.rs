@@ -322,19 +322,9 @@ impl<F: PrimeField, E: FieldExtension<F> + Field> KernelCollector<F, E> {
     }
 
     pub(super) fn register(&mut self, kernel: KernelVariant<F, E>) {
-        // TODO: these kernels have a bug in them
+        // Kernels can have a bug in them, place to debug
         match kernel {
             _ => self.kernels.push(kernel),
-        }
-    }
-
-    pub(super) fn special_debug_register(&mut self, kernel: KernelVariant<F, E>) {
-        // TODO: these kernels have a bug in them
-        match kernel {
-            KernelVariant::EnforceConstraintsMaxQuadratic(..) => {
-                self.kernels.push(kernel);
-            }
-            _ => {}
         }
     }
 
@@ -377,11 +367,8 @@ impl<F: PrimeField, E: FieldExtension<F> + Field> KernelCollector<F, E> {
                 &mut collector.current_batch_challenge,
                 &batch_base,
             );
-            if layer_idx == 0 {
-                collector.special_debug_register(kernel);
-            } else {
-                collector.register(kernel);
-            }
+
+            collector.register(kernel);
         }
 
         collector

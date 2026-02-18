@@ -193,6 +193,7 @@ impl<F: PrimeField, E: FieldExtension<F> + Field> SingleInputTypeBatchSumcheckEv
         batch_challenges: &[E],
         ctx: &R0::CollapseContext,
     ) -> [E; 2] {
+        assert!(_output_sources.is_empty());
         let mut result = [E::ZERO; 2];
 
         #[cfg(feature = "gkr_self_checks")]
@@ -212,17 +213,17 @@ impl<F: PrimeField, E: FieldExtension<F> + Field> SingleInputTypeBatchSumcheckEv
                 for i in 0..2 {
                     let mut t = a[i];
                     t.repr_mul_assign::<true>(&b[i]);
-                    let contribution = t.collapse_for_batch_eval(ctx, challenge);
+                    let contribution = t.collapse_into_ext_with_challenge(ctx, challenge);
                     buffers[i].add_assign(&contribution);
                 }
             }
             for (a, challenge) in self.linear_parts.iter() {
                 let [a, b] = r0_sources[*a].get_two_points::<true>(index);
 
-                let contribution = a.collapse_for_batch_eval(ctx, challenge);
+                let contribution = a.collapse_into_ext_with_challenge(ctx, challenge);
                 buffers[0].add_assign(&contribution);
 
-                let contribution = b.collapse_for_batch_eval(ctx, challenge);
+                let contribution = b.collapse_into_ext_with_challenge(ctx, challenge);
                 buffers[1].add_assign(&contribution);
             }
 
@@ -255,7 +256,7 @@ impl<F: PrimeField, E: FieldExtension<F> + Field> SingleInputTypeBatchSumcheckEv
             {
                 let mut t = a;
                 t.repr_mul_assign::<true>(&b);
-                let contribution = t.collapse_for_batch_eval(ctx, challenge);
+                let contribution = t.collapse_into_ext_with_challenge(ctx, challenge);
                 result[1].add_assign(&contribution);
             }
         }
@@ -297,7 +298,7 @@ impl<F: PrimeField, E: FieldExtension<F> + Field> SingleInputTypeBatchSumcheckEv
             for i in 0..2 {
                 let mut t = a[i];
                 t.repr_mul_assign::<true>(&b[i]);
-                let contribution = t.collapse_for_batch_eval(ctx, challenge);
+                let contribution = t.collapse_into_ext_with_challenge(ctx, challenge);
                 result[i].add_assign(&contribution);
             }
         }
@@ -306,22 +307,32 @@ impl<F: PrimeField, E: FieldExtension<F> + Field> SingleInputTypeBatchSumcheckEv
             for (a, challenge) in self.linear_parts.iter() {
                 let [a, b] = r0_sources[*a].get_two_points::<true>(index);
 
-                let contribution = a.collapse_for_batch_eval(ctx, challenge);
+                let contribution = a.collapse_into_ext_with_challenge(ctx, challenge);
                 result[0].add_assign(&contribution);
 
-                let contribution = b.collapse_for_batch_eval(ctx, challenge);
+                let contribution = b.collapse_into_ext_with_challenge(ctx, challenge);
                 result[1].add_assign(&contribution);
             }
 
             result[0].add_assign(&self.constant_offset);
             result[1].add_assign(&self.constant_offset);
         } else {
-            for (a, challenge) in self.linear_parts.iter() {
-                let a = r0_sources[*a].get_f0_only(index);
-                // and linear part doesn't contribute to quadratic coefficient
+            if S0::SHOULD_ACCESS_TO_PREPARE_FOR_NEXT_STEP {
+                for (a, challenge) in self.linear_parts.iter() {
+                    let [a, _] = r0_sources[*a].get_two_points::<EXPLICIT_FORM>(index);
+                    // and linear part doesn't contribute to quadratic coefficient
 
-                let contribution = a.collapse_for_batch_eval(ctx, challenge);
-                result[0].add_assign(&contribution);
+                    let contribution = a.collapse_into_ext_with_challenge(ctx, challenge);
+                    result[0].add_assign(&contribution);
+                }
+            } else {
+                for (a, challenge) in self.linear_parts.iter() {
+                    let a = r0_sources[*a].get_f0_only(index);
+                    // and linear part doesn't contribute to quadratic coefficient
+
+                    let contribution = a.collapse_into_ext_with_challenge(ctx, challenge);
+                    result[0].add_assign(&contribution);
+                }
             }
 
             result[0].add_assign(&self.constant_offset);
@@ -329,6 +340,8 @@ impl<F: PrimeField, E: FieldExtension<F> + Field> SingleInputTypeBatchSumcheckEv
 
         result[0].mul_assign(&batch_challenges[0]);
         result[1].mul_assign(&batch_challenges[0]);
+
+        // assert_ne!(result[0], E::ZERO);
 
         result
     }

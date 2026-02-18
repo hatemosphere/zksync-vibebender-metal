@@ -51,6 +51,14 @@ impl<F: PrimeField, E: FieldExtension<F> + Field> ExtensionFieldPolyInitialSourc
     pub(crate) fn current_values(&'_ self) -> &'_ [E] {
         unsafe { core::slice::from_raw_parts(self.start, self.next_layer_size * 2) }
     }
+
+    pub(crate) fn empty() -> Self {
+        Self {
+            start: null_mut(),
+            next_layer_size: 0,
+            _marker: core::marker::PhantomData,
+        }
+    }
 }
 
 impl<F: PrimeField, E: FieldExtension<F> + Field>
@@ -59,13 +67,6 @@ impl<F: PrimeField, E: FieldExtension<F> + Field>
 {
     const SHOULD_ACCESS_TO_PREPARE_FOR_NEXT_STEP: bool = false;
 
-    fn dummy() -> Self {
-        Self {
-            start: null_mut(),
-            next_layer_size: 0,
-            _marker: core::marker::PhantomData,
-        }
-    }
     #[inline(always)]
     fn get_collapse_context(
         &self,
@@ -182,6 +183,18 @@ impl<F: PrimeField, E: FieldExtension<F> + Field> ExtensionFieldPolyContinuingSo
             core::slice::from_raw_parts(self.this_layer_start.cast_const(), self.this_layer_size)
         }
     }
+
+    pub(crate) fn empty_with_folding_context(folding_challenge: E) -> Self {
+        Self {
+            previous_layer_start: null_mut(),
+            this_layer_start: null_mut(),
+            this_layer_size: 0,
+            next_layer_size: 0,
+            folding_challenge,
+            first_access: false,
+            _marker: core::marker::PhantomData,
+        }
+    }
 }
 
 impl<F: PrimeField, E: FieldExtension<F> + Field>
@@ -190,17 +203,6 @@ impl<F: PrimeField, E: FieldExtension<F> + Field>
 {
     const SHOULD_ACCESS_TO_PREPARE_FOR_NEXT_STEP: bool = true;
 
-    fn dummy() -> Self {
-        Self {
-            previous_layer_start: null_mut(),
-            this_layer_start: null_mut(),
-            this_layer_size: 0,
-            next_layer_size: 0,
-            folding_challenge: E::ZERO,
-            first_access: false,
-            _marker: core::marker::PhantomData,
-        }
-    }
     #[inline(always)]
     fn get_collapse_context(
         &self,

@@ -79,10 +79,12 @@ pub trait BaseFieldInOutFixedSizesEvaluationKernel<
 
             for (j, p) in [&p0s, &p1s].into_iter().enumerate() {
                 let evals = self.pointwise_eval(p);
-                let mut eval = evals[0].collapse_for_batch_eval(collapse_ctx, &batch_challenges[0]);
+                let mut eval =
+                    evals[0].collapse_into_ext_with_challenge(collapse_ctx, &batch_challenges[0]);
                 for i in 0..OUT {
                     eval.add_assign(
-                        &evals[i].collapse_for_batch_eval(collapse_ctx, &batch_challenges[i]),
+                        &evals[i]
+                            .collapse_into_ext_with_challenge(collapse_ctx, &batch_challenges[i]),
                     );
                 }
                 result[j].write(eval);

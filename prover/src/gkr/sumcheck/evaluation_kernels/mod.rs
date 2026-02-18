@@ -21,10 +21,9 @@ pub trait EvaluationRepresentation<F: PrimeField, E: FieldExtension<F> + Field>:
     'static + Clone + Copy + core::fmt::Debug + Send + Sync
 {
     type CollapseContext: 'static + Clone + Copy + core::fmt::Debug + Send + Sync;
-    type CollapsedForm: Field;
-    fn collapse(self, ctx: &Self::CollapseContext) -> Self::CollapsedForm;
+    fn collapse_as_ext_field_element(self, ctx: &Self::CollapseContext) -> E;
 
-    fn collapse_for_batch_eval(self, ctx: &Self::CollapseContext, challenge: &E) -> E;
+    fn collapse_into_ext_with_challenge(self, ctx: &Self::CollapseContext, challenge: &E) -> E;
 
     fn repr_add_assign<const ASSUME_NO_PRODUCTS_BEFORE: bool>(&mut self, other: &Self);
     fn repr_sub_assign<const ASSUME_NO_PRODUCTS_BEFORE: bool>(&mut self, other: &Self);
@@ -45,20 +44,16 @@ pub trait EvaluationRepresentation<F: PrimeField, E: FieldExtension<F> + Field>:
         other: &E,
         ctx: &Self::CollapseContext,
     ) -> E;
-    fn add_base_constant(&mut self, constant: F) {
-        todo!()
-    }
 }
 
 impl<F: PrimeField, E: FieldExtension<F> + Field> EvaluationRepresentation<F, E> for () {
     type CollapseContext = ();
-    type CollapsedForm = F;
     #[inline(always)]
-    fn collapse(self, _ctx: &Self::CollapseContext) -> Self::CollapsedForm {
-        F::ZERO
+    fn collapse_as_ext_field_element(self, _ctx: &Self::CollapseContext) -> E {
+        E::ZERO
     }
     #[inline(always)]
-    fn collapse_for_batch_eval(self, _ctx: &Self::CollapseContext, _challenge: &E) -> E {
+    fn collapse_into_ext_with_challenge(self, _ctx: &Self::CollapseContext, _challenge: &E) -> E {
         E::ZERO
     }
     #[inline(always)]
@@ -100,13 +95,12 @@ impl<F: PrimeField, E: FieldExtension<F> + Field> EvaluationRepresentation<F, E>
     for BaseFieldRepresentation<F>
 {
     type CollapseContext = ();
-    type CollapsedForm = F;
     #[inline(always)]
-    fn collapse(self, _ctx: &Self::CollapseContext) -> Self::CollapsedForm {
-        self.0
+    fn collapse_as_ext_field_element(self, _ctx: &Self::CollapseContext) -> E {
+        E::from_base(self.0)
     }
     #[inline(always)]
-    fn collapse_for_batch_eval(self, _ctx: &Self::CollapseContext, challenge: &E) -> E {
+    fn collapse_into_ext_with_challenge(self, _ctx: &Self::CollapseContext, challenge: &E) -> E {
         let mut result = *challenge;
         result.mul_assign_by_base(&self.0);
         result
@@ -156,10 +150,12 @@ impl<F: PrimeField, E: FieldExtension<F> + Field> EvaluationRepresentation<F, E>
     }
 }
 
+// lazy representation as c0 + c1 * folding_challenge == f0 + (f1 - f0) * folding_challenge
+
 #[derive(Clone, Copy, Debug)]
 pub struct BaseFieldFoldedOnceRepresentation<F: PrimeField> {
-    pub(crate) c0: F,
-    pub(crate) c1: F,
+    pub(crate) c0: F, // f0
+    pub(crate) c1: F, // f1 - f0
     pub(crate) computed_r2_coeff: F,
 }
 
@@ -178,21 +174,22 @@ impl<F: PrimeField, E: FieldExtension<F> + Field> EvaluationRepresentation<F, E>
     for BaseFieldFoldedOnceRepresentation<F>
 {
     type CollapseContext = (E, E);
-    type CollapsedForm = E;
     #[inline(always)]
-    fn collapse(self, ctx: &Self::CollapseContext) -> Self::CollapsedForm {
+    fn collapse_as_ext_field_element(self, ctx: &Self::CollapseContext) -> E {
         let (mut r, r2) = *ctx;
         let mut result = r2;
         result.mul_assign_by_base(&self.computed_r2_coeff);
+
         r.mul_assign_by_base(&self.c1);
         result.add_assign(&r);
+
         result.add_assign_base(&self.c0);
 
         result
     }
     #[inline(always)]
-    fn collapse_for_batch_eval(self, ctx: &Self::CollapseContext, challenge: &E) -> E {
-        let mut result = self.collapse(ctx);
+    fn collapse_into_ext_with_challenge(self, ctx: &Self::CollapseContext, challenge: &E) -> E {
+        let mut result = self.collapse_as_ext_field_element(ctx);
         result.mul_assign(challenge);
         result
     }
@@ -219,6 +216,7 @@ impl<F: PrimeField, E: FieldExtension<F> + Field> EvaluationRepresentation<F, E>
         }
         self.computed_r2_coeff = self.c1;
         self.computed_r2_coeff.mul_assign(&other.c1);
+
         self.c1.mul_assign(&other.c0);
         let mut tt = self.c0;
         tt.mul_assign(&other.c1);
@@ -235,7 +233,7 @@ impl<F: PrimeField, E: FieldExtension<F> + Field> EvaluationRepresentation<F, E>
         if ASSUME_NO_PRODUCTS_BEFORE == false {
             panic!();
         }
-        debug_assert_eq!(self.computed_r2_coeff, F::ZERO);
+        assert_eq!(self.computed_r2_coeff, F::ZERO);
 
         let mut t = ctx.0;
         t.mul_assign_by_base(&self.c1);
@@ -253,7 +251,7 @@ impl<F: PrimeField, E: FieldExtension<F> + Field> EvaluationRepresentation<F, E>
         if ASSUME_NO_PRODUCTS_BEFORE == false {
             panic!();
         }
-        debug_assert_eq!(self.computed_r2_coeff, F::ZERO);
+        assert_eq!(self.computed_r2_coeff, F::ZERO);
 
         let mut t = ctx.0;
         t.mul_assign_by_base(&self.c1);
@@ -303,14 +301,13 @@ impl<F: PrimeField, E: FieldExtension<F> + Field> EvaluationRepresentation<F, E>
     for ExtensionFieldRepresentation<F, E>
 {
     type CollapseContext = ();
-    type CollapsedForm = E;
     #[inline(always)]
-    fn collapse(self, _ctx: &Self::CollapseContext) -> Self::CollapsedForm {
+    fn collapse_as_ext_field_element(self, _ctx: &Self::CollapseContext) -> E {
         self.value
     }
     #[inline(always)]
-    fn collapse_for_batch_eval(self, ctx: &Self::CollapseContext, challenge: &E) -> E {
-        let mut result = self.collapse(ctx);
+    fn collapse_into_ext_with_challenge(self, _ctx: &Self::CollapseContext, challenge: &E) -> E {
+        let mut result = self.value;
         result.mul_assign(challenge);
         result
     }
@@ -369,7 +366,6 @@ pub trait EvaluationFormStorage<
 {
     const SHOULD_ACCESS_TO_PREPARE_FOR_NEXT_STEP: bool;
 
-    fn dummy() -> Self;
     fn get_collapse_context(&self) -> &R::CollapseContext;
     fn get_at_index(&self, index: usize) -> R;
     #[inline(always)]
@@ -403,9 +399,6 @@ impl<F: PrimeField, E: FieldExtension<F> + Field, R: EvaluationRepresentation<F,
 {
     const SHOULD_ACCESS_TO_PREPARE_FOR_NEXT_STEP: bool = false;
 
-    fn dummy() -> Self {
-        ()
-    }
     #[inline(always)]
     fn get_collapse_context(&self) -> &R::CollapseContext {
         unreachable!()

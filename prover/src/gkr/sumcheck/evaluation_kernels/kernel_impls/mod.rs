@@ -1,6 +1,6 @@
 use super::*;
 
-pub mod batch_constraint_eval_example;
+pub mod batch_constraint_eval;
 pub mod copy;
 pub mod lookup_base_minus_multiplicity_base;
 pub mod lookup_base_pair;
@@ -10,7 +10,7 @@ pub mod lookup_rational_with_unbalanced_base;
 pub mod mask_into_identity;
 pub mod pairwise_product;
 
-pub use self::batch_constraint_eval_example::*;
+pub use self::batch_constraint_eval::*;
 pub use self::copy::*;
 pub use self::lookup_base_minus_multiplicity_base::*;
 pub use self::lookup_base_pair::*;

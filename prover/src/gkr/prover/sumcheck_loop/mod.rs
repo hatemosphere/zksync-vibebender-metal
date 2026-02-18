@@ -77,7 +77,6 @@ pub fn evaluate_dimension_reducing_sumcheck_for_layer<F: PrimeField, E: FieldExt
         folding_steps,
         worker,
         seed,
-        false,
     );
 
     // TODO: re-evaluate kernels over last evaluations
@@ -202,7 +201,6 @@ pub fn evaluate_sumcheck_for_layer<F: PrimeField, E: FieldExtension<F> + Field>(
         folding_steps,
         worker,
         seed,
-        false,
     );
 
     // TODO: re-evaluate kernels over last evaluations
@@ -267,7 +265,6 @@ fn run_sumcheck_loop<F: PrimeField, E: FieldExtension<F> + Field, const N: usize
     folding_steps: usize,
     worker: &Worker,
     seed: &mut Seed,
-    ignore_self_checks: bool,
 ) -> (Vec<E>, BTreeMap<GKRAddress, [E; N]>)
 where
     [(); E::DEGREE]: Sized,
@@ -353,7 +350,7 @@ where
         );
 
         #[cfg(feature = "gkr_self_checks")]
-        if ignore_self_checks == false {
+        {
             let [f0, f1] = accumulator[0];
             let [eq0, eq1]: [E; 2] = eq_poly[1].to_vec().try_into().unwrap();
 

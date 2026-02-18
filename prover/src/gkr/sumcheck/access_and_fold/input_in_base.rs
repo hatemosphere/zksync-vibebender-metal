@@ -44,6 +44,13 @@ impl<F: PrimeField> BaseFieldPolySource<F> {
     pub(crate) fn current_values(&'_ self) -> &'_ [F] {
         unsafe { core::slice::from_raw_parts(self.start, self.next_layer_size * 2) }
     }
+
+    pub(crate) fn empty() -> Self {
+        Self {
+            start: null_mut(),
+            next_layer_size: 0,
+        }
+    }
 }
 
 unsafe impl<F: PrimeField> Send for BaseFieldPolySource<F> {}
@@ -54,12 +61,6 @@ impl<F: PrimeField, E: FieldExtension<F> + Field>
 {
     const SHOULD_ACCESS_TO_PREPARE_FOR_NEXT_STEP: bool = false;
 
-    fn dummy() -> Self {
-        Self {
-            start: null_mut(),
-            next_layer_size: 0,
-        }
-    }
     #[inline(always)]
     fn get_collapse_context(
         &self,
@@ -112,6 +113,17 @@ impl<F: PrimeField, E: FieldExtension<F> + Field> BaseFieldPolySourceAfterOneFol
 
         result_evals
     }
+
+    pub(crate) fn empty_with_folding_context(folding_challenge: E) -> Self {
+        let mut challenge_squared = folding_challenge;
+        challenge_squared.square();
+        Self {
+            base_input_start: null_mut(),
+            first_folding_challenge_and_squared: (folding_challenge, challenge_squared),
+            base_layer_half_size: 0,
+            next_layer_size: 0,
+        }
+    }
 }
 
 unsafe impl<F: PrimeField, E: FieldExtension<F> + Field> Send
@@ -129,14 +141,6 @@ impl<F: PrimeField, E: FieldExtension<F> + Field>
 {
     const SHOULD_ACCESS_TO_PREPARE_FOR_NEXT_STEP: bool = false;
 
-    fn dummy() -> Self {
-        Self {
-            base_input_start: null_mut(),
-            first_folding_challenge_and_squared: (E::ZERO, E::ZERO),
-            base_layer_half_size: 0,
-            next_layer_size: 0,
-        }
-    }
     #[inline(always)]
     fn get_collapse_context(
         &self,
@@ -146,7 +150,7 @@ impl<F: PrimeField, E: FieldExtension<F> + Field>
     }
     #[inline(always)]
     fn get_at_index(&self, index: usize) -> BaseFieldFoldedOnceRepresentation<F> {
-        assert!(index < self.next_layer_size * 2);
+        assert!(index < self.base_layer_half_size);
         unsafe {
             // we take computation
             let f0 = self.base_input_start.add(index).read();
@@ -254,6 +258,22 @@ impl<F: PrimeField, E: FieldExtension<F> + Field> BaseFieldPolySourceAfterTwoFol
 
         result_evals
     }
+
+    pub(crate) fn empty_with_folding_context(
+        first_folding_challenge: E,
+        second_folding_challenge: E,
+    ) -> Self {
+        Self {
+            base_input_start: null_mut(),
+            this_layer_cache_start: null_mut(),
+            base_layer_half_size: 0,
+            base_quarter_size: 0,
+            next_layer_size: 0,
+            first_folding_challenge,
+            second_folding_challenge,
+            first_access: false,
+        }
+    }
 }
 
 unsafe impl<F: PrimeField, E: FieldExtension<F> + Field> Send
@@ -271,18 +291,6 @@ impl<F: PrimeField, E: FieldExtension<F> + Field>
 {
     const SHOULD_ACCESS_TO_PREPARE_FOR_NEXT_STEP: bool = true;
 
-    fn dummy() -> Self {
-        Self {
-            base_input_start: null_mut(),
-            this_layer_cache_start: null_mut(),
-            base_layer_half_size: 0,
-            base_quarter_size: 0,
-            next_layer_size: 0,
-            first_folding_challenge: E::ZERO,
-            second_folding_challenge: E::ZERO,
-            first_access: false,
-        }
-    }
     #[inline(always)]
     fn get_collapse_context(
         &self,

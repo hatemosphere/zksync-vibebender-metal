@@ -439,11 +439,7 @@ impl<F: PrimeField, E: FieldExtension<F> + Field> GKRStorage<F, E> {
             if *input == GKRAddress::placeholder() {
                 storage
                     .base_field_inputs
-                    .push(<BaseFieldPolySource<F> as EvaluationFormStorage<
-                        F,
-                        E,
-                        BaseFieldRepresentation<F>,
-                    >>::dummy());
+                    .push(BaseFieldPolySource::<F>::empty());
             } else {
                 let layer = match *input {
                     GKRAddress::OptimizedOut(..) => {
@@ -469,7 +465,7 @@ impl<F: PrimeField, E: FieldExtension<F> + Field> GKRStorage<F, E> {
             if *input == GKRAddress::placeholder() {
                 storage
                     .extension_field_inputs
-                    .push(ExtensionFieldPolyInitialSource::dummy());
+                    .push(ExtensionFieldPolyInitialSource::empty());
             } else {
                 let layer = match *input {
                     GKRAddress::OptimizedOut(..) => {
@@ -496,7 +492,7 @@ impl<F: PrimeField, E: FieldExtension<F> + Field> GKRStorage<F, E> {
             if *output == GKRAddress::placeholder() {
                 storage
                     .extension_field_outputs
-                    .push(ExtensionFieldPolyInitialSource::dummy());
+                    .push(ExtensionFieldPolyInitialSource::empty());
             } else {
                 let layer = match *output {
                     GKRAddress::OptimizedOut(..)
@@ -531,9 +527,12 @@ impl<F: PrimeField, E: FieldExtension<F> + Field> GKRStorage<F, E> {
         let mut storage = SumcheckRound1SelectedStorage::default();
         for input in inputs.inputs_in_base.iter() {
             if *input == GKRAddress::placeholder() {
-                storage
-                    .base_field_inputs
-                    .push(BaseFieldPolySourceAfterOneFolding::dummy());
+                let folding_challenge = folding_challenges[0];
+                storage.base_field_inputs.push(
+                    BaseFieldPolySourceAfterOneFolding::empty_with_folding_context(
+                        folding_challenge,
+                    ),
+                );
             } else {
                 let source = self.make_base_source_for_round_1(*input, folding_challenges);
                 storage.base_field_inputs.push(source);
@@ -541,9 +540,12 @@ impl<F: PrimeField, E: FieldExtension<F> + Field> GKRStorage<F, E> {
         }
         for input in inputs.inputs_in_extension.iter() {
             if *input == GKRAddress::placeholder() {
-                storage
-                    .extension_field_inputs
-                    .push(ExtensionFieldPolyContinuingSource::dummy());
+                let folding_challenge = folding_challenges[0];
+                storage.extension_field_inputs.push(
+                    ExtensionFieldPolyContinuingSource::empty_with_folding_context(
+                        folding_challenge,
+                    ),
+                );
             } else {
                 let source =
                     self.make_ext_source_for_rounds_1_and_beyond(*input, folding_challenges);
@@ -563,9 +565,14 @@ impl<F: PrimeField, E: FieldExtension<F> + Field> GKRStorage<F, E> {
         let mut storage = SumcheckRound2SelectedStorage::default();
         for input in inputs.inputs_in_base.iter() {
             if *input == GKRAddress::placeholder() {
-                storage
-                    .base_field_inputs
-                    .push(BaseFieldPolySourceAfterTwoFoldings::dummy());
+                let first_folding_challenge = folding_challenges[0];
+                let second_folding_challenge = folding_challenges[1];
+                storage.base_field_inputs.push(
+                    BaseFieldPolySourceAfterTwoFoldings::empty_with_folding_context(
+                        first_folding_challenge,
+                        second_folding_challenge,
+                    ),
+                );
             } else {
                 let source = self.make_base_source_for_round_2(*input, folding_challenges);
                 storage.base_field_inputs.push(source);
@@ -573,9 +580,12 @@ impl<F: PrimeField, E: FieldExtension<F> + Field> GKRStorage<F, E> {
         }
         for input in inputs.inputs_in_extension.iter() {
             if *input == GKRAddress::placeholder() {
-                storage
-                    .extension_field_inputs
-                    .push(ExtensionFieldPolyContinuingSource::dummy());
+                let folding_challenge = *folding_challenges.last().expect("must be present");
+                storage.extension_field_inputs.push(
+                    ExtensionFieldPolyContinuingSource::empty_with_folding_context(
+                        folding_challenge,
+                    ),
+                );
             } else {
                 let source =
                     self.make_ext_source_for_rounds_1_and_beyond(*input, folding_challenges);
@@ -595,9 +605,12 @@ impl<F: PrimeField, E: FieldExtension<F> + Field> GKRStorage<F, E> {
         let mut storage = SumcheckRound3AndBeyondSelectedStorage::default();
         for input in inputs.inputs_in_base.iter() {
             if *input == GKRAddress::placeholder() {
-                storage
-                    .base_field_inputs
-                    .push(ExtensionFieldPolyContinuingSource::dummy());
+                let folding_challenge = *folding_challenges.last().expect("must be present");
+                storage.base_field_inputs.push(
+                    ExtensionFieldPolyContinuingSource::empty_with_folding_context(
+                        folding_challenge,
+                    ),
+                );
             } else {
                 let source =
                     self.make_base_source_for_rounds_3_and_beyond(*input, folding_challenges);
@@ -606,9 +619,12 @@ impl<F: PrimeField, E: FieldExtension<F> + Field> GKRStorage<F, E> {
         }
         for input in inputs.inputs_in_extension.iter() {
             if *input == GKRAddress::placeholder() {
-                storage
-                    .extension_field_inputs
-                    .push(ExtensionFieldPolyContinuingSource::dummy());
+                let folding_challenge = *folding_challenges.last().expect("must be present");
+                storage.extension_field_inputs.push(
+                    ExtensionFieldPolyContinuingSource::empty_with_folding_context(
+                        folding_challenge,
+                    ),
+                );
             } else {
                 let source =
                     self.make_ext_source_for_rounds_1_and_beyond(*input, folding_challenges);

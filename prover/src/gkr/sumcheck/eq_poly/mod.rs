@@ -179,6 +179,7 @@ pub(crate) fn evaluate_constant_and_quadratic_coeffs_with_precomputed_eq<
     values: &[[E; 2]],
     eq: &[E],
 ) -> [E; 2] {
+    // TODO: parallelize
     assert_eq!(values.len(), eq.len());
     let mut result_0 = E::ZERO;
     let mut result_1 = E::ZERO;

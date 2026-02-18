@@ -722,31 +722,11 @@ impl<F: PrimeField> GKRCompiler<F> {
             }
         }
 
-        // Dealing with constraints is simple - we will perform two step reduction:
-        // - first all quadratic parts from all constraints are delinearized and summed
-        // - then we compute execute * (quadratic + \sum linears + \sum constants
-        // let _ = layout_constraints(&mut graph, constraints, executor_machine_state.execute);
-
-        let constraints = vec![constraints[0].clone()];
-        dbg!(&constraints);
-
+        // Place a gate for constraints batch eval
         let (degree_2_constraints, degree_1_constraints) =
             layout_constraints_on_single_layer(&mut graph, constraints);
 
-        // let graphviz_string = graph.make_graphviz(&variable_names);
-        // println!("{}", &graphviz_string);
-        // let gv_graph = ::layout::gv::DotParser::new(&graphviz_string)
-        //     .process()
-        //     .unwrap();
-        // let mut builder = ::layout::gv::GraphBuilder::new();
-        // builder.visit_graph(&gv_graph);
-        // let mut svg = ::layout::backends::svg::SVGWriter::new();
-        // let mut vg = builder.get();
-        // vg.do_it(false, false, false, &mut svg);
-        // let content = svg.finalize();
-        // let filename = "gkr_layout.svg";
-        // ::layout::core::utils::save_to_file(filename, &content).unwrap();
-
+        // work out the outputs
         let lookup_outputs = BTreeMap::from_iter(
             lookup_outputs
                 .into_iter()

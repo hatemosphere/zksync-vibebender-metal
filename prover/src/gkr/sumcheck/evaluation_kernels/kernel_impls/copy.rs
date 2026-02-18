@@ -109,7 +109,7 @@ impl<F: PrimeField, E: FieldExtension<F> + Field>
     ) -> [E; 2] {
         let output_f0 = output_sources[0]
             .get_f0_only(index)
-            .collapse_for_batch_eval(&(), &batch_challenges[0]);
+            .collapse_into_ext_with_challenge(&(), &batch_challenges[0]);
 
         // result[1] = 0 because the quadratic coefficient is 0 for a linear function
         [output_f0, E::ZERO]
@@ -131,8 +131,8 @@ impl<F: PrimeField, E: FieldExtension<F> + Field>
             // For explicit form (final round), return [kernel(f0), kernel(f1)]
             // For Copy, kernel is identity, so this is just [f0, f1]
             let [f0, f1] = sources[0].get_two_points::<true>(index);
-            let f0_val = f0.collapse_for_batch_eval(collapse_ctx, &batch_challenges[0]);
-            let f1_val = f1.collapse_for_batch_eval(collapse_ctx, &batch_challenges[0]);
+            let f0_val = f0.collapse_into_ext_with_challenge(collapse_ctx, &batch_challenges[0]);
+            let f1_val = f1.collapse_into_ext_with_challenge(collapse_ctx, &batch_challenges[0]);
             [f0_val, f1_val]
         } else {
             // For non-explicit form (intermediate rounds), return [f0, 0]
@@ -140,12 +140,12 @@ impl<F: PrimeField, E: FieldExtension<F> + Field>
             if S::SHOULD_ACCESS_TO_PREPARE_FOR_NEXT_STEP {
                 let [f0, _] = sources[0].get_two_points::<EXPLICIT_FORM>(index);
 
-                let f0 = f0.collapse_for_batch_eval(collapse_ctx, &batch_challenges[0]);
+                let f0 = f0.collapse_into_ext_with_challenge(collapse_ctx, &batch_challenges[0]);
                 [f0, E::ZERO]
             } else {
                 let f0 = sources[0]
                     .get_f0_only(index)
-                    .collapse_for_batch_eval(collapse_ctx, &batch_challenges[0]);
+                    .collapse_into_ext_with_challenge(collapse_ctx, &batch_challenges[0]);
                 [f0, E::ZERO]
             }
         }
