@@ -2,7 +2,8 @@ use super::queries::*;
 use super::*;
 use crate::merkle_trees::MerkleTreeCapVarLength;
 
-#[derive(Clone, Debug, PartialEq, Eq, Hash)]
+#[derive(Clone, Debug, PartialEq, Eq, Hash, serde::Serialize, serde::Deserialize)]
+#[serde(bound = "")]
 pub struct WhirCommitment<F: PrimeField, T: ColumnMajorMerkleTreeConstructor<F>> {
     pub cap: MerkleTreeCapVarLength,
     pub _marker: core::marker::PhantomData<(F, T)>,
@@ -17,7 +18,10 @@ impl<F: PrimeField, T: ColumnMajorMerkleTreeConstructor<F>> Default for WhirComm
     }
 }
 
-#[derive(Clone, Debug, PartialEq, Eq, Hash, Default)]
+#[derive(Clone, Debug, PartialEq, Eq, Hash, Default, serde::Serialize, serde::Deserialize)]
+#[serde(
+    bound = "F: serde::Serialize + serde::de::DeserializeOwned, E: serde::Serialize + serde::de::DeserializeOwned"
+)]
 pub struct WhirBaseLayerCommitmentAndQueries<
     F: PrimeField,
     E: FieldExtension<F> + Field,
@@ -29,7 +33,10 @@ pub struct WhirBaseLayerCommitmentAndQueries<
     pub queries: Vec<BaseFieldQuery<F, T>>,
 }
 
-#[derive(Clone, Debug, PartialEq, Eq, Hash, Default)]
+#[derive(Clone, Debug, PartialEq, Eq, Hash, Default, serde::Serialize, serde::Deserialize)]
+#[serde(
+    bound = "F: serde::Serialize + serde::de::DeserializeOwned, E: serde::Serialize + serde::de::DeserializeOwned"
+)]
 pub struct WhirIntermediateCommitmentAndQueries<
     F: PrimeField,
     E: FieldExtension<F> + Field,
@@ -39,7 +46,10 @@ pub struct WhirIntermediateCommitmentAndQueries<
     pub queries: Vec<ExtensionFieldQuery<F, E, T>>,
 }
 
-#[derive(Clone, Debug, PartialEq, Eq, Hash, Default)]
+#[derive(Clone, Debug, PartialEq, Eq, Hash, Default, serde::Serialize, serde::Deserialize)]
+#[serde(
+    bound = "F: serde::Serialize + serde::de::DeserializeOwned, E: serde::Serialize + serde::de::DeserializeOwned"
+)]
 pub struct WhirPolyCommitProof<
     F: PrimeField,
     E: FieldExtension<F> + Field,

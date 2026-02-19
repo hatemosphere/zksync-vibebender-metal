@@ -36,6 +36,7 @@ bit-set = { version = "0.8", optional = true }
 lib-rv32-asm = {git = "https://github.com/shamatar/lib-rv32.git", optional = true }
 serde_json = { version = "*", optional = true }
 bincode = { version = "1.3", optional = true }
+serde_with = { version = "*", optional = true }
 
 [dev-dependencies]
 rand = { workspace = true, features = ["std", "std_rng"]}
@@ -43,7 +44,7 @@ bincode = { version = "1.3" }
 hex = "*"
 
 [features]
-prover = ["trace_holder", "worker", "seq-macro", "fft", "cs/compiler", "transcript/pow", "rayon", "risc_v_simulator", "riscv_transpiler", "proc-macro2", "syn", "quote", "bit-set", "lib-rv32-asm", "serde_json", "itertools"]
+prover = ["trace_holder", "worker", "seq-macro", "fft", "cs/compiler", "transcript/pow", "rayon", "risc_v_simulator", "riscv_transpiler", "proc-macro2", "syn", "quote", "bit-set", "lib-rv32-asm", "serde_json", "serde_with", "itertools"]
 definitions_only = ["cs/definitions_only"]
 # Print logs related to timings only.
 timing_logs = []
