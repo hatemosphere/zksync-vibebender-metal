@@ -6,6 +6,7 @@ use transcript::{Blake2sTranscript, Seed};
 mod hash_like_holder;
 mod leaf_inclusion_verifier;
 mod optimal_folding;
+pub mod sumcheck_kernel;
 
 pub use self::hash_like_holder::*;
 pub use self::leaf_inclusion_verifier::*;
