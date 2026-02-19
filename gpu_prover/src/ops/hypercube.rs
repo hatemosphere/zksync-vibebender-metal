@@ -48,9 +48,9 @@ const DEFAULT_SCHEDULES: [[LaunchSpec; 3]; 5] = [
         spec(KernelFamily::NonInitial, 6),
     ],
     [
-        spec(KernelFamily::Initial, 8),
-        spec(KernelFamily::NonInitial, 8),
-        spec(KernelFamily::NonInitial, 8),
+        spec(KernelFamily::Initial, 12),
+        spec(KernelFamily::NonInitial, 6),
+        spec(KernelFamily::NonInitial, 6),
     ],
 ];
 
@@ -362,6 +362,14 @@ mod tests {
             let rounds_sum: u32 = schedule.iter().map(|spec| spec.rounds).sum();
             assert_eq!(rounds_sum, log_rows);
         }
+    }
+
+    #[test]
+    fn schedule_log24_is_12_6_6() {
+        let schedule = default_schedule(24);
+        assert_eq!(schedule[0], spec(KernelFamily::Initial, 12));
+        assert_eq!(schedule[1], spec(KernelFamily::NonInitial, 6));
+        assert_eq!(schedule[2], spec(KernelFamily::NonInitial, 6));
     }
 
     #[test]
