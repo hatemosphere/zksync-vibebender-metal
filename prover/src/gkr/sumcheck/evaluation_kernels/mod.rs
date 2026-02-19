@@ -4,6 +4,7 @@ use field::{Field, FieldExtension, PrimeField};
 use std::collections::BTreeMap;
 use worker::Worker;
 
+pub use crate::definitions::sumcheck_kernel::dynamic_over_single_input_type::*;
 pub use crate::definitions::sumcheck_kernel::*;
 
 pub mod kernel_impls;
@@ -18,39 +19,6 @@ pub use self::kernel_impls::*;
 pub use self::simple_in_base::*;
 pub use self::simple_in_extension::*;
 pub use self::simple_mixed::*;
-
-pub trait SingleInputTypeBatchSumcheckEvaluationKernel<F: PrimeField, E: FieldExtension<F> + Field>:
-    Send + Sync
-{
-    fn num_challenges(&self) -> usize;
-    fn evaluate_first_round<
-        R0: EvaluationRepresentation<F, E>,
-        S0: EvaluationFormStorage<F, E, R0>,
-        ROUT: EvaluationRepresentation<F, E>,
-        SOUT: EvaluationFormStorage<F, E, ROUT>,
-    >(
-        &self,
-        index: usize,
-        r0_sources: &[S0],
-        _output_sources: &[SOUT],
-        batch_challenges: &[E],
-        collapse_ctx: &R0::CollapseContext,
-    ) -> [E; 2] {
-        self.evaluate::<R0, S0, false>(index, r0_sources, batch_challenges, collapse_ctx)
-    }
-
-    fn evaluate<
-        R0: EvaluationRepresentation<F, E>,
-        S0: EvaluationFormStorage<F, E, R0>,
-        const EXPLICIT_FORM: bool,
-    >(
-        &self,
-        index: usize,
-        r0_sources: &[S0],
-        batch_challenges: &[E],
-        collapse_ctx: &R0::CollapseContext,
-    ) -> [E; 2];
-}
 
 pub trait TwoInputTypesBatchSumcheckEvaluationKernel<F: PrimeField, E: FieldExtension<F> + Field> {
     fn num_challenges(&self) -> usize;
