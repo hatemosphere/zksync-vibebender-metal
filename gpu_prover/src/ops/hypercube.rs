@@ -83,6 +83,7 @@ declare_h2m_kernel!(ab_h2m_bitrev_bf_initial_10_kernel);
 declare_h2m_kernel!(ab_h2m_bitrev_bf_initial_11_kernel);
 declare_h2m_kernel!(ab_h2m_bitrev_bf_initial_12_kernel);
 declare_h2m_kernel!(ab_h2m_bitrev_bf_noninitial_6_kernel);
+declare_h2m_kernel!(ab_h2m_bitrev_bf_noninitial_6_log24_kernel);
 declare_h2m_kernel!(ab_h2m_bitrev_bf_noninitial_7_kernel);
 declare_h2m_kernel!(ab_h2m_bitrev_bf_noninitial_8_kernel);
 declare_h2m_kernel!(ab_h2m_bitrev_bf_noninitial_7_128_kernel);
@@ -103,7 +104,12 @@ fn block_threads_for_spec(spec: LaunchSpec) -> u32 {
     }
 }
 
-fn noninitial_tile_subproblems(spec: LaunchSpec) -> usize {
+fn noninitial_tile_subproblems(spec: LaunchSpec, log_rows: u32) -> usize {
+    if log_rows == 24 && spec.family == KernelFamily::NonInitial && spec.rounds == 6 {
+        // Specialized log24 noninitial-6 kernel uses LOW_TILE=32.
+        return 32;
+    }
+
     match (spec.rounds, block_threads_for_spec(spec)) {
         (6, 256) => 128,
         (7, 256) => 64,
@@ -113,7 +119,11 @@ fn noninitial_tile_subproblems(spec: LaunchSpec) -> usize {
     }
 }
 
-fn resolve_kernel(spec: LaunchSpec) -> HypercubeBitrevBfSignature {
+fn resolve_kernel(spec: LaunchSpec, log_rows: u32) -> HypercubeBitrevBfSignature {
+    if log_rows == 24 && spec.family == KernelFamily::NonInitial && spec.rounds == 6 {
+        return ab_h2m_bitrev_bf_noninitial_6_log24_kernel;
+    }
+
     match (spec.family, spec.rounds) {
         (KernelFamily::Initial, 8) => ab_h2m_bitrev_bf_initial_8_kernel,
         (KernelFamily::Initial, 9) => ab_h2m_bitrev_bf_initial_9_kernel,
@@ -164,7 +174,7 @@ fn launch_with_schedule(
         let grid_x = if spec.family == KernelFamily::Initial {
             subproblems
         } else {
-            let tile = noninitial_tile_subproblems(spec);
+            let tile = noninitial_tile_subproblems(spec, log_rows);
             assert_eq!(subproblems % tile, 0);
             subproblems / tile
         };
@@ -184,7 +194,7 @@ fn launch_with_schedule(
             log_rows,
         );
 
-        HypercubeBitrevBfFunction(resolve_kernel(spec)).launch(&config, &args)?;
+        HypercubeBitrevBfFunction(resolve_kernel(spec, log_rows)).launch(&config, &args)?;
         launch_src = dst_as_src;
         start_stage += spec.rounds;
     }
@@ -232,7 +242,7 @@ pub fn hypercube_evals_into_coeffs_bitrev_bf_in_place(
         let grid_x = if spec.family == KernelFamily::Initial {
             subproblems
         } else {
-            let tile = noninitial_tile_subproblems(spec);
+            let tile = noninitial_tile_subproblems(spec, log_rows);
             assert_eq!(subproblems % tile, 0);
             subproblems / tile
         };
@@ -245,7 +255,7 @@ pub fn hypercube_evals_into_coeffs_bitrev_bf_in_place(
         let config = CudaLaunchConfig::basic(grid_dim, block_dim, stream);
         let use_cg_loads = if idx == 2 { 1 } else { 0 };
         let args = HypercubeBitrevBfArguments::new(src, dst, use_cg_loads, start_stage, log_rows);
-        HypercubeBitrevBfFunction(resolve_kernel(spec)).launch(&config, &args)?;
+        HypercubeBitrevBfFunction(resolve_kernel(spec, log_rows)).launch(&config, &args)?;
         start_stage += spec.rounds;
     }
 

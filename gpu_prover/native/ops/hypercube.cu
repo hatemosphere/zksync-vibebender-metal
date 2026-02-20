@@ -12,16 +12,18 @@ DEVICE_FORCEINLINE unsigned swizzle_shared_lane(const unsigned idx) {
 }
 
 DEVICE_FORCEINLINE unsigned transpose64_conflict_free_idx(const unsigned row6, const unsigned col6) {
-  // 64x64 bijection split into:
-  //   major = (row << 1) | col_hi
-  //   bank  = row_lo ^ col_lo ^ (col_hi << 1)
-  //
-  // The extra col_hi contribution in bank[1] is enough to keep bank-uniqueness
-  // for all three initial-12 access patterns, including the final vec4 gather.
-  const unsigned r = row6 & 63u;
-  const unsigned c = col6 & 63u;
-  const unsigned bank = ((r & 31u) ^ (c & 31u) ^ ((c >> 5) << 1)) & 31u;
-  const unsigned major = (r << 1) | (c >> 5);
+  // 64x64 bijection tailored for the initial-12 kernel transpose access
+  // patterns. Low 5 bits are selected to give distinct banks per lane for both
+  // (lo,hi) and (hi,lo) warp patterns used by this kernel.
+  const unsigned row4 = row6 >> 2;
+  const unsigned col4 = col6 >> 2;
+  const unsigned row2 = row6 & 3u;
+  const unsigned col2 = col6 & 3u;
+
+  // bank[3:0] = row4 ^ col4, bank[4] = row4[0]
+  const unsigned bank = ((row4 ^ col4) & 15u) | ((row4 & 1u) << 4);
+  // major keeps mapping bijective together with bank bits.
+  const unsigned major = ((row4 >> 1) << 4) | (row2 << 2) | col2;
   return (major << 5) | bank;
 }
 
@@ -203,130 +205,105 @@ DEVICE_FORCEINLINE void apply_5_rounds_warp64_pair_branchless_quad(
   }
 }
 
-DEVICE_FORCEINLINE void apply_5_rounds_warp64_pair_branchless(bf &lo, bf &hi, const unsigned lane32) {
-#pragma unroll
-  for (unsigned bit = 0; bit < 5; bit++) {
-    const unsigned mask = 1u << bit;
-    const unsigned lane_bit = (lane32 >> bit) & 1u;
-    const unsigned lane_mask = 0u - lane_bit;
-
-    const unsigned lo_self = lo.limb;
-    const unsigned hi_self = hi.limb;
-    const unsigned lo_peer = __shfl_xor_sync(0xFFFFFFFFu, lo_self, mask, 32);
-    const unsigned hi_peer = __shfl_xor_sync(0xFFFFFFFFu, hi_self, mask, 32);
-
-    const unsigned lo_lo = select_u32(lo_self, lo_peer, lane_mask);
-    const unsigned lo_hi_pre = select_u32(lo_peer, lo_self, lane_mask);
-    const unsigned lo_hi = bf::sub(bf(lo_hi_pre), bf(lo_lo)).limb;
-    lo = bf(select_u32(lo_lo, lo_hi, lane_mask));
-
-    const unsigned hi_lo = select_u32(hi_self, hi_peer, lane_mask);
-    const unsigned hi_hi_pre = select_u32(hi_peer, hi_self, lane_mask);
-    const unsigned hi_hi = bf::sub(bf(hi_hi_pre), bf(hi_lo)).limb;
-    hi = bf(select_u32(hi_lo, hi_hi, lane_mask));
-  }
-}
-
 template <unsigned THREADS = 256>
-DEVICE_FORCEINLINE void hypercube_evals_into_coeffs_bitrev_initial12_log24(const bf *src,
-                                                                            bf *dst,
+DEVICE_FORCEINLINE void hypercube_evals_into_coeffs_bitrev_initial12_log24(const bf *__restrict__ src,
+                                                                            bf *__restrict__ dst,
                                                                             const bool use_cg_loads) {
   static_assert(THREADS == 256);
   constexpr unsigned SUB_SIZE = 1u << 12;
-  constexpr unsigned ROWS = 64;
-  constexpr unsigned ROWS_PER_WARP = 8;
-  constexpr unsigned VEC_ITERS = 4;
+  constexpr unsigned TILE_ROWS = 64;
+  constexpr unsigned GROUPS = 4;
+  constexpr unsigned ELEMS = 4;
 
   if (blockIdx.y != 0u) {
     return;
   }
 
-  __shared__ __align__(16) bf smem[SUB_SIZE];
+  __shared__ bf smem[SUB_SIZE];
 
   const unsigned tid = threadIdx.x;
-  const unsigned warp = tid >> 5;
-  const unsigned lane = tid & 31u;
+  const unsigned subgroup = tid >> 4;
+  const unsigned lane16 = tid & 15u;
   const unsigned subproblem = blockIdx.x;
   const unsigned block_base = subproblem << 12;
+  bf regs[GROUPS][ELEMS];
 
 #pragma unroll
-  for (unsigned iter = 0; iter < VEC_ITERS; iter++) {
-    const unsigned vec = tid + (iter << 8); // iter * 256
-    const unsigned row_base = block_base + (vec << 2);
+  for (unsigned g = 0; g < GROUPS; g++) {
+    const unsigned hi6 = subgroup * GROUPS + g;
+    const unsigned lo_base = lane16 * ELEMS;
+    const unsigned row_base = block_base + (hi6 * TILE_ROWS) + lo_base;
     const uint4 packed = use_cg_loads ? load_u4_mod<ld_modifier::cg>(src, row_base) : load_u4_mod<ld_modifier::cs>(src, row_base);
-    reinterpret_cast<uint4 *>(smem + (vec << 2))[0] = packed;
+    regs[g][0] = bf(packed.x);
+    regs[g][1] = bf(packed.y);
+    regs[g][2] = bf(packed.z);
+    regs[g][3] = bf(packed.w);
   }
 
-  __syncthreads();
+  apply_6_rounds_pair_major_4groups(regs, lane16);
 
-  // Phase 1: 6 rounds across lo-dimension (64-point rows), then write transposed.
-  bf phase1_lo[ROWS_PER_WARP];
-  bf phase1_hi[ROWS_PER_WARP];
+  // Midpoint transpose: convert low-dimension work into high-dimension work.
 #pragma unroll
-  for (unsigned row_local = 0; row_local < ROWS_PER_WARP; row_local++) {
-    const unsigned hi6 = warp * ROWS_PER_WARP + row_local;
-    const unsigned row_base = hi6 << 6;
-    bf lo = smem[row_base + lane];
-    bf hi = smem[row_base + 32u + lane];
-    apply_5_rounds_warp64_pair_branchless(lo, hi, lane);
-    hi = bf::sub(hi, lo);
-    phase1_lo[row_local] = lo;
-    phase1_hi[row_local] = hi;
-  }
-
-  // Ensure all row-major reads are completed before any warp starts writing
-  // the transposed layout into the same shared tile.
-  __syncthreads();
-
+  for (unsigned g = 0; g < GROUPS; g++) {
+    const unsigned hi6 = subgroup * GROUPS + g;
 #pragma unroll
-  for (unsigned row_local = 0; row_local < ROWS_PER_WARP; row_local++) {
-    const unsigned hi6 = warp * ROWS_PER_WARP + row_local;
-    smem[transpose64_conflict_free_idx(lane, hi6)] = phase1_lo[row_local];
-    smem[transpose64_conflict_free_idx(lane + 32u, hi6)] = phase1_hi[row_local];
-  }
-
-  __syncthreads();
-
-  // Phase 2: 6 rounds across former hi-dimension (now rows after transpose),
-  // then transpose back into canonical layout.
-  bf phase2_lo[ROWS_PER_WARP];
-  bf phase2_hi[ROWS_PER_WARP];
-#pragma unroll
-  for (unsigned row_local = 0; row_local < ROWS_PER_WARP; row_local++) {
-    const unsigned hi6 = warp * ROWS_PER_WARP + row_local;
-    bf lo = smem[transpose64_conflict_free_idx(hi6, lane)];
-    bf hi = smem[transpose64_conflict_free_idx(hi6, lane + 32u)];
-    apply_5_rounds_warp64_pair_branchless(lo, hi, lane);
-    hi = bf::sub(hi, lo);
-    phase2_lo[row_local] = lo;
-    phase2_hi[row_local] = hi;
-  }
-
-  // Ensure all transposed reads are completed before back-transpose writes.
-  __syncthreads();
-
-#pragma unroll
-  for (unsigned row_local = 0; row_local < ROWS_PER_WARP; row_local++) {
-    const unsigned hi6 = warp * ROWS_PER_WARP + row_local;
-    smem[transpose64_conflict_free_idx(lane, hi6)] = phase2_lo[row_local];
-    smem[transpose64_conflict_free_idx(lane + 32u, hi6)] = phase2_hi[row_local];
+    for (unsigned e = 0; e < ELEMS; e++) {
+      const unsigned lo6 = lane16 * ELEMS + e;
+      smem[transpose64_conflict_free_idx(lo6, hi6)] = regs[g][e];
+    }
   }
 
   __syncthreads();
 
 #pragma unroll
-  for (unsigned iter = 0; iter < VEC_ITERS; iter++) {
-    const unsigned vec = tid + (iter << 8); // iter * 256
-    const unsigned flat = vec << 2;
-    const unsigned hi6 = flat >> 6;
-    const unsigned lo_base = flat & 63u;
+  for (unsigned g = 0; g < GROUPS; g++) {
+    const unsigned hi6 = subgroup * GROUPS + g;
+#pragma unroll
+    for (unsigned e = 0; e < ELEMS; e++) {
+      const unsigned lo6 = lane16 * ELEMS + e;
+      regs[g][e] = smem[transpose64_conflict_free_idx(hi6, lo6)];
+    }
+  }
+
+  // Required before reusing the same shared tile for the writeback transpose.
+  __syncthreads();
+
+  apply_6_rounds_pair_major_4groups(regs, lane16);
+
+  // Transpose back to canonical (hi-major) layout before coalesced stores.
+#pragma unroll
+  for (unsigned g = 0; g < GROUPS; g++) {
+    const unsigned hi6 = subgroup * GROUPS + g;
+#pragma unroll
+    for (unsigned e = 0; e < ELEMS; e++) {
+      const unsigned lo6 = lane16 * ELEMS + e;
+      smem[transpose64_conflict_free_idx(lo6, hi6)] = regs[g][e];
+    }
+  }
+
+  __syncthreads();
+
+#pragma unroll
+  for (unsigned g = 0; g < GROUPS; g++) {
+    const unsigned hi6 = subgroup * GROUPS + g;
+#pragma unroll
+    for (unsigned e = 0; e < ELEMS; e++) {
+      const unsigned lo6 = lane16 * ELEMS + e;
+      regs[g][e] = smem[transpose64_conflict_free_idx(hi6, lo6)];
+    }
+  }
+
+#pragma unroll
+  for (unsigned g = 0; g < GROUPS; g++) {
+    const unsigned hi6 = subgroup * GROUPS + g;
+    const unsigned lo_base = lane16 * ELEMS;
+    const unsigned row_base = block_base + (hi6 * TILE_ROWS) + lo_base;
     const uint4 packed = uint4{
-        smem[transpose64_conflict_free_idx(hi6, lo_base + 0u)].limb,
-        smem[transpose64_conflict_free_idx(hi6, lo_base + 1u)].limb,
-        smem[transpose64_conflict_free_idx(hi6, lo_base + 2u)].limb,
-        smem[transpose64_conflict_free_idx(hi6, lo_base + 3u)].limb,
+        regs[g][0].limb,
+        regs[g][1].limb,
+        regs[g][2].limb,
+        regs[g][3].limb,
     };
-    const unsigned row_base = block_base + flat;
     store_u4_mod<st_modifier::cg>(dst, row_base, packed);
   }
 }
@@ -616,8 +593,8 @@ H2M_INITIAL_KERNEL(9);
 H2M_INITIAL_KERNEL(10);
 H2M_INITIAL_KERNEL(11);
 
-EXTERN __launch_bounds__(256, 5) __global__ void ab_h2m_bitrev_bf_initial_12_kernel(const bf *src,
-                                                                                       bf *dst,
+EXTERN __launch_bounds__(256) __global__ void ab_h2m_bitrev_bf_initial_12_kernel(const bf *__restrict__ src,
+                                                                                       bf *__restrict__ dst,
                                                                                        const unsigned use_cg_loads,
                                                                                        const unsigned start_stage,
                                                                                        const unsigned log_rows) {
