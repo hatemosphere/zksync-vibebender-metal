@@ -11,7 +11,10 @@ add_library(gpu_prover_new_native STATIC
         context.cuh
         field.cuh
         memory.cuh
-        ntt/natural_main_evals_to_coset_evals.cu
+        ntt/evals_to_monomials_three_pass.cu
+        ntt/evals_to_monomials_two_pass.cu
+        ntt/experiment_graveyard.cu
+        ntt/ntt.cuh
         ptx.cuh
 )
 add_subdirectory(bench)

@@ -14,10 +14,10 @@ static constexpr int CMEM_COARSE_LOG_COUNT = 10;
 static constexpr int CMEM_COARSE_MASK = (1 << CMEM_COARSE_LOG_COUNT) - 1;
 static constexpr int CMEM_FINE_LOG_COUNT = 8;
 static constexpr int CMEM_FINE_MASK = (1 << CMEM_FINE_LOG_COUNT) - 1;
-static constexpr int CMEM_FINEST_LOG_COUNT = 10;
-static constexpr int CMEM_FINEST_MASK = (1 << CMEM_FINEST_LOG_COUNT) - 1;
-static constexpr int GMEM_COARSE_LOG_COUNT = 13;
-static constexpr int GMEM_COARSE_MASK = (1 << GMEM_COARSE_LOG_COUNT) - 1;
+static constexpr int MASK_10 = (1 << 10) - 1;
+static constexpr int MASK_11 = (1 << 11) - 1;
+static constexpr int MASK_12 = (1 << 12) - 1;
+static constexpr int MASK_13 = (1 << 13) - 1;
 
 struct powers_layer_data {
   const base_field *values;
@@ -45,8 +45,10 @@ EXTERN __device__ __constant__ base_field ab_fwd_cmem_twiddles_coarse[1 << CMEM_
 EXTERN __device__ __constant__ base_field ab_inv_cmem_twiddles_coarse[1 << CMEM_COARSE_LOG_COUNT];
 EXTERN __device__ __constant__ base_field ab_fwd_cmem_twiddles_fine[1 << CMEM_FINE_LOG_COUNT];
 EXTERN __device__ __constant__ base_field ab_inv_cmem_twiddles_fine[1 << CMEM_FINE_LOG_COUNT];
-EXTERN __device__ __constant__ base_field ab_fwd_cmem_twiddles_finest[1 << CMEM_FINEST_LOG_COUNT];
-EXTERN __device__ __constant__ base_field ab_inv_cmem_twiddles_finest[1 << CMEM_FINEST_LOG_COUNT];
+EXTERN __device__ __constant__ base_field ab_fwd_cmem_twiddles_finest_10[1 << 10];
+EXTERN __device__ __constant__ base_field ab_inv_cmem_twiddles_finest_10[1 << 10];
+EXTERN __device__ __constant__ base_field ab_fwd_cmem_twiddles_finest_11[1 << 11];
+EXTERN __device__ __constant__ base_field ab_inv_cmem_twiddles_finest_11[1 << 11];
 EXTERN __device__ __constant__ const base_field *ab_fwd_gmem_twiddles_coarse;
 EXTERN __device__ __constant__ const base_field *ab_inv_gmem_twiddles_coarse;
 
