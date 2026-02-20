@@ -9,7 +9,7 @@ use crate::imports::*;
 
 pub fn caps_flattened(caps: &'_ [MerkleTreeCap<CAP_SIZE>; NUM_COSETS]) -> &'_ [u32] {
     unsafe {
-        core::slice::from_ptr_range(
+        verifier_common::slice_from_ptr_range(
             caps.as_ptr_range().start.cast::<u32>()..caps.as_ptr_range().end.cast::<u32>(),
         )
     }

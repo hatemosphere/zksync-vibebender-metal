@@ -257,6 +257,7 @@ impl BabyBearField {
         self.mul_assign_impl(&t)
     }
 
+    #[cfg(not(feature = "modular_ops"))]
     #[cfg_attr(not(feature = "no_inline"), inline(always))]
     pub(crate) const fn negate_impl(&'_ mut self) -> &'_ mut Self {
         if self.0 != 0 {

@@ -21,6 +21,7 @@ use verifier_common::blake2s_u32::AlignedSlice64;
 use verifier_common::non_determinism_source::NonDeterminismSource;
 use verifier_common::prover::definitions::LeafInclusionVerifier;
 use verifier_common::prover::definitions::MerkleTreeCap;
+use verifier_common::slice_from_ptr_range;
 
 pub type ProofSkeletonInstance = ProofSkeleton<
     SKELETON_PADDING,
@@ -330,7 +331,7 @@ impl ProofSkeletonInstance {
             let end = (self as *const Self)
                 .cast::<u32>()
                 .add(offset_of!(ProofSkeletonInstance, stage_2_caps) / core::mem::size_of::<u32>());
-            core::slice::from_ptr_range(start..end)
+            slice_from_ptr_range(start..end)
         }
     }
 
@@ -342,7 +343,7 @@ impl ProofSkeletonInstance {
             let end = (self as *const Self).cast::<u32>().add(
                 offset_of!(ProofSkeletonInstance, quotient_caps) / core::mem::size_of::<u32>(),
             );
-            core::slice::from_ptr_range(start..end)
+            slice_from_ptr_range(start..end)
         }
     }
 
@@ -354,7 +355,7 @@ impl ProofSkeletonInstance {
             let end = (self as *const Self).cast::<u32>().add(
                 offset_of!(ProofSkeletonInstance, openings_at_z) / core::mem::size_of::<u32>(),
             );
-            core::slice::from_ptr_range(start..end)
+            slice_from_ptr_range(start..end)
         }
     }
 
@@ -367,7 +368,7 @@ impl ProofSkeletonInstance {
                 offset_of!(ProofSkeletonInstance, fri_intermediate_oracles)
                     / core::mem::size_of::<u32>(),
             );
-            core::slice::from_ptr_range(start..end)
+            slice_from_ptr_range(start..end)
         }
     }
 
@@ -386,7 +387,7 @@ impl ProofSkeletonInstance {
             core::array::from_fn(|i| {
                 let start = start_of_oracles.add(i * cap_size_u32_words);
                 let end = start.add(cap_size_u32_words);
-                core::slice::from_ptr_range(start..end)
+                slice_from_ptr_range(start..end)
             })
         }
     }
@@ -404,7 +405,7 @@ impl ProofSkeletonInstance {
             let start = start_of_oracles;
             let end = start.add(set_size_u32_words);
             // those are reduced when we read them
-            core::slice::from_ptr_range(start..end)
+            slice_from_ptr_range(start..end)
         }
     }
 

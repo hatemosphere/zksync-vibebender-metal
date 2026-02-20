@@ -537,22 +537,22 @@ unsafe fn evaluate_every_row_except_last(
                     };
                     {
                         let mut a = *(witness.get_unchecked(9usize));
-                        field_ops::mul_assign_by_base(&mut a, &Mersenne31Field(47u32));
+                        field_ops::mul_assign_by_base(&mut a, &Mersenne31Field(46u32));
                         field_ops::add_assign(&mut individual_term, &a);
                     }
                     {
                         let mut a = *(witness.get_unchecked(10usize));
-                        field_ops::mul_assign_by_base(&mut a, &Mersenne31Field(47u32));
+                        field_ops::mul_assign_by_base(&mut a, &Mersenne31Field(46u32));
                         field_ops::add_assign(&mut individual_term, &a);
                     }
                     {
                         let mut a = *(witness.get_unchecked(11usize));
-                        field_ops::mul_assign_by_base(&mut a, &Mersenne31Field(47u32));
+                        field_ops::mul_assign_by_base(&mut a, &Mersenne31Field(46u32));
                         field_ops::add_assign(&mut individual_term, &a);
                     }
                     {
                         let mut a = *(witness.get_unchecked(13usize));
-                        field_ops::mul_assign_by_base(&mut a, &Mersenne31Field(25u32));
+                        field_ops::mul_assign_by_base(&mut a, &Mersenne31Field(24u32));
                         field_ops::add_assign(&mut individual_term, &a);
                     }
                     {
@@ -734,22 +734,22 @@ unsafe fn evaluate_every_row_except_last(
                     };
                     {
                         let mut a = *(witness.get_unchecked(9usize));
-                        field_ops::mul_assign_by_base(&mut a, &Mersenne31Field(48u32));
+                        field_ops::mul_assign_by_base(&mut a, &Mersenne31Field(47u32));
                         field_ops::add_assign(&mut individual_term, &a);
                     }
                     {
                         let mut a = *(witness.get_unchecked(10usize));
-                        field_ops::mul_assign_by_base(&mut a, &Mersenne31Field(50u32));
+                        field_ops::mul_assign_by_base(&mut a, &Mersenne31Field(49u32));
                         field_ops::add_assign(&mut individual_term, &a);
                     }
                     {
                         let mut a = *(witness.get_unchecked(11usize));
-                        field_ops::mul_assign_by_base(&mut a, &Mersenne31Field(52u32));
+                        field_ops::mul_assign_by_base(&mut a, &Mersenne31Field(51u32));
                         field_ops::add_assign(&mut individual_term, &a);
                     }
                     {
                         let mut a = *(witness.get_unchecked(13usize));
-                        field_ops::mul_assign_by_base(&mut a, &Mersenne31Field(53u32));
+                        field_ops::mul_assign_by_base(&mut a, &Mersenne31Field(52u32));
                         field_ops::add_assign(&mut individual_term, &a);
                     }
                     {
@@ -915,22 +915,22 @@ unsafe fn evaluate_every_row_except_last(
                     };
                     {
                         let mut a = *(witness.get_unchecked(9usize));
-                        field_ops::mul_assign_by_base(&mut a, &Mersenne31Field(49u32));
+                        field_ops::mul_assign_by_base(&mut a, &Mersenne31Field(48u32));
                         field_ops::add_assign(&mut individual_term, &a);
                     }
                     {
                         let mut a = *(witness.get_unchecked(10usize));
-                        field_ops::mul_assign_by_base(&mut a, &Mersenne31Field(51u32));
-                        field_ops::add_assign(&mut individual_term, &a);
-                    }
-                    {
-                        let mut a = *(witness.get_unchecked(11usize));
                         field_ops::mul_assign_by_base(&mut a, &Mersenne31Field(50u32));
                         field_ops::add_assign(&mut individual_term, &a);
                     }
                     {
+                        let mut a = *(witness.get_unchecked(11usize));
+                        field_ops::mul_assign_by_base(&mut a, &Mersenne31Field(49u32));
+                        field_ops::add_assign(&mut individual_term, &a);
+                    }
+                    {
                         let mut a = *(witness.get_unchecked(13usize));
-                        field_ops::mul_assign_by_base(&mut a, &Mersenne31Field(53u32));
+                        field_ops::mul_assign_by_base(&mut a, &Mersenne31Field(52u32));
                         field_ops::add_assign(&mut individual_term, &a);
                     }
                     {
@@ -1056,7 +1056,7 @@ unsafe fn evaluate_every_row_except_last(
                     };
                     {
                         let mut a = *(witness.get_unchecked(11usize));
-                        field_ops::mul_assign_by_base(&mut a, &Mersenne31Field(51u32));
+                        field_ops::mul_assign_by_base(&mut a, &Mersenne31Field(50u32));
                         field_ops::add_assign(&mut individual_term, &a);
                     }
                     {

@@ -1,9 +1,5 @@
 #![cfg_attr(not(any(test, feature = "replace_csr")), no_std)]
 #![cfg_attr(any(test, feature = "proof_utils"), feature(allocator_api))]
-#![feature(ptr_as_ref_unchecked)]
-#![feature(slice_from_ptr_range)]
-#![allow(incomplete_features)]
-#![feature(generic_const_exprs)]
 
 #[cfg(any(all(feature = "security_80", feature = "security_100"),))]
 compile_error!("multiple security levels selected same time");
@@ -85,6 +81,12 @@ pub const fn transcript_challenge_array_size(num_elements: usize, pow_bits: usiz
     }
 }
 
+// Stable reimpl of standard library
+#[inline(always)]
+pub const unsafe fn slice_from_ptr_range<'a, T>(range: core::ops::Range<*const T>) -> &'a [T] {
+    unsafe { core::slice::from_raw_parts(range.start, range.end.offset_from(range.start) as usize) }
+}
+
 #[derive(Clone, Copy, Debug, Hash, serde::Serialize, serde::Deserialize)]
 pub struct SizedProofPowChallenges<const NUM_FOLDINGS: usize> {
     pub lookup_pow_challenge: u64,
@@ -140,9 +142,6 @@ pub type DefaultNonDeterminismSource = non_determinism_source::CSRBasedSource;
 
 #[cfg(not(all(target_arch = "riscv32", feature = "blake2_with_compression")))]
 pub type DefaultLeafInclusionVerifier = prover::definitions::Blake2sForEverythingVerifier;
-
-// pub type DefaultLeafInclusionVerifier =
-//     prover::definitions::Blake2sForLeafsPoseidon2ForNodesVerifier;
 
 #[cfg(all(target_arch = "riscv32", feature = "blake2_with_compression"))]
 pub type DefaultLeafInclusionVerifier =
@@ -234,18 +233,24 @@ impl<
 {
     pub fn setup_caps_flattened(&'_ self) -> &'_ [u32] {
         unsafe {
-            core::slice::from_ptr_range(
-                self.setup_caps.as_ptr_range().start.cast::<u32>()
-                    ..self.setup_caps.as_ptr_range().end.cast::<u32>(),
+            core::slice::from_raw_parts(
+                self.setup_caps.as_ptr_range().start.cast::<u32>(),
+                self.setup_caps
+                    .as_ptr_range()
+                    .end
+                    .offset_from(self.setup_caps.as_ptr_range().start) as usize,
             )
         }
     }
 
     pub fn memory_caps_flattened(&'_ self) -> &'_ [u32] {
         unsafe {
-            core::slice::from_ptr_range(
-                self.memory_caps.as_ptr_range().start.cast::<u32>()
-                    ..self.memory_caps.as_ptr_range().end.cast::<u32>(),
+            core::slice::from_raw_parts(
+                self.memory_caps.as_ptr_range().start.cast::<u32>(),
+                self.memory_caps
+                    .as_ptr_range()
+                    .end
+                    .offset_from(self.memory_caps.as_ptr_range().start) as usize,
             )
         }
     }

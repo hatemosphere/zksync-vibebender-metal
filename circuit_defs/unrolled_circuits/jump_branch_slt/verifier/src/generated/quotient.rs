@@ -1284,7 +1284,7 @@ unsafe fn evaluate_every_row_except_last(
                         value
                     };
                     let mut denom = lookup_argument_linearization_challenges[2];
-                    let table_id = Mersenne31Field(43u32);
+                    let table_id = Mersenne31Field(42u32);
                     field_ops::mul_assign_by_base(&mut denom, &table_id);
                     let mut t = lookup_argument_linearization_challenges[1];
                     field_ops::mul_assign_by_base(&mut t, &src2);
@@ -1326,7 +1326,7 @@ unsafe fn evaluate_every_row_except_last(
                         value
                     };
                     let mut denom = lookup_argument_linearization_challenges[2];
-                    let table_id = Mersenne31Field(17u32);
+                    let table_id = Mersenne31Field(16u32);
                     field_ops::mul_assign_by_base(&mut denom, &table_id);
                     let mut t = lookup_argument_linearization_challenges[1];
                     field_ops::mul_assign_by_base(&mut t, &src2);
