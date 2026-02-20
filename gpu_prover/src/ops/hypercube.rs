@@ -82,6 +82,8 @@ declare_h2m_kernel!(ab_h2m_bitrev_bf_initial_9_kernel);
 declare_h2m_kernel!(ab_h2m_bitrev_bf_initial_10_kernel);
 declare_h2m_kernel!(ab_h2m_bitrev_bf_initial_11_kernel);
 declare_h2m_kernel!(ab_h2m_bitrev_bf_initial_12_kernel);
+declare_h2m_kernel!(ab_h2m_bitrev_bf_initial_12_cs_kernel);
+declare_h2m_kernel!(ab_h2m_bitrev_bf_initial_12_cg_kernel);
 declare_h2m_kernel!(ab_h2m_bitrev_bf_noninitial_6_kernel);
 declare_h2m_kernel!(ab_h2m_bitrev_bf_noninitial_6_log24_kernel);
 declare_h2m_kernel!(ab_h2m_bitrev_bf_noninitial_7_kernel);
@@ -119,7 +121,7 @@ fn noninitial_tile_subproblems(spec: LaunchSpec, log_rows: u32) -> usize {
     }
 }
 
-fn resolve_kernel(spec: LaunchSpec, log_rows: u32) -> HypercubeBitrevBfSignature {
+fn resolve_kernel(spec: LaunchSpec, log_rows: u32, use_cg_loads: u32) -> HypercubeBitrevBfSignature {
     if log_rows == 24 && spec.family == KernelFamily::NonInitial && spec.rounds == 6 {
         return ab_h2m_bitrev_bf_noninitial_6_log24_kernel;
     }
@@ -129,7 +131,13 @@ fn resolve_kernel(spec: LaunchSpec, log_rows: u32) -> HypercubeBitrevBfSignature
         (KernelFamily::Initial, 9) => ab_h2m_bitrev_bf_initial_9_kernel,
         (KernelFamily::Initial, 10) => ab_h2m_bitrev_bf_initial_10_kernel,
         (KernelFamily::Initial, 11) => ab_h2m_bitrev_bf_initial_11_kernel,
-        (KernelFamily::Initial, 12) => ab_h2m_bitrev_bf_initial_12_kernel,
+        (KernelFamily::Initial, 12) => {
+            if use_cg_loads != 0 {
+                ab_h2m_bitrev_bf_initial_12_cg_kernel
+            } else {
+                ab_h2m_bitrev_bf_initial_12_cs_kernel
+            }
+        }
         (KernelFamily::NonInitial, 6) => ab_h2m_bitrev_bf_noninitial_6_kernel,
         (KernelFamily::NonInitial, 7) => {
             if block_threads_for_spec(spec) == 128 {
@@ -194,7 +202,7 @@ fn launch_with_schedule(
             log_rows,
         );
 
-        HypercubeBitrevBfFunction(resolve_kernel(spec, log_rows)).launch(&config, &args)?;
+        HypercubeBitrevBfFunction(resolve_kernel(spec, log_rows, use_cg_loads)).launch(&config, &args)?;
         launch_src = dst_as_src;
         start_stage += spec.rounds;
     }
@@ -255,7 +263,7 @@ pub fn hypercube_evals_into_coeffs_bitrev_bf_in_place(
         let config = CudaLaunchConfig::basic(grid_dim, block_dim, stream);
         let use_cg_loads = if idx == 2 { 1 } else { 0 };
         let args = HypercubeBitrevBfArguments::new(src, dst, use_cg_loads, start_stage, log_rows);
-        HypercubeBitrevBfFunction(resolve_kernel(spec, log_rows)).launch(&config, &args)?;
+        HypercubeBitrevBfFunction(resolve_kernel(spec, log_rows, use_cg_loads)).launch(&config, &args)?;
         start_stage += spec.rounds;
     }
 

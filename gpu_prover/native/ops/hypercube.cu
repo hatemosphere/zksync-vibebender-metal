@@ -205,10 +205,9 @@ DEVICE_FORCEINLINE void apply_5_rounds_warp64_pair_branchless_quad(
   }
 }
 
-template <unsigned THREADS = 256>
+template <ld_modifier LOAD_MODIFIER, unsigned THREADS = 256>
 DEVICE_FORCEINLINE void hypercube_evals_into_coeffs_bitrev_initial12_log24(const bf *__restrict__ src,
-                                                                            bf *__restrict__ dst,
-                                                                            const bool use_cg_loads) {
+                                                                            bf *__restrict__ dst) {
   static_assert(THREADS == 256);
   constexpr unsigned SUB_SIZE = 1u << 12;
   constexpr unsigned TILE_ROWS = 64;
@@ -233,7 +232,7 @@ DEVICE_FORCEINLINE void hypercube_evals_into_coeffs_bitrev_initial12_log24(const
     const unsigned hi6 = subgroup * GROUPS + g;
     const unsigned lo_base = lane16 * ELEMS;
     const unsigned row_base = block_base + (hi6 * TILE_ROWS) + lo_base;
-    const uint4 packed = use_cg_loads ? load_u4_mod<ld_modifier::cg>(src, row_base) : load_u4_mod<ld_modifier::cs>(src, row_base);
+    const uint4 packed = load_u4_mod<LOAD_MODIFIER>(src, row_base);
     regs[g][0] = bf(packed.x);
     regs[g][1] = bf(packed.y);
     regs[g][2] = bf(packed.z);
@@ -598,9 +597,32 @@ EXTERN __launch_bounds__(256) __global__ void ab_h2m_bitrev_bf_initial_12_kernel
                                                                                        const unsigned use_cg_loads,
                                                                                        const unsigned start_stage,
                                                                                        const unsigned log_rows) {
+  (void)use_cg_loads;
   (void)start_stage;
   (void)log_rows;
-  hypercube_evals_into_coeffs_bitrev_initial12_log24<256>(src, dst, use_cg_loads != 0u);
+  hypercube_evals_into_coeffs_bitrev_initial12_log24<ld_modifier::cs, 256>(src, dst);
+}
+
+EXTERN __launch_bounds__(256) __global__ void ab_h2m_bitrev_bf_initial_12_cs_kernel(const bf *__restrict__ src,
+                                                                                      bf *__restrict__ dst,
+                                                                                      const unsigned use_cg_loads,
+                                                                                      const unsigned start_stage,
+                                                                                      const unsigned log_rows) {
+  (void)use_cg_loads;
+  (void)start_stage;
+  (void)log_rows;
+  hypercube_evals_into_coeffs_bitrev_initial12_log24<ld_modifier::cs, 256>(src, dst);
+}
+
+EXTERN __launch_bounds__(256) __global__ void ab_h2m_bitrev_bf_initial_12_cg_kernel(const bf *__restrict__ src,
+                                                                                      bf *__restrict__ dst,
+                                                                                      const unsigned use_cg_loads,
+                                                                                      const unsigned start_stage,
+                                                                                      const unsigned log_rows) {
+  (void)use_cg_loads;
+  (void)start_stage;
+  (void)log_rows;
+  hypercube_evals_into_coeffs_bitrev_initial12_log24<ld_modifier::cg, 256>(src, dst);
 }
 
 EXTERN __launch_bounds__(256, 6) __global__ void ab_h2m_bitrev_bf_noninitial_6_log24_kernel(
