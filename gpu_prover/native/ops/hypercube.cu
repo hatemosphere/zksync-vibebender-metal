@@ -27,6 +27,12 @@ DEVICE_FORCEINLINE unsigned transpose64_conflict_free_idx(const unsigned row6, c
   return (major << 5) | bank;
 }
 
+DEVICE_FORCEINLINE unsigned initial12_smem_u4_idx(const unsigned row6, const unsigned col4) {
+  // Shared tile is addressed as 64 rows x 16 uint4 columns. The row-dependent
+  // XOR on the column keeps transpose-phase vector accesses bank-friendly.
+  return (row6 << 4) | (col4 ^ (row6 >> 2));
+}
+
 DEVICE_FORCEINLINE unsigned select_u32(const unsigned a, const unsigned b, const unsigned mask) {
   return (a & ~mask) | (b & mask);
 }
@@ -218,7 +224,7 @@ DEVICE_FORCEINLINE void hypercube_evals_into_coeffs_bitrev_initial12_log24(const
     return;
   }
 
-  __shared__ bf smem[SUB_SIZE];
+  __shared__ uint4 smem_u4[SUB_SIZE >> 2];
 
   const unsigned tid = threadIdx.x;
   const unsigned subgroup = tid >> 4;
@@ -244,24 +250,27 @@ DEVICE_FORCEINLINE void hypercube_evals_into_coeffs_bitrev_initial12_log24(const
   // Midpoint transpose: convert low-dimension work into high-dimension work.
 #pragma unroll
   for (unsigned g = 0; g < GROUPS; g++) {
-    const unsigned hi6 = subgroup * GROUPS + g;
-#pragma unroll
-    for (unsigned e = 0; e < ELEMS; e++) {
-      const unsigned lo6 = lane16 * ELEMS + e;
-      smem[transpose64_conflict_free_idx(lo6, hi6)] = regs[g][e];
-    }
+    const unsigned row6 = subgroup * GROUPS + g;
+    const unsigned idx = initial12_smem_u4_idx(row6, lane16);
+    smem_u4[idx] = uint4{
+        regs[g][0].limb,
+        regs[g][1].limb,
+        regs[g][2].limb,
+        regs[g][3].limb,
+    };
   }
 
   __syncthreads();
 
 #pragma unroll
-  for (unsigned g = 0; g < GROUPS; g++) {
-    const unsigned hi6 = subgroup * GROUPS + g;
-#pragma unroll
-    for (unsigned e = 0; e < ELEMS; e++) {
-      const unsigned lo6 = lane16 * ELEMS + e;
-      regs[g][e] = smem[transpose64_conflict_free_idx(hi6, lo6)];
-    }
+  for (unsigned e = 0; e < ELEMS; e++) {
+    const unsigned row6 = lane16 * ELEMS + e;
+    const unsigned idx = initial12_smem_u4_idx(row6, subgroup);
+    const uint4 packed = smem_u4[idx];
+    regs[0][e] = bf(packed.x);
+    regs[1][e] = bf(packed.y);
+    regs[2][e] = bf(packed.z);
+    regs[3][e] = bf(packed.w);
   }
 
   // Required before reusing the same shared tile for the writeback transpose.
@@ -272,24 +281,27 @@ DEVICE_FORCEINLINE void hypercube_evals_into_coeffs_bitrev_initial12_log24(const
   // Transpose back to canonical (hi-major) layout before coalesced stores.
 #pragma unroll
   for (unsigned g = 0; g < GROUPS; g++) {
-    const unsigned hi6 = subgroup * GROUPS + g;
-#pragma unroll
-    for (unsigned e = 0; e < ELEMS; e++) {
-      const unsigned lo6 = lane16 * ELEMS + e;
-      smem[transpose64_conflict_free_idx(lo6, hi6)] = regs[g][e];
-    }
+    const unsigned row6 = subgroup * GROUPS + g;
+    const unsigned idx = initial12_smem_u4_idx(row6, lane16);
+    smem_u4[idx] = uint4{
+        regs[g][0].limb,
+        regs[g][1].limb,
+        regs[g][2].limb,
+        regs[g][3].limb,
+    };
   }
 
   __syncthreads();
 
 #pragma unroll
-  for (unsigned g = 0; g < GROUPS; g++) {
-    const unsigned hi6 = subgroup * GROUPS + g;
-#pragma unroll
-    for (unsigned e = 0; e < ELEMS; e++) {
-      const unsigned lo6 = lane16 * ELEMS + e;
-      regs[g][e] = smem[transpose64_conflict_free_idx(hi6, lo6)];
-    }
+  for (unsigned e = 0; e < ELEMS; e++) {
+    const unsigned row6 = lane16 * ELEMS + e;
+    const unsigned idx = initial12_smem_u4_idx(row6, subgroup);
+    const uint4 packed = smem_u4[idx];
+    regs[0][e] = bf(packed.x);
+    regs[1][e] = bf(packed.y);
+    regs[2][e] = bf(packed.z);
+    regs[3][e] = bf(packed.w);
   }
 
 #pragma unroll
