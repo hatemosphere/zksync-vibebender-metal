@@ -604,7 +604,7 @@ H2M_INITIAL_KERNEL(9);
 H2M_INITIAL_KERNEL(10);
 H2M_INITIAL_KERNEL(11);
 
-EXTERN __launch_bounds__(256) __global__ void ab_h2m_bitrev_bf_initial_12_kernel(const bf *__restrict__ src,
+EXTERN __launch_bounds__(256, 6) __global__ void ab_h2m_bitrev_bf_initial_12_kernel(const bf *__restrict__ src,
                                                                                        bf *__restrict__ dst,
                                                                                        const unsigned use_cg_loads,
                                                                                        const unsigned start_stage,
@@ -615,7 +615,7 @@ EXTERN __launch_bounds__(256) __global__ void ab_h2m_bitrev_bf_initial_12_kernel
   hypercube_evals_into_coeffs_bitrev_initial12_log24<ld_modifier::cs, 256>(src, dst);
 }
 
-EXTERN __launch_bounds__(256) __global__ void ab_h2m_bitrev_bf_initial_12_cs_kernel(const bf *__restrict__ src,
+EXTERN __launch_bounds__(256, 6) __global__ void ab_h2m_bitrev_bf_initial_12_cs_kernel(const bf *__restrict__ src,
                                                                                       bf *__restrict__ dst,
                                                                                       const unsigned use_cg_loads,
                                                                                       const unsigned start_stage,
@@ -626,7 +626,7 @@ EXTERN __launch_bounds__(256) __global__ void ab_h2m_bitrev_bf_initial_12_cs_ker
   hypercube_evals_into_coeffs_bitrev_initial12_log24<ld_modifier::cs, 256>(src, dst);
 }
 
-EXTERN __launch_bounds__(256) __global__ void ab_h2m_bitrev_bf_initial_12_cg_kernel(const bf *__restrict__ src,
+EXTERN __launch_bounds__(256, 6) __global__ void ab_h2m_bitrev_bf_initial_12_cg_kernel(const bf *__restrict__ src,
                                                                                       bf *__restrict__ dst,
                                                                                       const unsigned use_cg_loads,
                                                                                       const unsigned start_stage,
