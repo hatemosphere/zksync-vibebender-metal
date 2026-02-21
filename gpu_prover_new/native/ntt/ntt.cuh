@@ -93,12 +93,13 @@ template <typename T, int STRIDE, int REGION_SIZE, int NUM_REGIONS, const bf *cm
 DEVICE_FORCEINLINE void reg_exchg_cmem_smem_twiddles_inv(bf *vals, const int exchg_region_offset, const bf *smem_twiddles) {
 #pragma unroll
   for (int region{0}; region < NUM_REGIONS; region++) {
-    const bf twiddle = get_cmem_smem_twiddle<T, cmem_twiddles>(exchg_region_offset + region, smem_twiddles);
+    // const bf twiddle = get_cmem_smem_twiddle<T, cmem_twiddles>(exchg_region_offset + region, smem_twiddles);
     const int region_offset = region * REGION_SIZE;
 #pragma unroll
     for (int lane_in_region{0}; lane_in_region < STRIDE; lane_in_region++) {
       const int i = region_offset + lane_in_region;
-      exchg_dit(vals[i], vals[i + STRIDE], twiddle);
+      // exchg_dit(vals[i], vals[i + STRIDE], twiddle);
+      exchg_dit_0(vals[i], vals[i + STRIDE]);
     }
   }
 }
@@ -107,12 +108,13 @@ template <int STRIDE, int REGION_SIZE, int NUM_REGIONS>
 DEVICE_FORCEINLINE void reg_exchg_cmem_twiddles_inv(bf *vals, const int exchg_region_offset) {
 #pragma unroll
   for (int region{0}; region < NUM_REGIONS; region++) {
-    const bf twiddle = get_cmem_twiddle<ab_inv_cmem_twiddles_coarse, ab_inv_cmem_twiddles_fine>(exchg_region_offset + region);
+    // const bf twiddle = get_cmem_twiddle<ab_inv_cmem_twiddles_coarse, ab_inv_cmem_twiddles_fine>(exchg_region_offset + region);
     const int region_offset = region * REGION_SIZE;
 #pragma unroll
     for (int lane_in_region{0}; lane_in_region < STRIDE; lane_in_region++) {
       const int i = region_offset + lane_in_region;
-      exchg_dit(vals[i], vals[i + STRIDE], twiddle);
+      // exchg_dit(vals[i], vals[i + STRIDE], twiddle);
+      exchg_dit_0(vals[i], vals[i + STRIDE]);
     }
   }
 }

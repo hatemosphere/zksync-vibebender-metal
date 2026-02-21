@@ -115,6 +115,7 @@ pub fn main_to_monomials_3_pass(
     MainToMonomialsFirstStagesFunction(ab_main_to_monomials_nonfinal_8_stages_kernel)
         .launch(&config, &args)?;
     start_stage += 8;
+    let bf_vals_per_block = 1 << 12; // 4096
     let blocks = n.get_chunks_count(bf_vals_per_block);
     let mut config = CudaLaunchConfig::basic(blocks as u32, threads as u32, stream);
     let args = MainToCosetMiddleStagesArguments::new(

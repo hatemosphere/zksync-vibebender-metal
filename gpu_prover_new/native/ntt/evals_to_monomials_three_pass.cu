@@ -84,13 +84,12 @@ EXTERN __launch_bounds__(512, 2) __global__
       gmem_out.set_at_row(row, vals[i]); // write consecutive gmem tiles
 }
 
-EXTERN __launch_bounds__(512, 1) __global__
+EXTERN __launch_bounds__(512, 2) __global__
     void ab_main_to_monomials_final_8_stages_kernel(bf_matrix_getter<ld_modifier::cg> gmem_in,
                                                     bf_matrix_setter<st_modifier::cg> gmem_out,
-                                                    const int log_n,
-                                                    const int start_stage) {
+                                                    const int log_n) {
   constexpr int WARP_SIZE = 32;
-  constexpr int VALS_PER_THREAD = 16;
+  constexpr int VALS_PER_THREAD = 8;
   constexpr int VALS_PER_WARP = WARP_SIZE * VALS_PER_THREAD;
   constexpr int WARPS_PER_BLOCK = 16;
   constexpr int VALS_PER_BLOCK = WARPS_PER_BLOCK * WARP_SIZE * VALS_PER_THREAD; // 8192
@@ -105,16 +104,12 @@ EXTERN __launch_bounds__(512, 1) __global__
   // gmem_out.add_row(gmem_block_offset + warp_id * VALS_PER_WARP);
   gmem_out.add_row(gmem_block_offset);
 
-  __shared__ bf smem_block[12288]; // 8192 vals, 4096 coarse twiddles
+  __shared__ bf smem_block[8192]; // 4096 vals, 4096 coarse twiddles
   bf *smem_warp = smem_block + warp_id * VALS_PER_WARP;
   bf *smem_twiddles = smem_block + VALS_PER_BLOCK;
   constexpr bf *cmem_twiddles = ab_inv_cmem_twiddles_finest_11;
 
   bf vals[VALS_PER_THREAD];
-
-#pragma unroll
-  for (int i{0}, row{thread_start}; i < VALS_PER_THREAD; i++, row += WARP_SIZE)
-    vals[i] = gmem_in.get_at_row(row);
 
   // Cooperatively fetch fine gmem twiddle powers used by last 5 stages.
   // The gmem layout is already swizzled, so it's a linear copy and we can vectorize :)
@@ -129,13 +124,31 @@ EXTERN __launch_bounds__(512, 1) __global__
 
 #pragma unroll
   for (int i{0}, row{thread_start}; i < VALS_PER_THREAD; i++, row += WARP_SIZE)
-    gmem_out.set_at_row(row, vals[i]);
+    vals[i] = gmem_in.get_at_row(row);
 
-  // int warp_exchg_region_offset = blockIdx.x * WARPS_PER_BLOCK + warp_id;
-  // reg_exchg_cmem_smem_twiddles_inv<EightStages, 8, 16, 1, cmem_twiddles>(vals, warp_exchg_region_offset, smem_twiddles); warp_exchg_region_offset <<= 1;
-  // reg_exchg_cmem_smem_twiddles_inv<EightStages, 4, 8, 2, cmem_twiddles>(vals, warp_exchg_region_offset, smem_twiddles); warp_exchg_region_offset <<= 1;
-  // reg_exchg_cmem_smem_twiddles_inv<EightStages, 2, 4, 4, cmem_twiddles>(vals, warp_exchg_region_offset, smem_twiddles); warp_exchg_region_offset <<= 1;
-  // reg_exchg_cmem_smem_twiddles_inv<EightStages, 1, 2, 8, cmem_twiddles>(vals, warp_exchg_region_offset, smem_twiddles); warp_exchg_region_offset <<= 1;
+  int warp_exchg_region_offset = blockIdx.x * WARPS_PER_BLOCK + warp_id;
+  reg_exchg_cmem_smem_twiddles_inv<EightStages, 4, 8, 1, cmem_twiddles>(vals, warp_exchg_region_offset, smem_twiddles); warp_exchg_region_offset <<= 1;
+  reg_exchg_cmem_smem_twiddles_inv<EightStages, 2, 4, 2, cmem_twiddles>(vals, warp_exchg_region_offset, smem_twiddles); warp_exchg_region_offset <<= 1;
+  reg_exchg_cmem_smem_twiddles_inv<EightStages, 1, 2, 4, cmem_twiddles>(vals, warp_exchg_region_offset, smem_twiddles); warp_exchg_region_offset <<= 1;
+
+//   constexpr unsigned mask = 0xffffffff;
+//   constexpr int laneMask = 16;
+// #pragma unroll
+//   for (int i{0}; i < 8; i += 2) {
+//     if (lane_id & 16)
+//       vals[i].limb = __shfl_xor_sync(mask, vals[i].limb, laneMask);
+//     else
+//       vals[i + 1].limb = __shfl_xor_sync(mask, vals[i + 1].limb, laneMask);
+//   }
+  reg_exchg_cmem_smem_twiddles_inv<EightStages, 1, 2, 4, cmem_twiddles>(vals, warp_exchg_region_offset, smem_twiddles); warp_exchg_region_offset <<= 1;
+  reg_exchg_cmem_smem_twiddles_inv<EightStages, 1, 2, 4, cmem_twiddles>(vals, warp_exchg_region_offset, smem_twiddles); warp_exchg_region_offset <<= 1;
+  reg_exchg_cmem_smem_twiddles_inv<EightStages, 1, 2, 4, cmem_twiddles>(vals, warp_exchg_region_offset, smem_twiddles); warp_exchg_region_offset <<= 1;
+  reg_exchg_cmem_smem_twiddles_inv<EightStages, 1, 2, 4, cmem_twiddles>(vals, warp_exchg_region_offset, smem_twiddles); warp_exchg_region_offset <<= 1;
+  reg_exchg_cmem_smem_twiddles_inv<EightStages, 1, 2, 4, cmem_twiddles>(vals, warp_exchg_region_offset, smem_twiddles); warp_exchg_region_offset <<= 1;
+
+#pragma unroll
+  for (int i{0}, row{thread_start}; i < VALS_PER_THREAD; i++, row += WARP_SIZE)
+    gmem_out.set_at_row(row, vals[i]);
 
 //   // TODO: consider shfl pattern here instead
 //   __syncwarp();

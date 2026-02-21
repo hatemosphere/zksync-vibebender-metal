@@ -53,7 +53,7 @@ pub fn ifft_natural_to_natural<
 
     let log_n = input.len().trailing_zeros();
     serial_ct_ntt_natural_to_bitreversed(input, log_n, twiddles);
-    bitreverse_enumeration_inplace(input);
+    // bitreverse_enumeration_inplace(input);
 
     // if coset != F::ONE {
     //     let coset = coset.inverse().expect("inverse of coset must exist");
@@ -80,7 +80,7 @@ pub fn partial_ifft_natural_to_natural<F: Field>(input: &mut [F], coset: F, twid
 
     let log_n = input.len().trailing_zeros();
     serial_ct_ntt_natural_to_bitreversed(input, log_n, twiddles);
-    // bitreverse_enumeration_inplace(input);
+    bitreverse_enumeration_inplace(input);
 
     if coset != F::ONE {
         let coset = coset.inverse().expect("inverse of coset must exist");
@@ -163,7 +163,7 @@ pub fn serial_ct_ntt_natural_to_bitreversed<F: Field, E: Field + FieldExtension<
         pairs_per_group /= 2;
         num_groups *= 2;
         distance /= 2;
-        if stage == 15 { break; }
+        if stage == 18 { break; }
         stage += 1;
     }
 }
