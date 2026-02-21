@@ -65,6 +65,19 @@ DEVICE_FORCEINLINE uint4 load_u4_select(const bf *__restrict__ ptr, const unsign
   return load_u4<ld_modifier::cs>(ptr, row_base);
 }
 
+DEVICE_FORCEINLINE void apply_pair_major_high_update_from_peers_masked(
+    bf (&vals)[4], const unsigned long long peer01, const unsigned long long peer23, const unsigned lane_mask) {
+  const unsigned peer0 = static_cast<unsigned>(peer01 & 0xFFFFFFFFull);
+  const unsigned peer1 = static_cast<unsigned>(peer01 >> 32);
+  const unsigned peer2 = static_cast<unsigned>(peer23 & 0xFFFFFFFFull);
+  const unsigned peer3 = static_cast<unsigned>(peer23 >> 32);
+
+  vals[0] = bf(select_u32(vals[0].limb, bf::sub(vals[0], bf(peer0)).limb, lane_mask));
+  vals[1] = bf(select_u32(vals[1].limb, bf::sub(vals[1], bf(peer1)).limb, lane_mask));
+  vals[2] = bf(select_u32(vals[2].limb, bf::sub(vals[2], bf(peer2)).limb, lane_mask));
+  vals[3] = bf(select_u32(vals[3].limb, bf::sub(vals[3], bf(peer3)).limb, lane_mask));
+}
+
 DEVICE_FORCEINLINE void apply_pair_major_high_update_from_peers(
     bf (&vals)[4], const unsigned long long peer01, const unsigned long long peer23) {
   const unsigned peer0 = static_cast<unsigned>(peer01 & 0xFFFFFFFFull);
@@ -224,7 +237,9 @@ DEVICE_FORCEINLINE void hypercube_evals_into_coeffs_bitrev_initial12_log24(const
     return;
   }
 
-  __shared__ uint4 smem_u4[SUB_SIZE >> 2];
+  // Ping-pong shared tiles remove one CTA barrier in the midpoint handoff.
+  __shared__ uint4 smem_u4_a[SUB_SIZE >> 2];
+  __shared__ uint4 smem_u4_b[SUB_SIZE >> 2];
 
   const unsigned tid = threadIdx.x;
   const unsigned subgroup = tid >> 4;
@@ -252,7 +267,7 @@ DEVICE_FORCEINLINE void hypercube_evals_into_coeffs_bitrev_initial12_log24(const
   for (unsigned g = 0; g < GROUPS; g++) {
     const unsigned row6 = subgroup * GROUPS + g;
     const unsigned idx = initial12_smem_u4_idx(row6, lane16);
-    smem_u4[idx] = uint4{
+    smem_u4_a[idx] = uint4{
         regs[g][0].limb,
         regs[g][1].limb,
         regs[g][2].limb,
@@ -266,24 +281,21 @@ DEVICE_FORCEINLINE void hypercube_evals_into_coeffs_bitrev_initial12_log24(const
   for (unsigned e = 0; e < ELEMS; e++) {
     const unsigned row6 = lane16 * ELEMS + e;
     const unsigned idx = initial12_smem_u4_idx(row6, subgroup);
-    const uint4 packed = smem_u4[idx];
+    const uint4 packed = smem_u4_a[idx];
     regs[0][e] = bf(packed.x);
     regs[1][e] = bf(packed.y);
     regs[2][e] = bf(packed.z);
     regs[3][e] = bf(packed.w);
   }
 
-  // Required before reusing the same shared tile for the writeback transpose.
-  __syncthreads();
-
   apply_6_rounds_pair_major_4groups(regs, lane16);
 
-  // Transpose back to canonical (hi-major) layout before coalesced stores.
+  // Write second-pass output into the alternate tile (no barrier needed here).
 #pragma unroll
   for (unsigned g = 0; g < GROUPS; g++) {
     const unsigned row6 = subgroup * GROUPS + g;
     const unsigned idx = initial12_smem_u4_idx(row6, lane16);
-    smem_u4[idx] = uint4{
+    smem_u4_b[idx] = uint4{
         regs[g][0].limb,
         regs[g][1].limb,
         regs[g][2].limb,
@@ -297,7 +309,7 @@ DEVICE_FORCEINLINE void hypercube_evals_into_coeffs_bitrev_initial12_log24(const
   for (unsigned e = 0; e < ELEMS; e++) {
     const unsigned row6 = lane16 * ELEMS + e;
     const unsigned idx = initial12_smem_u4_idx(row6, subgroup);
-    const uint4 packed = smem_u4[idx];
+    const uint4 packed = smem_u4_b[idx];
     regs[0][e] = bf(packed.x);
     regs[1][e] = bf(packed.y);
     regs[2][e] = bf(packed.z);
@@ -604,7 +616,7 @@ H2M_INITIAL_KERNEL(9);
 H2M_INITIAL_KERNEL(10);
 H2M_INITIAL_KERNEL(11);
 
-EXTERN __launch_bounds__(256, 6) __global__ void ab_h2m_bitrev_bf_initial_12_kernel(const bf *__restrict__ src,
+EXTERN __launch_bounds__(256, 3) __global__ void ab_h2m_bitrev_bf_initial_12_kernel(const bf *__restrict__ src,
                                                                                        bf *__restrict__ dst,
                                                                                        const unsigned use_cg_loads,
                                                                                        const unsigned start_stage,
@@ -615,7 +627,7 @@ EXTERN __launch_bounds__(256, 6) __global__ void ab_h2m_bitrev_bf_initial_12_ker
   hypercube_evals_into_coeffs_bitrev_initial12_log24<ld_modifier::cs, 256>(src, dst);
 }
 
-EXTERN __launch_bounds__(256, 6) __global__ void ab_h2m_bitrev_bf_initial_12_cs_kernel(const bf *__restrict__ src,
+EXTERN __launch_bounds__(256, 3) __global__ void ab_h2m_bitrev_bf_initial_12_cs_kernel(const bf *__restrict__ src,
                                                                                       bf *__restrict__ dst,
                                                                                       const unsigned use_cg_loads,
                                                                                       const unsigned start_stage,
@@ -626,7 +638,7 @@ EXTERN __launch_bounds__(256, 6) __global__ void ab_h2m_bitrev_bf_initial_12_cs_
   hypercube_evals_into_coeffs_bitrev_initial12_log24<ld_modifier::cs, 256>(src, dst);
 }
 
-EXTERN __launch_bounds__(256, 6) __global__ void ab_h2m_bitrev_bf_initial_12_cg_kernel(const bf *__restrict__ src,
+EXTERN __launch_bounds__(256, 3) __global__ void ab_h2m_bitrev_bf_initial_12_cg_kernel(const bf *__restrict__ src,
                                                                                       bf *__restrict__ dst,
                                                                                       const unsigned use_cg_loads,
                                                                                       const unsigned start_stage,
