@@ -84,8 +84,12 @@ declare_h2m_kernel!(ab_h2m_bitrev_bf_initial_11_kernel);
 declare_h2m_kernel!(ab_h2m_bitrev_bf_initial_12_kernel);
 declare_h2m_kernel!(ab_h2m_bitrev_bf_initial_12_cs_kernel);
 declare_h2m_kernel!(ab_h2m_bitrev_bf_initial_12_cg_kernel);
+declare_h2m_kernel!(ab_h2m_bitrev_bf_initial_12_ldca_stwb_kernel);
+declare_h2m_kernel!(ab_h2m_bitrev_bf_initial_12_log24_ldca_stwb_kernel);
 declare_h2m_kernel!(ab_h2m_bitrev_bf_noninitial_6_kernel);
+declare_h2m_kernel!(ab_h2m_bitrev_bf_noninitial_6_ldca_stwb_kernel);
 declare_h2m_kernel!(ab_h2m_bitrev_bf_noninitial_6_log24_kernel);
+declare_h2m_kernel!(ab_h2m_bitrev_bf_noninitial_6_log24_ldca_stwb_kernel);
 declare_h2m_kernel!(ab_h2m_bitrev_bf_noninitial_7_kernel);
 declare_h2m_kernel!(ab_h2m_bitrev_bf_noninitial_8_kernel);
 declare_h2m_kernel!(ab_h2m_bitrev_bf_noninitial_7_128_kernel);
@@ -122,8 +126,12 @@ fn noninitial_tile_subproblems(spec: LaunchSpec, log_rows: u32) -> usize {
 }
 
 fn resolve_kernel(spec: LaunchSpec, log_rows: u32, use_cg_loads: u32) -> HypercubeBitrevBfSignature {
+    if log_rows == 24 && spec.family == KernelFamily::Initial && spec.rounds == 12 {
+        return ab_h2m_bitrev_bf_initial_12_log24_ldca_stwb_kernel;
+    }
+
     if log_rows == 24 && spec.family == KernelFamily::NonInitial && spec.rounds == 6 {
-        return ab_h2m_bitrev_bf_noninitial_6_log24_kernel;
+        return ab_h2m_bitrev_bf_noninitial_6_log24_ldca_stwb_kernel;
     }
 
     match (spec.family, spec.rounds) {
