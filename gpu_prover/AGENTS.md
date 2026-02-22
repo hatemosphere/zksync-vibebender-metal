@@ -26,6 +26,7 @@
 - Minimum validation for any code change: `cargo check -p gpu_prover`
 - Build: `cargo build -p gpu_prover`
 - Test: `cargo test -p gpu_prover`
+- When selecting one test with `--exact`, use the fully-qualified test name (e.g. `ops::hypercube::tests::...`); short names often match zero tests. If unsure, list tests first via the produced test binary with `--list`.
 - Benches: `cargo bench -p gpu_prover`
 - Some tests are compute-intensive and should not be run in debug mode; use release mode for those tests: `cargo test -p gpu_prover --release`.
 - `test_no_inline` enables `field/no_inline` for this crate's build graph.

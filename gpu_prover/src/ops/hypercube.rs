@@ -49,11 +49,12 @@ macro_rules! declare_h2m_noninitial_kernel {
 
 declare_h2m_initial_kernel!(ab_h2m_bitrev_bf_initial12_out_kernel);
 declare_h2m_initial_kernel!(ab_h2m_bitrev_bf_initial12_in_kernel);
-declare_h2m_noninitial_kernel!(ab_h2m_bitrev_bf_noninitial6_stage2_kernel);
-declare_h2m_noninitial_kernel!(ab_h2m_bitrev_bf_noninitial6_stage3_kernel);
+declare_h2m_noninitial_kernel!(ab_h2m_bitrev_bf_noninitial6_stage2_out_kernel);
+declare_h2m_noninitial_kernel!(ab_h2m_bitrev_bf_noninitial6_stage2_in_kernel);
+declare_h2m_noninitial_kernel!(ab_h2m_bitrev_bf_noninitial6_stage3_in_kernel);
+declare_h2m_noninitial_kernel!(ab_h2m_bitrev_bf_noninitial6_stage3_out_kernel);
 
 fn validate_len(rows: usize) {
-    // Current public path is intentionally locked to the tuned log24 schedule.
     assert!(rows.is_power_of_two());
     assert_eq!(
         rows.trailing_zeros(),
@@ -64,13 +65,16 @@ fn validate_len(rows: usize) {
 
 fn launch_chain(
     launch0_kernel: HypercubeBitrevInitialSignature,
+    launch1_kernel: HypercubeBitrevNonInitialSignature,
+    launch2_kernel: HypercubeBitrevNonInitialSignature,
     launch0_src: *const BF,
     launch_dst: *mut BF,
     rows: usize,
     stream: &CudaStream,
 ) -> CudaResult<()> {
-    // Launch geometry depends only on rows and per-kernel rounds:
-    // initial12 owns 2^12 points per block; noninitial6 owns 2^11 points per block.
+    // Locked log24 policy:
+    // out-of-place:  #1 ld.cs/st.wt, #2 ld.cs/st.wt, #3 ld.cs/st.cs
+    // in-place:      #1 ld.cg/st.wt, #2 ld.ca/st.wt, #3 ld.ca/st.cs
     let grid_initial_12 = (rows >> 12) as u32;
     let grid_noninitial_6 = (rows >> 11) as u32;
 
@@ -97,21 +101,13 @@ fn launch_chain(
         BLOCK_THREADS,
         stream,
     );
-    let args1 = HypercubeBitrevNonInitialArguments::new(
-        launch1_src,
-        launch_dst,
-        NONINITIAL_STAGE2_START,
-    );
-    HypercubeBitrevNonInitialFunction(ab_h2m_bitrev_bf_noninitial6_stage2_kernel)
-        .launch(&config1, &args1)?;
+    let args1 =
+        HypercubeBitrevNonInitialArguments::new(launch1_src, launch_dst, NONINITIAL_STAGE2_START);
+    HypercubeBitrevNonInitialFunction(launch1_kernel).launch(&config1, &args1)?;
 
-    let args2 = HypercubeBitrevNonInitialArguments::new(
-        launch1_src,
-        launch_dst,
-        NONINITIAL_STAGE3_START,
-    );
-    HypercubeBitrevNonInitialFunction(ab_h2m_bitrev_bf_noninitial6_stage3_kernel)
-        .launch(&config1, &args2)?;
+    let args2 =
+        HypercubeBitrevNonInitialArguments::new(launch1_src, launch_dst, NONINITIAL_STAGE3_START);
+    HypercubeBitrevNonInitialFunction(launch2_kernel).launch(&config1, &args2)?;
 
     Ok(())
 }
@@ -127,6 +123,8 @@ pub fn hypercube_evals_into_coeffs_bitrev_bf(
 
     launch_chain(
         ab_h2m_bitrev_bf_initial12_out_kernel,
+        ab_h2m_bitrev_bf_noninitial6_stage2_out_kernel,
+        ab_h2m_bitrev_bf_noninitial6_stage3_out_kernel,
         src.as_ptr(),
         dst.as_mut_ptr(),
         rows,
@@ -143,6 +141,8 @@ pub fn hypercube_evals_into_coeffs_bitrev_bf_in_place(
 
     launch_chain(
         ab_h2m_bitrev_bf_initial12_in_kernel,
+        ab_h2m_bitrev_bf_noninitial6_stage2_in_kernel,
+        ab_h2m_bitrev_bf_noninitial6_stage3_in_kernel,
         dst as *const BF,
         dst,
         values.len(),
@@ -154,76 +154,91 @@ pub fn hypercube_evals_into_coeffs_bitrev_bf_in_place(
 mod tests {
     use super::*;
     use era_cudart::memory::{memory_copy_async, DeviceAllocation};
-    use field::{Field, Rand};
+    use field::Field;
     use prover::gkr::whir::hypercube_to_monomial::multivariate_hypercube_evals_into_coeffs;
-    use rand::rng;
+    use rand::{rng, Rng};
 
     fn bitreverse_permute(values: &[BF]) -> Vec<BF> {
         assert!(values.len().is_power_of_two());
         let log_rows = values.len().trailing_zeros();
         let mut out = vec![BF::ZERO; values.len()];
         for (i, value) in values.iter().copied().enumerate() {
-            let j = i.reverse_bits() >> (usize::BITS - log_rows);
-            out[j] = value;
+            let j = (i as u32).reverse_bits() >> (u32::BITS - log_rows);
+            out[j as usize] = value;
         }
         out
     }
 
-    fn cpu_reference_bitrev(src: &[BF], rows: usize) -> Vec<BF> {
-        let mut natural = bitreverse_permute(src);
-        multivariate_hypercube_evals_into_coeffs(&mut natural, rows.trailing_zeros());
-        bitreverse_permute(&natural)
+    fn reference_h2m_bitrev(input_bitrev: &[BF]) -> Vec<BF> {
+        let mut canonical = bitreverse_permute(input_bitrev);
+        let size_log2 = canonical.len().trailing_zeros();
+        multivariate_hypercube_evals_into_coeffs(&mut canonical, size_log2);
+        bitreverse_permute(&canonical)
     }
 
-    fn run_case(in_place: bool) {
-        let len = 1usize << SUPPORTED_LOG_ROWS;
+    fn run_out_of_place_case(rows: usize) {
         let mut rng = rng();
-        let h_src: Vec<BF> = (0..len).map(|_| BF::random_element(&mut rng)).collect();
-        let expected = cpu_reference_bitrev(&h_src, len);
+        let h_input = (0..rows)
+            .map(|_| BF::from_nonreduced_u32(rng.random()))
+            .collect::<Vec<_>>();
+        let h_expected = reference_h2m_bitrev(&h_input);
 
         let stream = CudaStream::default();
-        let mut h_dst = vec![BF::ZERO; len];
+        let mut d_src = DeviceAllocation::alloc(rows).unwrap();
+        let mut d_dst = DeviceAllocation::alloc(rows).unwrap();
+        memory_copy_async(&mut d_src, &h_input, &stream).unwrap();
 
-        if in_place {
-            let mut d_values = DeviceAllocation::alloc(len).unwrap();
-            memory_copy_async(&mut d_values, &h_src, &stream).unwrap();
-            hypercube_evals_into_coeffs_bitrev_bf_in_place(&mut d_values, &stream).unwrap();
-            memory_copy_async(&mut h_dst, &d_values, &stream).unwrap();
-        } else {
-            let mut d_src = DeviceAllocation::alloc(len).unwrap();
-            let mut d_dst = DeviceAllocation::alloc(len).unwrap();
-            memory_copy_async(&mut d_src, &h_src, &stream).unwrap();
-            hypercube_evals_into_coeffs_bitrev_bf(&d_src, &mut d_dst, &stream).unwrap();
-            memory_copy_async(&mut h_dst, &d_dst, &stream).unwrap();
-        }
-
+        hypercube_evals_into_coeffs_bitrev_bf(&d_src, &mut d_dst, &stream).unwrap();
+        let mut h_actual = vec![BF::ZERO; rows];
+        memory_copy_async(&mut h_actual, &d_dst, &stream).unwrap();
         stream.synchronize().unwrap();
-        assert_eq!(h_dst, expected);
+        assert_eq!(h_actual, h_expected);
+    }
+
+    fn run_in_place_case(rows: usize) {
+        let mut rng = rng();
+        let h_input = (0..rows)
+            .map(|_| BF::from_nonreduced_u32(rng.random()))
+            .collect::<Vec<_>>();
+        let h_expected = reference_h2m_bitrev(&h_input);
+
+        let stream = CudaStream::default();
+        let mut d_values = DeviceAllocation::alloc(rows).unwrap();
+        memory_copy_async(&mut d_values, &h_input, &stream).unwrap();
+
+        hypercube_evals_into_coeffs_bitrev_bf_in_place(&mut d_values, &stream).unwrap();
+        let mut h_actual = vec![BF::ZERO; rows];
+        memory_copy_async(&mut h_actual, &d_values, &stream).unwrap();
+        stream.synchronize().unwrap();
+        assert_eq!(h_actual, h_expected);
     }
 
     #[test]
     #[ignore]
     fn hypercube_bitrev_bf_out_of_place_log24() {
-        run_case(false);
+        run_out_of_place_case(1usize << SUPPORTED_LOG_ROWS);
     }
 
     #[test]
     #[ignore]
     fn hypercube_bitrev_bf_in_place_log24() {
-        run_case(true);
+        run_in_place_case(1usize << SUPPORTED_LOG_ROWS);
     }
 
     #[test]
     #[ignore]
     fn profile_hypercube_bitrev_bf_single_invocation_log24_col1() {
-        let len = 1usize << SUPPORTED_LOG_ROWS;
-        let stream = CudaStream::default();
-        let h_src = vec![BF::ZERO; len];
-        let mut d_src = DeviceAllocation::alloc(len).unwrap();
-        let mut d_dst = DeviceAllocation::alloc(len).unwrap();
+        // Profiling-only entrypoint: launches one kernel chain without correctness checks.
+        let rows = 1usize << SUPPORTED_LOG_ROWS;
+        let mut rng = rng();
+        let h_input = (0..rows)
+            .map(|_| BF::from_nonreduced_u32(rng.random()))
+            .collect::<Vec<_>>();
 
-        memory_copy_async(&mut d_src, &h_src, &stream).unwrap();
-        stream.synchronize().unwrap();
+        let stream = CudaStream::default();
+        let mut d_src = DeviceAllocation::alloc(rows).unwrap();
+        let mut d_dst = DeviceAllocation::alloc(rows).unwrap();
+        memory_copy_async(&mut d_src, &h_input, &stream).unwrap();
 
         hypercube_evals_into_coeffs_bitrev_bf(&d_src, &mut d_dst, &stream).unwrap();
         stream.synchronize().unwrap();

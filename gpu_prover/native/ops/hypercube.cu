@@ -7,19 +7,45 @@ using namespace ::airbender::memory;
 namespace airbender::ops::hypercube {
 
 DEVICE_FORCEINLINE unsigned select_u32(const unsigned a, const unsigned b, const unsigned mask) {
-  // Branchless select used by warp-level butterfly path.
+  // Branchless select used in the shuffle-based butterfly path.
+  // mask is expected to be either 0x00000000 (pick a) or 0xFFFFFFFF (pick b).
   return (a & ~mask) | (b & mask);
 }
 
 DEVICE_FORCEINLINE unsigned initial12_smem_u4_idx(const unsigned row6, const unsigned col4) {
-  // Shared tile is addressed as 64 rows x 16 uint4 columns. Row-dependent XOR
-  // on the column keeps transpose-phase vector accesses bank-friendly.
+  // Initial12 shared layout helper.
+  //
+  // Logical tile shape:
+  // - 64 rows (row6 in [0,63])
+  // - 16 uint4 columns (col4 in [0,15])
+  //
+  // Physical index:
+  // - row-major base: row6 * 16 + col4
+  // - swizzled column: col4 ^ (row6 >> 2)
+  //
+  // Why this swizzle:
+  // - During the transpose boundary we access the same data with two different
+  //   (row, col) traversals. A plain row-major layout creates concentrated bank
+  //   pressure in one of those traversals.
+  // - The row-dependent XOR spreads accesses more uniformly across banks while
+  //   preserving a bijection (no collisions, no data loss).
   return (row6 << 4) | (col4 ^ (row6 >> 2));
 }
 
 DEVICE_FORCEINLINE unsigned noninitial6_smem_idx(const unsigned k, const unsigned p) {
-  // 64x32 layout with XOR-swizzled partition index for bank-friendly warp-k
-  // loads during the warp-local 6-round compute.
+  // Noninitial6 shared layout helper.
+  //
+  // Logical tile shape:
+  // - k dimension: 64 rows (round domain)
+  // - p dimension: 32 partitions
+  //
+  // Physical index:
+  // - row-major base: k * 32 + p
+  // - swizzled partition: p ^ (k & 31)
+  //
+  // Why this swizzle:
+  // - Warp compute repeatedly loads/stores values at (k, p) and (k+32, p) with
+  //   lane-aligned k. The swizzle keeps those lane-correlated accesses bank-friendly.
   return (k << 5) | (p ^ (k & 31u));
 }
 
@@ -36,6 +62,11 @@ DEVICE_FORCEINLINE void store_u4_mod(bf *__restrict__ ptr, const unsigned row_ba
 
 DEVICE_FORCEINLINE void apply_pair_major_high_update_from_peers(
     bf (&vals)[4], const unsigned long long peer01, const unsigned long long peer23) {
+  // vals is a local 4-element register group in pair-major order:
+  // [lo0, hi0, lo1, hi1].
+  //
+  // peer01/peer23 carry the neighbor lane values packed as two 32-bit limbs.
+  // This helper performs the "high -= low" update for both pairs using peer lows.
   const unsigned peer0 = static_cast<unsigned>(peer01 & 0xFFFFFFFFull);
   const unsigned peer1 = static_cast<unsigned>(peer01 >> 32);
   const unsigned peer2 = static_cast<unsigned>(peer23 & 0xFFFFFFFFull);
@@ -47,7 +78,21 @@ DEVICE_FORCEINLINE void apply_pair_major_high_update_from_peers(
 }
 
 DEVICE_FORCEINLINE void apply_6_rounds_pair_major_4groups(bf (&vals)[4][4], const unsigned lane16) {
-  // Stage 0+1 are lane-local inside each 4-value register group.
+  // Apply six rounds over 4 independent register groups.
+  //
+  // Contract:
+  // - vals[g] is [lo0, hi0, lo1, hi1] for group g.
+  // - Operation per round is the GKR transform butterfly update on the high side:
+  //     hi = hi - lo
+  //
+  // Rounds 0..1:
+  // - Entirely lane-local; each thread has both operands in registers.
+  //
+  // Rounds 2..5:
+  // - Operands span lanes inside one 16-thread subgroup.
+  // - We exchange packed values with __shfl_xor_sync(width=16).
+  // - Only lanes in the "high" half of each xor pair perform arithmetic.
+  //   (low lanes keep their value unchanged for that stage.)
 #pragma unroll
   for (unsigned g = 0; g < 4; g++) {
     vals[g][1] = bf::sub(vals[g][1], vals[g][0]);
@@ -56,7 +101,7 @@ DEVICE_FORCEINLINE void apply_6_rounds_pair_major_4groups(bf (&vals)[4][4], cons
     vals[g][3] = bf::sub(vals[g][3], vals[g][1]);
   }
 
-  // Stages 2..5 use lane-xor exchange inside 16-lane subgroups.
+  // Rounds 2..5 use lane-xor exchange inside 16-lane subgroups.
 #pragma unroll
   for (unsigned bit = 0; bit < 4; bit++) {
     const unsigned lane_bit = 1u << bit;
@@ -76,7 +121,7 @@ DEVICE_FORCEINLINE void apply_6_rounds_pair_major_4groups(bf (&vals)[4][4], cons
     const unsigned long long peer01_g1 = __shfl_xor_sync(0xFFFFFFFFu, pair01_g1, lane_bit, 16);
     const unsigned long long peer23_g1 = __shfl_xor_sync(0xFFFFFFFFu, pair23_g1, lane_bit, 16);
 
-    // Butterfly update is performed only by the "high" lane of each pair.
+    // Only high lanes update: hi <- hi - lo (with peer-provided lows).
     if (high_lane) {
       apply_pair_major_high_update_from_peers(vals[0], peer01_g0, peer23_g0);
     }
@@ -116,6 +161,14 @@ DEVICE_FORCEINLINE void apply_5_rounds_warp64_pair_branchless_quad(
     bf &d0,
     bf &d1,
     const unsigned lane32) {
+  // Apply rounds 0..4 for noninitial6 on four independent 2-value pairs.
+  //
+  // This variant is fully branchless in arithmetic selection:
+  // - For each xor partner, form (lo, hi_pre) using lane mask selects.
+  // - Compute hi = hi_pre - lo.
+  // - Select output as lo for low lanes, hi for high lanes.
+  //
+  // Processing four pairs in one loop increases ILP and helps hide shuffle latency.
 #pragma unroll
   for (unsigned bit = 0; bit < 5; bit++) {
     const unsigned mask = 1u << bit;
@@ -184,12 +237,30 @@ DEVICE_FORCEINLINE void apply_5_rounds_warp64_pair_branchless_quad(
 
 template <ld_modifier LOAD_MODIFIER, st_modifier STORE_MODIFIER, bool IN_PLACE>
 DEVICE_FORCEINLINE void hypercube_evals_into_coeffs_bitrev_initial12(const bf *__restrict__ src, bf *__restrict__ dst) {
-  // Initial-12 kernel:
-  // 1) load 4096 values (one subproblem) into registers
-  // 2) do 6 rounds in 16-lane subgroups
-  // 3) transpose via shared memory
-  // 4) do the remaining 6 rounds
-  // 5) transpose back and store.
+  // Initial12 kernel dataflow (handles one 2^12 chunk per CTA):
+  //
+  // Phase A: Global load (vectorized)
+  // - 256 threads = 16 subgroups of 16 lanes.
+  // - Each subgroup owns 256 values arranged as 4 stripes of length 64.
+  // - Each lane loads 4 contiguous BF values per stripe (uint4).
+  //
+  // Phase B: First six rounds
+  // - Run 6 rounds in subgroup-local form using apply_6_rounds_pair_major_4groups.
+  //
+  // Phase C: Shared transpose boundary
+  // - Spill to shared tile A with swizzled addressing.
+  // - CTA barrier.
+  // - Reload in transposed view so the next 6 rounds are again subgroup-local.
+  //
+  // Phase D: Second six rounds
+  // - Same compute helper as phase B.
+  //
+  // Phase E: Transpose back + store
+  // - Spill to shared tile B (same swizzle), CTA barrier, reload canonical order.
+  // - Store vectorized uint4 back to global memory.
+  //
+  // IN_PLACE controls whether stage 0 reads from src (out-of-place) or dst
+  // (in-place path where caller passes src==dst).
   constexpr unsigned SUB_SIZE = 1u << 12;
   constexpr unsigned TILE_ROWS = 64;
   constexpr unsigned GROUPS = 4;
@@ -199,7 +270,9 @@ DEVICE_FORCEINLINE void hypercube_evals_into_coeffs_bitrev_initial12(const bf *_
   __shared__ uint4 smem_u4_b[SUB_SIZE >> 2];
 
   const unsigned tid = threadIdx.x;
-  // 256-thread CTA is split into 16 subgroups of 16 lanes.
+  // Thread mapping:
+  // - subgroup in [0,15]: selects one 256-value logical partition.
+  // - lane16 in [0,15]: per-partition lane used for subgroup-local shuffles.
   const unsigned subgroup = tid >> 4;
   const unsigned lane16 = tid & 15u;
   const unsigned block_base = blockIdx.x << 12;
@@ -209,7 +282,9 @@ DEVICE_FORCEINLINE void hypercube_evals_into_coeffs_bitrev_initial12(const bf *_
 
 #pragma unroll
   for (unsigned g = 0; g < GROUPS; g++) {
-    // Each subgroup owns 4 rows (4 x 64 values); each lane loads 4 contiguous values.
+    // Each subgroup owns 4 x 64 values.
+    // hi6 chooses one of the four 64-value rows in that subgroup.
+    // lane16 * 4 gives contiguous 16-byte per-thread vector load.
     const unsigned hi6 = subgroup * GROUPS + g;
     const unsigned row_base = block_base + (hi6 * TILE_ROWS) + (lane16 * ELEMS);
     const uint4 packed = load_u4_mod<LOAD_MODIFIER>(load_ptr, row_base);
@@ -221,7 +296,7 @@ DEVICE_FORCEINLINE void hypercube_evals_into_coeffs_bitrev_initial12(const bf *_
 
   apply_6_rounds_pair_major_4groups(regs, lane16);
 
-  // Spill first-half results in row-major view.
+  // Spill first-half results in row-major logical view into swizzled shared tile A.
 #pragma unroll
   for (unsigned g = 0; g < GROUPS; g++) {
     const unsigned row6 = subgroup * GROUPS + g;
@@ -235,7 +310,8 @@ DEVICE_FORCEINLINE void hypercube_evals_into_coeffs_bitrev_initial12(const bf *_
 
   __syncthreads();
 
-  // Reload in transposed view: this remaps dependencies for rounds 6..11.
+  // Reload in transposed view.
+  // This is the key remap: rounds 6..11 now become subgroup-local again.
 #pragma unroll
   for (unsigned e = 0; e < ELEMS; e++) {
     const unsigned row6 = lane16 * ELEMS + e;
@@ -248,7 +324,7 @@ DEVICE_FORCEINLINE void hypercube_evals_into_coeffs_bitrev_initial12(const bf *_
 
   apply_6_rounds_pair_major_4groups(regs, lane16);
 
-  // Write second-half results to alternate tile.
+  // Write second-half results to alternate tile B (same swizzled scheme).
 #pragma unroll
   for (unsigned g = 0; g < GROUPS; g++) {
     const unsigned row6 = subgroup * GROUPS + g;
@@ -262,7 +338,7 @@ DEVICE_FORCEINLINE void hypercube_evals_into_coeffs_bitrev_initial12(const bf *_
 
   __syncthreads();
 
-  // Restore canonical row-major layout before global store.
+  // Restore canonical row-major order before final global stores.
 #pragma unroll
   for (unsigned e = 0; e < ELEMS; e++) {
     const unsigned row6 = lane16 * ELEMS + e;
@@ -292,10 +368,30 @@ DEVICE_FORCEINLINE void hypercube_evals_into_coeffs_bitrev_noninitial6(
     const bf *__restrict__ src,
     bf *__restrict__ dst,
     const unsigned start_stage) {
-  // Non-initial 6-round kernel:
-  // - Processes 64-point butterflies over strided rows.
-  // - Uses shared memory as a 64x32 tile (k x partition) so global IO stays
-  //   vectorized/coalesced while compute stays warp-local.
+  // Noninitial6 kernel dataflow (one 6-round stage):
+  //
+  // Goal:
+  // - Preserve fully vectorized/coalesced global IO despite large stage stride.
+  // - Perform all six rounds with warp-local math after one shared remap.
+  //
+  // Shared tile model:
+  // - 64 (k) x 32 (partition) = 2048 BF values.
+  // - k is the 6-round dimension.
+  // - partition is the low-index lane among 32 independent butterflies.
+  //
+  // Phase A: Global load -> shared
+  // - Each thread loads two uint4 vectors (32 bytes total per thread).
+  // - Layout conversion writes into swizzled shared coordinates (k, p).
+  //
+  // Phase B: Warp-local rounds
+  // - One warp handles 4 partitions.
+  // - For each partition, load (k, p) and (k+32, p) registers.
+  // - Rounds 0..4: branchless shuffle-xor butterfly helper.
+  // - Round 5: local hi -= lo in registers.
+  // - Store updated values back to shared.
+  //
+  // Phase C: Shared -> global store
+  // - Gather shared values back into uint4 and store with selected cache policy.
   constexpr unsigned ROUNDS = 6;
   constexpr unsigned K = 1u << ROUNDS; // 64
   constexpr unsigned P = 32;
@@ -305,11 +401,11 @@ DEVICE_FORCEINLINE void hypercube_evals_into_coeffs_bitrev_noninitial6(
   __shared__ bf smem[K * P]; // 64 * 32 = 2048 BF values (8KB)
 
   const unsigned tid = threadIdx.x;
-  // start_stage controls stride between consecutive k values.
+  // start_stage controls global stride between consecutive k values.
   const unsigned stride = 1u << start_stage;
-  // blockIdx.x is interpreted as a 2D index over:
-  // - high chunk (which 2^(start_stage+6) segment)
-  // - low tile inside the stride domain (32 contiguous low indices)
+  // blockIdx.x is decoded into:
+  // - high: selects which 2^(start_stage+6) super-chunk this CTA belongs to.
+  // - low_tile_id: selects one 32-value low-index window within stride.
   const unsigned low_tiles = stride >> LOW_TILE_LOG;
   const unsigned tile = blockIdx.x;
   const unsigned high = tile / low_tiles;
@@ -319,7 +415,10 @@ DEVICE_FORCEINLINE void hypercube_evals_into_coeffs_bitrev_noninitial6(
 
 #pragma unroll
   for (unsigned iter = 0; iter < VEC_ITERS; iter++) {
-    // Each thread handles two uint4 vectors (32 bytes total per thread).
+    // Vectorized load mapping:
+    // - vec indexes one uint4 among the 512 vectors in this CTA tile.
+    // - k chooses row in the 64-round domain.
+    // - p0 chooses base partition in groups of 4 contiguous values.
     const unsigned vec = tid + (iter << 8);
     const unsigned k = vec >> 3;
     const unsigned p4 = vec & 7u;
@@ -335,7 +434,10 @@ DEVICE_FORCEINLINE void hypercube_evals_into_coeffs_bitrev_noninitial6(
 
   __syncthreads();
 
-  // Warp-local compute: each warp handles 4 partitions (p0..p3) of one k-lane pair.
+  // Warp-local compute:
+  // - each warp handles partitions {warp, warp+8, warp+16, warp+24}
+  // - each lane handles one k in [0,31] and its partner k+32
+  // - together this covers all 64 k-values for those 4 partitions.
   const unsigned warp = tid >> 5;
   const unsigned lane = tid & 31u;
   const unsigned p0 = warp + 0u;
@@ -401,32 +503,48 @@ DEVICE_FORCEINLINE void hypercube_evals_into_coeffs_bitrev_noninitial6(
 EXTERN __launch_bounds__(256, 6) __global__ void ab_h2m_bitrev_bf_initial12_out_kernel(
     const bf *__restrict__ src,
     bf *__restrict__ dst) {
-  // Out-of-place initial12 path.
-  hypercube_evals_into_coeffs_bitrev_initial12<ld_modifier::cs, st_modifier::cg, false>(src, dst);
+  // Out-of-place initial12 policy: ld.cs + st.wt.
+  hypercube_evals_into_coeffs_bitrev_initial12<ld_modifier::cs, st_modifier::wt, false>(src, dst);
 }
 
 EXTERN __launch_bounds__(256, 6) __global__ void ab_h2m_bitrev_bf_initial12_in_kernel(
     const bf *__restrict__ src,
     bf *__restrict__ dst) {
-  // In-place initial12 path (src==dst by caller convention).
+  // In-place initial12 policy: ld.cg + st.wt.
   (void)src;
-  hypercube_evals_into_coeffs_bitrev_initial12<ld_modifier::cg, st_modifier::cg, true>(src, dst);
+  hypercube_evals_into_coeffs_bitrev_initial12<ld_modifier::cg, st_modifier::wt, true>(src, dst);
 }
 
-EXTERN __launch_bounds__(256, 6) __global__ void ab_h2m_bitrev_bf_noninitial6_stage2_kernel(
+EXTERN __launch_bounds__(256, 6) __global__ void ab_h2m_bitrev_bf_noninitial6_stage2_out_kernel(
     const bf *__restrict__ src,
     bf *__restrict__ dst,
     const unsigned start_stage) {
-  // Stage2 policy variant: ld.cg + st.cg. start_stage is supplied by host schedule.
-  hypercube_evals_into_coeffs_bitrev_noninitial6<ld_modifier::cg, st_modifier::cg>(src, dst, start_stage);
+  // Stage2 out-of-place policy: ld.cs + st.wt.
+  hypercube_evals_into_coeffs_bitrev_noninitial6<ld_modifier::cs, st_modifier::wt>(src, dst, start_stage);
 }
 
-EXTERN __launch_bounds__(256, 6) __global__ void ab_h2m_bitrev_bf_noninitial6_stage3_kernel(
+EXTERN __launch_bounds__(256, 6) __global__ void ab_h2m_bitrev_bf_noninitial6_stage2_in_kernel(
     const bf *__restrict__ src,
     bf *__restrict__ dst,
     const unsigned start_stage) {
-  // Stage3 policy variant: ld.cg + st.cs. start_stage is supplied by host schedule.
-  hypercube_evals_into_coeffs_bitrev_noninitial6<ld_modifier::cg, st_modifier::cs>(src, dst, start_stage);
+  // Stage2 in-place policy: ld.ca + st.wt.
+  hypercube_evals_into_coeffs_bitrev_noninitial6<ld_modifier::ca, st_modifier::wt>(src, dst, start_stage);
+}
+
+EXTERN __launch_bounds__(256, 6) __global__ void ab_h2m_bitrev_bf_noninitial6_stage3_out_kernel(
+    const bf *__restrict__ src,
+    bf *__restrict__ dst,
+    const unsigned start_stage) {
+  // Stage #3 kernel (out-of-place): ld.cs + st.cs.
+  hypercube_evals_into_coeffs_bitrev_noninitial6<ld_modifier::cs, st_modifier::cs>(src, dst, start_stage);
+}
+
+EXTERN __launch_bounds__(256, 6) __global__ void ab_h2m_bitrev_bf_noninitial6_stage3_in_kernel(
+    const bf *__restrict__ src,
+    bf *__restrict__ dst,
+    const unsigned start_stage) {
+  // Stage #3 kernel (in-place): ld.ca + st.cs.
+  hypercube_evals_into_coeffs_bitrev_noninitial6<ld_modifier::ca, st_modifier::cs>(src, dst, start_stage);
 }
 
 } // namespace airbender::ops::hypercube
