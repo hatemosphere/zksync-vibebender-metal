@@ -89,6 +89,8 @@ declare_h2m_noninitial_kernel!(ab_h2m_bitrev_bf_noninitial6_stage3_in_kernel);
 declare_h2m_noninitial_kernel!(ab_h2m_bitrev_bf_noninitial6_stage3_out_kernel);
 declare_h2m_noninitial_kernel!(ab_h2m_bitrev_bf_noninitial5_stage2_out_start11_kernel);
 declare_h2m_noninitial_kernel!(ab_h2m_bitrev_bf_noninitial5_stage2_in_start11_kernel);
+declare_h2m_noninitial_kernel!(ab_h2m_bitrev_bf_noninitial5_stage2_out_start11_x2_kernel);
+declare_h2m_noninitial_kernel!(ab_h2m_bitrev_bf_noninitial5_stage2_in_start11_x2_kernel);
 declare_h2m_noninitial_kernel!(ab_h2m_bitrev_bf_noninitial5_stage3_out_start16_kernel);
 declare_h2m_noninitial_kernel!(ab_h2m_bitrev_bf_noninitial5_stage3_in_start16_kernel);
 declare_h2m_noninitial_kernel!(ab_h2m_bitrev_bf_noninitial6_stage2_out_start11_kernel);
@@ -120,6 +122,8 @@ struct LaunchPlan {
     initial_rounds: u32,
     noninitial_stage2_rounds: u32,
     noninitial_stage3_rounds: u32,
+    noninitial_stage2_tiles_per_cta: u32,
+    noninitial_stage3_tiles_per_cta: u32,
     noninitial_stage2_start: u32,
     noninitial_stage3_start: u32,
 }
@@ -133,6 +137,8 @@ fn select_out_of_place_plan(log_rows: u32) -> LaunchPlan {
             initial_rounds: LOG24_INITIAL_ROUNDS,
             noninitial_stage2_rounds: LOG24_NONINITIAL_STAGE2_ROUNDS,
             noninitial_stage3_rounds: LOG24_NONINITIAL_STAGE3_ROUNDS,
+            noninitial_stage2_tiles_per_cta: 1,
+            noninitial_stage3_tiles_per_cta: 1,
             noninitial_stage2_start: LOG24_NONINITIAL_STAGE2_START,
             noninitial_stage3_start: LOG24_NONINITIAL_STAGE3_START,
         },
@@ -143,16 +149,20 @@ fn select_out_of_place_plan(log_rows: u32) -> LaunchPlan {
             initial_rounds: LOG23_INITIAL_ROUNDS,
             noninitial_stage2_rounds: LOG23_NONINITIAL_STAGE2_ROUNDS,
             noninitial_stage3_rounds: LOG23_NONINITIAL_STAGE3_ROUNDS,
+            noninitial_stage2_tiles_per_cta: 1,
+            noninitial_stage3_tiles_per_cta: 1,
             noninitial_stage2_start: LOG23_NONINITIAL_STAGE2_START,
             noninitial_stage3_start: LOG23_NONINITIAL_STAGE3_START,
         },
         22 => LaunchPlan {
             initial_kernel: ab_h2m_bitrev_bf_initial11_out_kernel,
-            noninitial_stage2_kernel: ab_h2m_bitrev_bf_noninitial5_stage2_out_start11_kernel,
+            noninitial_stage2_kernel: ab_h2m_bitrev_bf_noninitial5_stage2_out_start11_x2_kernel,
             noninitial_stage3_kernel: ab_h2m_bitrev_bf_noninitial6_stage3_out_start16_kernel,
             initial_rounds: LOG22_INITIAL_ROUNDS,
             noninitial_stage2_rounds: LOG22_NONINITIAL_STAGE2_ROUNDS,
             noninitial_stage3_rounds: LOG22_NONINITIAL_STAGE3_ROUNDS,
+            noninitial_stage2_tiles_per_cta: 2,
+            noninitial_stage3_tiles_per_cta: 1,
             noninitial_stage2_start: LOG22_NONINITIAL_STAGE2_START,
             noninitial_stage3_start: LOG22_NONINITIAL_STAGE3_START,
         },
@@ -163,6 +173,8 @@ fn select_out_of_place_plan(log_rows: u32) -> LaunchPlan {
             initial_rounds: LOG21_INITIAL_ROUNDS,
             noninitial_stage2_rounds: LOG21_NONINITIAL_STAGE2_ROUNDS,
             noninitial_stage3_rounds: LOG21_NONINITIAL_STAGE3_ROUNDS,
+            noninitial_stage2_tiles_per_cta: 1,
+            noninitial_stage3_tiles_per_cta: 1,
             noninitial_stage2_start: LOG21_NONINITIAL_STAGE2_START,
             noninitial_stage3_start: LOG21_NONINITIAL_STAGE3_START,
         },
@@ -179,6 +191,8 @@ fn select_in_place_plan(log_rows: u32) -> LaunchPlan {
             initial_rounds: LOG24_INITIAL_ROUNDS,
             noninitial_stage2_rounds: LOG24_NONINITIAL_STAGE2_ROUNDS,
             noninitial_stage3_rounds: LOG24_NONINITIAL_STAGE3_ROUNDS,
+            noninitial_stage2_tiles_per_cta: 1,
+            noninitial_stage3_tiles_per_cta: 1,
             noninitial_stage2_start: LOG24_NONINITIAL_STAGE2_START,
             noninitial_stage3_start: LOG24_NONINITIAL_STAGE3_START,
         },
@@ -189,16 +203,20 @@ fn select_in_place_plan(log_rows: u32) -> LaunchPlan {
             initial_rounds: LOG23_INITIAL_ROUNDS,
             noninitial_stage2_rounds: LOG23_NONINITIAL_STAGE2_ROUNDS,
             noninitial_stage3_rounds: LOG23_NONINITIAL_STAGE3_ROUNDS,
+            noninitial_stage2_tiles_per_cta: 1,
+            noninitial_stage3_tiles_per_cta: 1,
             noninitial_stage2_start: LOG23_NONINITIAL_STAGE2_START,
             noninitial_stage3_start: LOG23_NONINITIAL_STAGE3_START,
         },
         22 => LaunchPlan {
             initial_kernel: ab_h2m_bitrev_bf_initial11_in_kernel,
-            noninitial_stage2_kernel: ab_h2m_bitrev_bf_noninitial5_stage2_in_start11_kernel,
+            noninitial_stage2_kernel: ab_h2m_bitrev_bf_noninitial5_stage2_in_start11_x2_kernel,
             noninitial_stage3_kernel: ab_h2m_bitrev_bf_noninitial6_stage3_in_start16_kernel,
             initial_rounds: LOG22_INITIAL_ROUNDS,
             noninitial_stage2_rounds: LOG22_NONINITIAL_STAGE2_ROUNDS,
             noninitial_stage3_rounds: LOG22_NONINITIAL_STAGE3_ROUNDS,
+            noninitial_stage2_tiles_per_cta: 2,
+            noninitial_stage3_tiles_per_cta: 1,
             noninitial_stage2_start: LOG22_NONINITIAL_STAGE2_START,
             noninitial_stage3_start: LOG22_NONINITIAL_STAGE3_START,
         },
@@ -209,6 +227,8 @@ fn select_in_place_plan(log_rows: u32) -> LaunchPlan {
             initial_rounds: LOG21_INITIAL_ROUNDS,
             noninitial_stage2_rounds: LOG21_NONINITIAL_STAGE2_ROUNDS,
             noninitial_stage3_rounds: LOG21_NONINITIAL_STAGE3_ROUNDS,
+            noninitial_stage2_tiles_per_cta: 1,
+            noninitial_stage3_tiles_per_cta: 1,
             noninitial_stage2_start: LOG21_NONINITIAL_STAGE2_START,
             noninitial_stage3_start: LOG21_NONINITIAL_STAGE3_START,
         },
@@ -216,8 +236,12 @@ fn select_in_place_plan(log_rows: u32) -> LaunchPlan {
     }
 }
 
-fn noninitial_grid(rows: usize, rounds: u32) -> u32 {
-    (rows >> (NONINITIAL_PARTITION_LOG_ROWS + rounds)) as u32
+fn noninitial_grid(rows: usize, rounds: u32, tiles_per_cta: u32) -> u32 {
+    let tiles = rows >> (NONINITIAL_PARTITION_LOG_ROWS + rounds);
+    let tiles_per_cta = tiles_per_cta as usize;
+    debug_assert!(tiles_per_cta > 0);
+    debug_assert_eq!(tiles % tiles_per_cta, 0);
+    (tiles / tiles_per_cta) as u32
 }
 
 fn launch_chain(
@@ -227,6 +251,8 @@ fn launch_chain(
     initial_rounds: u32,
     noninitial_stage2_rounds: u32,
     noninitial_stage3_rounds: u32,
+    noninitial_stage2_tiles_per_cta: u32,
+    noninitial_stage3_tiles_per_cta: u32,
     noninitial_stage2_start: u32,
     noninitial_stage3_start: u32,
     launch0_src: *const BF,
@@ -243,8 +269,8 @@ fn launch_chain(
     // out-of-place:  #1 ld.cs/st.wt, #2 ld.cs/st.wt, #3 ld.cs/st.cs
     // in-place:      #1 ld.cg/st.wt, #2 ld.ca/st.wt, #3 ld.ca/st.cs
     let grid_initial = (rows >> initial_rounds) as u32;
-    let grid_stage2 = noninitial_grid(rows, noninitial_stage2_rounds);
-    let grid_stage3 = noninitial_grid(rows, noninitial_stage3_rounds);
+    let grid_stage2 = noninitial_grid(rows, noninitial_stage2_rounds, noninitial_stage2_tiles_per_cta);
+    let grid_stage3 = noninitial_grid(rows, noninitial_stage3_rounds, noninitial_stage3_tiles_per_cta);
 
     let config0 = CudaLaunchConfig::basic(
         Dim3 {
@@ -306,6 +332,8 @@ pub fn hypercube_evals_into_coeffs_bitrev_bf(
         plan.initial_rounds,
         plan.noninitial_stage2_rounds,
         plan.noninitial_stage3_rounds,
+        plan.noninitial_stage2_tiles_per_cta,
+        plan.noninitial_stage3_tiles_per_cta,
         plan.noninitial_stage2_start,
         plan.noninitial_stage3_start,
         src.as_ptr(),
@@ -330,6 +358,8 @@ pub fn hypercube_evals_into_coeffs_bitrev_bf_in_place(
         plan.initial_rounds,
         plan.noninitial_stage2_rounds,
         plan.noninitial_stage3_rounds,
+        plan.noninitial_stage2_tiles_per_cta,
+        plan.noninitial_stage3_tiles_per_cta,
         plan.noninitial_stage2_start,
         plan.noninitial_stage3_start,
         dst as *const BF,
@@ -583,8 +613,16 @@ mod tests {
         stream.synchronize().unwrap();
 
         let initial_grid = (rows >> plan.initial_rounds) as u32;
-        let noninitial_stage2_grid = super::noninitial_grid(rows, plan.noninitial_stage2_rounds);
-        let noninitial_stage3_grid = super::noninitial_grid(rows, plan.noninitial_stage3_rounds);
+        let noninitial_stage2_grid = super::noninitial_grid(
+            rows,
+            plan.noninitial_stage2_rounds,
+            plan.noninitial_stage2_tiles_per_cta,
+        );
+        let noninitial_stage3_grid = super::noninitial_grid(
+            rows,
+            plan.noninitial_stage3_rounds,
+            plan.noninitial_stage3_tiles_per_cta,
+        );
         let config_initial = CudaLaunchConfig::basic(
             Dim3 {
                 x: initial_grid,

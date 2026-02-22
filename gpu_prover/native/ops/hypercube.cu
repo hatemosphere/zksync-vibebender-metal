@@ -81,6 +81,21 @@ DEVICE_FORCEINLINE unsigned noninitial5_smem_idx(const unsigned k, const unsigne
   return (k << 5) | (p ^ (k & 31u));
 }
 
+DEVICE_FORCEINLINE unsigned noninitial5_row_base_for_tile(
+    const unsigned tile,
+    const unsigned low_tiles,
+    const unsigned start_stage,
+    const unsigned k,
+    const unsigned p0) {
+  // Decodes tile -> (high, low_tile_id) and returns row_base for one thread's
+  // 16-byte vector transaction in noninitial5 mapping.
+  const unsigned high = tile / low_tiles;
+  const unsigned low_tile_id = tile - high * low_tiles;
+  const unsigned low_base = low_tile_id << 5;
+  const unsigned block_base = high << (start_stage + 5u);
+  return block_base + (k << start_stage) + low_base + p0;
+}
+
 template <ld_modifier MODIFIER>
 DEVICE_FORCEINLINE uint4 load_u4_mod(const bf *__restrict__ ptr, const unsigned row_base) {
   // BF is 32-bit; uint4 gives one 16-byte vector transaction per thread.
@@ -785,6 +800,95 @@ DEVICE_FORCEINLINE void hypercube_evals_into_coeffs_bitrev_noninitial5_impl(
 }
 
 template <ld_modifier LOAD_MODIFIER, st_modifier STORE_MODIFIER>
+DEVICE_FORCEINLINE void hypercube_evals_into_coeffs_bitrev_noninitial5_impl_x2(
+    const bf *__restrict__ src,
+    bf *__restrict__ dst,
+    const unsigned start_stage) {
+  // Two-tile noninitial5 path for fixed schedules.
+  //
+  // Each CTA processes two logical tiles (2 x 1024 BF values) to increase
+  // per-CTA instruction-level parallelism and reduce launch overhead.
+  // We prefetch the next tile's global vector before finishing the current tile.
+  constexpr unsigned ROUNDS = 5;
+  constexpr unsigned K = 1u << ROUNDS; // 32
+  constexpr unsigned P = 32;
+  constexpr unsigned LOW_TILE_LOG = 5u;
+  constexpr unsigned TILES_PER_CTA = 2u;
+
+  __shared__ bf smem[K * P]; // 32 * 32 = 1024 BF values (4KB)
+
+  const unsigned tid = threadIdx.x;
+  const unsigned stride = 1u << start_stage;
+  const unsigned low_tiles = stride >> LOW_TILE_LOG;
+
+  const unsigned vec = tid;
+  const unsigned k = vec >> 3;
+  const unsigned p4 = vec & 7u;
+  const unsigned p0 = p4 << 2;
+
+  const unsigned warp = tid >> 5;
+  const unsigned lane = tid & 31u;
+  const unsigned pp0 = warp + 0u;
+  const unsigned pp1 = warp + 8u;
+  const unsigned pp2 = warp + 16u;
+  const unsigned pp3 = warp + 24u;
+  const unsigned idx0 = noninitial5_smem_idx(lane, pp0);
+  const unsigned idx1 = noninitial5_smem_idx(lane, pp1);
+  const unsigned idx2 = noninitial5_smem_idx(lane, pp2);
+  const unsigned idx3 = noninitial5_smem_idx(lane, pp3);
+
+  const unsigned tile_base = blockIdx.x * TILES_PER_CTA;
+
+  unsigned row_base = noninitial5_row_base_for_tile(tile_base, low_tiles, start_stage, k, p0);
+  uint4 packed = load_u4_mod<LOAD_MODIFIER>(src, row_base);
+
+#pragma unroll
+  for (unsigned iter = 0; iter < TILES_PER_CTA; iter++) {
+    unsigned row_base_next = 0;
+    uint4 packed_next = uint4{0, 0, 0, 0};
+    if (iter + 1u < TILES_PER_CTA) {
+      const unsigned tile_next = tile_base + iter + 1u;
+      row_base_next = noninitial5_row_base_for_tile(tile_next, low_tiles, start_stage, k, p0);
+      packed_next = load_u4_mod<LOAD_MODIFIER>(src, row_base_next);
+    }
+
+    smem[noninitial5_smem_idx(k, p0 + 0u)] = bf(packed.x);
+    smem[noninitial5_smem_idx(k, p0 + 1u)] = bf(packed.y);
+    smem[noninitial5_smem_idx(k, p0 + 2u)] = bf(packed.z);
+    smem[noninitial5_smem_idx(k, p0 + 3u)] = bf(packed.w);
+
+    __syncthreads();
+
+    bf v0 = smem[idx0];
+    bf v1 = smem[idx1];
+    bf v2 = smem[idx2];
+    bf v3 = smem[idx3];
+
+    apply_5_rounds_warp32_branchless_quad(v0, v1, v2, v3, lane);
+
+    smem[idx0] = v0;
+    smem[idx1] = v1;
+    smem[idx2] = v2;
+    smem[idx3] = v3;
+
+    __syncthreads();
+
+    const uint4 out = uint4{
+        smem[noninitial5_smem_idx(k, p0 + 0u)].limb,
+        smem[noninitial5_smem_idx(k, p0 + 1u)].limb,
+        smem[noninitial5_smem_idx(k, p0 + 2u)].limb,
+        smem[noninitial5_smem_idx(k, p0 + 3u)].limb,
+    };
+    store_u4_mod<STORE_MODIFIER>(dst, row_base, out);
+
+    if (iter + 1u < TILES_PER_CTA) {
+      row_base = row_base_next;
+      packed = packed_next;
+    }
+  }
+}
+
+template <ld_modifier LOAD_MODIFIER, st_modifier STORE_MODIFIER>
 DEVICE_FORCEINLINE void hypercube_evals_into_coeffs_bitrev_noninitial5(
     const bf *__restrict__ src,
     bf *__restrict__ dst,
@@ -1115,6 +1219,24 @@ EXTERN __launch_bounds__(256, 6) __global__ void ab_h2m_bitrev_bf_noninitial5_st
   // Fixed-start stage2 (in-place) for log22/log21 schedules: ld.ca + st.wt.
   (void)start_stage;
   hypercube_evals_into_coeffs_bitrev_noninitial5_impl<ld_modifier::ca, st_modifier::wt>(src, dst, 11u);
+}
+
+EXTERN __launch_bounds__(256, 6) __global__ void ab_h2m_bitrev_bf_noninitial5_stage2_out_start11_x2_kernel(
+    const bf *__restrict__ src,
+    bf *__restrict__ dst,
+    const unsigned start_stage) {
+  // Fixed-start stage2 (out-of-place) two-tile CTA path for log22 schedule.
+  (void)start_stage;
+  hypercube_evals_into_coeffs_bitrev_noninitial5_impl_x2<ld_modifier::cs, st_modifier::wt>(src, dst, 11u);
+}
+
+EXTERN __launch_bounds__(256, 6) __global__ void ab_h2m_bitrev_bf_noninitial5_stage2_in_start11_x2_kernel(
+    const bf *__restrict__ src,
+    bf *__restrict__ dst,
+    const unsigned start_stage) {
+  // Fixed-start stage2 (in-place) two-tile CTA path for log22 schedule.
+  (void)start_stage;
+  hypercube_evals_into_coeffs_bitrev_noninitial5_impl_x2<ld_modifier::ca, st_modifier::wt>(src, dst, 11u);
 }
 
 EXTERN __launch_bounds__(256, 6) __global__ void ab_h2m_bitrev_bf_noninitial6_stage3_out_start16_kernel(
