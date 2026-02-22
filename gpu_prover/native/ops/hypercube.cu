@@ -81,21 +81,6 @@ DEVICE_FORCEINLINE unsigned noninitial5_smem_idx(const unsigned k, const unsigne
   return (k << 5) | (p ^ (k & 31u));
 }
 
-DEVICE_FORCEINLINE unsigned noninitial5_row_base_for_tile(
-    const unsigned tile,
-    const unsigned low_tiles,
-    const unsigned start_stage,
-    const unsigned k,
-    const unsigned p0) {
-  // Decodes tile -> (high, low_tile_id) and returns row_base for one thread's
-  // 16-byte vector transaction in noninitial5 mapping.
-  const unsigned high = tile / low_tiles;
-  const unsigned low_tile_id = tile - high * low_tiles;
-  const unsigned low_base = low_tile_id << 5;
-  const unsigned block_base = high << (start_stage + 5u);
-  return block_base + (k << start_stage) + low_base + p0;
-}
-
 template <ld_modifier MODIFIER>
 DEVICE_FORCEINLINE uint4 load_u4_mod(const bf *__restrict__ ptr, const unsigned row_base) {
   // BF is 32-bit; uint4 gives one 16-byte vector transaction per thread.
@@ -804,23 +789,18 @@ DEVICE_FORCEINLINE void hypercube_evals_into_coeffs_bitrev_noninitial5_impl_x2(
     const bf *__restrict__ src,
     bf *__restrict__ dst,
     const unsigned start_stage) {
-  // Two-tile noninitial5 path for fixed schedules.
-  //
-  // Each CTA processes two logical tiles (2 x 1024 BF values) to increase
-  // per-CTA instruction-level parallelism and reduce launch overhead.
-  // We prefetch the next tile's global vector before finishing the current tile.
+  // Two-tile noninitial5 path specialized for fixed start_stage=11.
+  (void)start_stage;
   constexpr unsigned ROUNDS = 5;
+  constexpr unsigned START_STAGE = 11;
   constexpr unsigned K = 1u << ROUNDS; // 32
-  constexpr unsigned P = 32;
   constexpr unsigned LOW_TILE_LOG = 5u;
-  constexpr unsigned TILES_PER_CTA = 2u;
+  constexpr unsigned LOW_TILES = 1u << (START_STAGE - LOW_TILE_LOG); // 64
+  constexpr unsigned LOW_TILES_MASK = LOW_TILES - 1u;
 
-  __shared__ bf smem[K * P]; // 32 * 32 = 1024 BF values (4KB)
+  __shared__ bf smem[K * 32u]; // 32 * 32 = 1024 BF values (4KB)
 
   const unsigned tid = threadIdx.x;
-  const unsigned stride = 1u << start_stage;
-  const unsigned low_tiles = stride >> LOW_TILE_LOG;
-
   const unsigned vec = tid;
   const unsigned k = vec >> 3;
   const unsigned p4 = vec & 7u;
@@ -837,55 +817,76 @@ DEVICE_FORCEINLINE void hypercube_evals_into_coeffs_bitrev_noninitial5_impl_x2(
   const unsigned idx2 = noninitial5_smem_idx(lane, pp2);
   const unsigned idx3 = noninitial5_smem_idx(lane, pp3);
 
-  const unsigned tile_base = blockIdx.x * TILES_PER_CTA;
+  // blockIdx.x maps to two consecutive low tiles within one high chunk.
+  const unsigned tile0 = blockIdx.x << 1;
+  const unsigned high = tile0 >> (START_STAGE - LOW_TILE_LOG);
+  const unsigned low0 = tile0 & LOW_TILES_MASK;
+  const unsigned block_base = high << (START_STAGE + ROUNDS);
+  const unsigned row_base0 = block_base + (k << START_STAGE) + (low0 << LOW_TILE_LOG) + p0;
+  const unsigned row_base1 = row_base0 + (1u << LOW_TILE_LOG);
 
-  unsigned row_base = noninitial5_row_base_for_tile(tile_base, low_tiles, start_stage, k, p0);
-  uint4 packed = load_u4_mod<LOAD_MODIFIER>(src, row_base);
+  const uint4 packed0 = load_u4_mod<LOAD_MODIFIER>(src, row_base0);
+  const uint4 packed1 = load_u4_mod<LOAD_MODIFIER>(src, row_base1);
 
-#pragma unroll
-  for (unsigned iter = 0; iter < TILES_PER_CTA; iter++) {
-    unsigned row_base_next = 0;
-    uint4 packed_next = uint4{0, 0, 0, 0};
-    if (iter + 1u < TILES_PER_CTA) {
-      const unsigned tile_next = tile_base + iter + 1u;
-      row_base_next = noninitial5_row_base_for_tile(tile_next, low_tiles, start_stage, k, p0);
-      packed_next = load_u4_mod<LOAD_MODIFIER>(src, row_base_next);
-    }
+  // Tile #0
+  smem[noninitial5_smem_idx(k, p0 + 0u)] = bf(packed0.x);
+  smem[noninitial5_smem_idx(k, p0 + 1u)] = bf(packed0.y);
+  smem[noninitial5_smem_idx(k, p0 + 2u)] = bf(packed0.z);
+  smem[noninitial5_smem_idx(k, p0 + 3u)] = bf(packed0.w);
 
-    smem[noninitial5_smem_idx(k, p0 + 0u)] = bf(packed.x);
-    smem[noninitial5_smem_idx(k, p0 + 1u)] = bf(packed.y);
-    smem[noninitial5_smem_idx(k, p0 + 2u)] = bf(packed.z);
-    smem[noninitial5_smem_idx(k, p0 + 3u)] = bf(packed.w);
+  __syncthreads();
 
-    __syncthreads();
+  bf v0 = smem[idx0];
+  bf v1 = smem[idx1];
+  bf v2 = smem[idx2];
+  bf v3 = smem[idx3];
 
-    bf v0 = smem[idx0];
-    bf v1 = smem[idx1];
-    bf v2 = smem[idx2];
-    bf v3 = smem[idx3];
+  apply_5_rounds_warp32_branchless_quad(v0, v1, v2, v3, lane);
 
-    apply_5_rounds_warp32_branchless_quad(v0, v1, v2, v3, lane);
+  smem[idx0] = v0;
+  smem[idx1] = v1;
+  smem[idx2] = v2;
+  smem[idx3] = v3;
 
-    smem[idx0] = v0;
-    smem[idx1] = v1;
-    smem[idx2] = v2;
-    smem[idx3] = v3;
+  __syncthreads();
 
-    __syncthreads();
+  const uint4 out0 = uint4{
+      smem[noninitial5_smem_idx(k, p0 + 0u)].limb,
+      smem[noninitial5_smem_idx(k, p0 + 1u)].limb,
+      smem[noninitial5_smem_idx(k, p0 + 2u)].limb,
+      smem[noninitial5_smem_idx(k, p0 + 3u)].limb,
+  };
+  store_u4_mod<STORE_MODIFIER>(dst, row_base0, out0);
 
-    const uint4 out = uint4{
-        smem[noninitial5_smem_idx(k, p0 + 0u)].limb,
-        smem[noninitial5_smem_idx(k, p0 + 1u)].limb,
-        smem[noninitial5_smem_idx(k, p0 + 2u)].limb,
-        smem[noninitial5_smem_idx(k, p0 + 3u)].limb,
-    };
-    store_u4_mod<STORE_MODIFIER>(dst, row_base, out);
+  // Tile #1
+  smem[noninitial5_smem_idx(k, p0 + 0u)] = bf(packed1.x);
+  smem[noninitial5_smem_idx(k, p0 + 1u)] = bf(packed1.y);
+  smem[noninitial5_smem_idx(k, p0 + 2u)] = bf(packed1.z);
+  smem[noninitial5_smem_idx(k, p0 + 3u)] = bf(packed1.w);
 
-    if (iter + 1u < TILES_PER_CTA) {
-      row_base = row_base_next;
-      packed = packed_next;
-    }
-  }
+  __syncthreads();
+
+  v0 = smem[idx0];
+  v1 = smem[idx1];
+  v2 = smem[idx2];
+  v3 = smem[idx3];
+
+  apply_5_rounds_warp32_branchless_quad(v0, v1, v2, v3, lane);
+
+  smem[idx0] = v0;
+  smem[idx1] = v1;
+  smem[idx2] = v2;
+  smem[idx3] = v3;
+
+  __syncthreads();
+
+  const uint4 out1 = uint4{
+      smem[noninitial5_smem_idx(k, p0 + 0u)].limb,
+      smem[noninitial5_smem_idx(k, p0 + 1u)].limb,
+      smem[noninitial5_smem_idx(k, p0 + 2u)].limb,
+      smem[noninitial5_smem_idx(k, p0 + 3u)].limb,
+  };
+  store_u4_mod<STORE_MODIFIER>(dst, row_base1, out1);
 }
 
 template <ld_modifier LOAD_MODIFIER, st_modifier STORE_MODIFIER>
