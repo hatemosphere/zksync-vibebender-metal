@@ -287,6 +287,97 @@ DEVICE_FORCEINLINE void apply_5_rounds_warp64_pair_branchless_quad(
   }
 }
 
+DEVICE_FORCEINLINE void apply_5_rounds_warp64_pair_branchless_quad_packed(
+    bf &a0,
+    bf &a1,
+    bf &b0,
+    bf &b1,
+    bf &c0,
+    bf &c1,
+    bf &d0,
+    bf &d1,
+    const unsigned lane32) {
+  // Packed variant for initial11: pair (x0, x1) into one 64-bit shuffle.
+#pragma unroll
+  for (unsigned bit = 0; bit < 5; bit++) {
+    const unsigned mask = 1u << bit;
+    const unsigned lane_bit = (lane32 >> bit) & 1u;
+    const unsigned lane_mask = 0u - lane_bit;
+
+    const unsigned a0_self = a0.limb;
+    const unsigned a1_self = a1.limb;
+    const unsigned b0_self = b0.limb;
+    const unsigned b1_self = b1.limb;
+    const unsigned c0_self = c0.limb;
+    const unsigned c1_self = c1.limb;
+    const unsigned d0_self = d0.limb;
+    const unsigned d1_self = d1.limb;
+
+    const unsigned long long a_pair =
+        (static_cast<unsigned long long>(a1_self) << 32) | static_cast<unsigned long long>(a0_self);
+    const unsigned long long b_pair =
+        (static_cast<unsigned long long>(b1_self) << 32) | static_cast<unsigned long long>(b0_self);
+    const unsigned long long c_pair =
+        (static_cast<unsigned long long>(c1_self) << 32) | static_cast<unsigned long long>(c0_self);
+    const unsigned long long d_pair =
+        (static_cast<unsigned long long>(d1_self) << 32) | static_cast<unsigned long long>(d0_self);
+
+    const unsigned long long a_peer_pair = __shfl_xor_sync(0xFFFFFFFFu, a_pair, mask, 32);
+    const unsigned long long b_peer_pair = __shfl_xor_sync(0xFFFFFFFFu, b_pair, mask, 32);
+    const unsigned long long c_peer_pair = __shfl_xor_sync(0xFFFFFFFFu, c_pair, mask, 32);
+    const unsigned long long d_peer_pair = __shfl_xor_sync(0xFFFFFFFFu, d_pair, mask, 32);
+
+    const unsigned a0_peer = static_cast<unsigned>(a_peer_pair & 0xFFFFFFFFull);
+    const unsigned a1_peer = static_cast<unsigned>(a_peer_pair >> 32);
+    const unsigned b0_peer = static_cast<unsigned>(b_peer_pair & 0xFFFFFFFFull);
+    const unsigned b1_peer = static_cast<unsigned>(b_peer_pair >> 32);
+    const unsigned c0_peer = static_cast<unsigned>(c_peer_pair & 0xFFFFFFFFull);
+    const unsigned c1_peer = static_cast<unsigned>(c_peer_pair >> 32);
+    const unsigned d0_peer = static_cast<unsigned>(d_peer_pair & 0xFFFFFFFFull);
+    const unsigned d1_peer = static_cast<unsigned>(d_peer_pair >> 32);
+
+    const unsigned a0_lo = select_u32(a0_self, a0_peer, lane_mask);
+    const unsigned a0_hi_pre = select_u32(a0_peer, a0_self, lane_mask);
+    const unsigned a0_hi = bf::sub(bf(a0_hi_pre), bf(a0_lo)).limb;
+    a0 = bf(select_u32(a0_lo, a0_hi, lane_mask));
+
+    const unsigned a1_lo = select_u32(a1_self, a1_peer, lane_mask);
+    const unsigned a1_hi_pre = select_u32(a1_peer, a1_self, lane_mask);
+    const unsigned a1_hi = bf::sub(bf(a1_hi_pre), bf(a1_lo)).limb;
+    a1 = bf(select_u32(a1_lo, a1_hi, lane_mask));
+
+    const unsigned b0_lo = select_u32(b0_self, b0_peer, lane_mask);
+    const unsigned b0_hi_pre = select_u32(b0_peer, b0_self, lane_mask);
+    const unsigned b0_hi = bf::sub(bf(b0_hi_pre), bf(b0_lo)).limb;
+    b0 = bf(select_u32(b0_lo, b0_hi, lane_mask));
+
+    const unsigned b1_lo = select_u32(b1_self, b1_peer, lane_mask);
+    const unsigned b1_hi_pre = select_u32(b1_peer, b1_self, lane_mask);
+    const unsigned b1_hi = bf::sub(bf(b1_hi_pre), bf(b1_lo)).limb;
+    b1 = bf(select_u32(b1_lo, b1_hi, lane_mask));
+
+    const unsigned c0_lo = select_u32(c0_self, c0_peer, lane_mask);
+    const unsigned c0_hi_pre = select_u32(c0_peer, c0_self, lane_mask);
+    const unsigned c0_hi = bf::sub(bf(c0_hi_pre), bf(c0_lo)).limb;
+    c0 = bf(select_u32(c0_lo, c0_hi, lane_mask));
+
+    const unsigned c1_lo = select_u32(c1_self, c1_peer, lane_mask);
+    const unsigned c1_hi_pre = select_u32(c1_peer, c1_self, lane_mask);
+    const unsigned c1_hi = bf::sub(bf(c1_hi_pre), bf(c1_lo)).limb;
+    c1 = bf(select_u32(c1_lo, c1_hi, lane_mask));
+
+    const unsigned d0_lo = select_u32(d0_self, d0_peer, lane_mask);
+    const unsigned d0_hi_pre = select_u32(d0_peer, d0_self, lane_mask);
+    const unsigned d0_hi = bf::sub(bf(d0_hi_pre), bf(d0_lo)).limb;
+    d0 = bf(select_u32(d0_lo, d0_hi, lane_mask));
+
+    const unsigned d1_lo = select_u32(d1_self, d1_peer, lane_mask);
+    const unsigned d1_hi_pre = select_u32(d1_peer, d1_self, lane_mask);
+    const unsigned d1_hi = bf::sub(bf(d1_hi_pre), bf(d1_lo)).limb;
+    d1 = bf(select_u32(d1_lo, d1_hi, lane_mask));
+  }
+}
+
 template <ld_modifier LOAD_MODIFIER, st_modifier STORE_MODIFIER, bool IN_PLACE>
 DEVICE_FORCEINLINE void hypercube_evals_into_coeffs_bitrev_initial12(const bf *__restrict__ src, bf *__restrict__ dst) {
   // Initial12 kernel dataflow (handles one 2^12 chunk per CTA):
@@ -497,7 +588,7 @@ DEVICE_FORCEINLINE void hypercube_evals_into_coeffs_bitrev_initial11(const bf *_
   bf v30 = smem[initial11_smem_idx(k_base + 6u, lane32)];
   bf v31 = smem[initial11_smem_idx(k_base + 7u, lane32)];
 
-  apply_5_rounds_warp64_pair_branchless_quad(v00, v01, v10, v11, v20, v21, v30, v31, lane32);
+  apply_5_rounds_warp64_pair_branchless_quad_packed(v00, v01, v10, v11, v20, v21, v30, v31, lane32);
 
   smem[initial11_smem_idx(k_base + 0u, lane32)] = v00;
   smem[initial11_smem_idx(k_base + 1u, lane32)] = v01;
