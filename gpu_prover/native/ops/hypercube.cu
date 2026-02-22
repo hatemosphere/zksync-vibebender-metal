@@ -616,7 +616,7 @@ DEVICE_FORCEINLINE void hypercube_evals_into_coeffs_bitrev_initial11(const bf *_
 }
 
 template <ld_modifier LOAD_MODIFIER, st_modifier STORE_MODIFIER>
-DEVICE_FORCEINLINE void hypercube_evals_into_coeffs_bitrev_noninitial6(
+DEVICE_FORCEINLINE void hypercube_evals_into_coeffs_bitrev_noninitial6_impl(
     const bf *__restrict__ src,
     bf *__restrict__ dst,
     const unsigned start_stage) {
@@ -749,6 +749,32 @@ DEVICE_FORCEINLINE void hypercube_evals_into_coeffs_bitrev_noninitial6(
         smem[noninitial6_smem_idx(k, p0 + 3u)].limb,
     };
     store_u4_mod<STORE_MODIFIER>(dst, row_base, packed);
+  }
+}
+
+template <ld_modifier LOAD_MODIFIER, st_modifier STORE_MODIFIER>
+DEVICE_FORCEINLINE void hypercube_evals_into_coeffs_bitrev_noninitial6(
+    const bf *__restrict__ src,
+    bf *__restrict__ dst,
+    const unsigned start_stage) {
+  // Known schedules use start_stage in {11, 12, 17, 18}. Dispatching these
+  // literals allows full constant-folding inside the noninitial body.
+  switch (start_stage) {
+    case 11u:
+      hypercube_evals_into_coeffs_bitrev_noninitial6_impl<LOAD_MODIFIER, STORE_MODIFIER>(src, dst, 11u);
+      return;
+    case 12u:
+      hypercube_evals_into_coeffs_bitrev_noninitial6_impl<LOAD_MODIFIER, STORE_MODIFIER>(src, dst, 12u);
+      return;
+    case 17u:
+      hypercube_evals_into_coeffs_bitrev_noninitial6_impl<LOAD_MODIFIER, STORE_MODIFIER>(src, dst, 17u);
+      return;
+    case 18u:
+      hypercube_evals_into_coeffs_bitrev_noninitial6_impl<LOAD_MODIFIER, STORE_MODIFIER>(src, dst, 18u);
+      return;
+    default:
+      hypercube_evals_into_coeffs_bitrev_noninitial6_impl<LOAD_MODIFIER, STORE_MODIFIER>(src, dst, start_stage);
+      return;
   }
 }
 
