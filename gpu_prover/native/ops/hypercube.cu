@@ -512,13 +512,17 @@ DEVICE_FORCEINLINE void hypercube_evals_into_coeffs_bitrev_initial14(const bf *_
   extern __shared__ bf smem[];
 
   const unsigned tid = threadIdx.x;
-  const unsigned warps = blockDim.x >> 5;
   const unsigned warp = tid >> 5;
   const unsigned lane32 = tid & 31u;
   const unsigned block_base = blockIdx.x << 14;
   const bf *__restrict__ load_ptr = IN_PLACE ? reinterpret_cast<const bf *>(dst) : src;
+  if (blockDim.x != 1024u) {
+    return;
+  }
 
-  for (unsigned k = warp; k < K; k += warps) {
+#pragma unroll
+  for (unsigned iter = 0; iter < 4; iter++) {
+    const unsigned k = warp + (iter << 5);
     const unsigned p_base = lane32 << 2;
     const unsigned row_base = block_base + (k * P) + p_base;
     const uint4 packed = load_u4_mod<LOAD_MODIFIER>(load_ptr, row_base);
@@ -539,7 +543,9 @@ DEVICE_FORCEINLINE void hypercube_evals_into_coeffs_bitrev_initial14(const bf *_
 
   __syncthreads();
 
-  for (unsigned p = warp; p < P; p += warps) {
+#pragma unroll
+  for (unsigned iter = 0; iter < 4; iter++) {
+    const unsigned p = warp + (iter << 5);
     const unsigned k_base = lane32 << 2;
     bf vals[4] = {
         smem[initial14_smem_idx(k_base + 0u, p)],
@@ -557,7 +563,9 @@ DEVICE_FORCEINLINE void hypercube_evals_into_coeffs_bitrev_initial14(const bf *_
 
   __syncthreads();
 
-  for (unsigned k = warp; k < K; k += warps) {
+#pragma unroll
+  for (unsigned iter = 0; iter < 4; iter++) {
+    const unsigned k = warp + (iter << 5);
     const unsigned p_base = lane32 << 2;
     const uint4 packed = uint4{
         smem[initial14_smem_idx(k, p_base + 0u)].limb,
@@ -1063,7 +1071,6 @@ DEVICE_FORCEINLINE void hypercube_evals_into_coeffs_bitrev_noninitial7_impl(
   __shared__ bf smem[K * P]; // 128 * 32 = 4096 BF values (16KB)
 
   const unsigned tid = threadIdx.x;
-  const unsigned warps = blockDim.x >> 5;
   const unsigned warp = tid >> 5;
   const unsigned lane = tid & 31u;
   const unsigned stride = 1u << start_stage;
@@ -1073,8 +1080,13 @@ DEVICE_FORCEINLINE void hypercube_evals_into_coeffs_bitrev_noninitial7_impl(
   const unsigned low_tile_id = tile - high * low_tiles;
   const unsigned low_base = low_tile_id << LOW_TILE_LOG;
   const unsigned block_base = high << (start_stage + ROUNDS);
+  if (blockDim.x != 256u) {
+    return;
+  }
 
-  for (unsigned vec = tid; vec < TOTAL_VECS; vec += blockDim.x) {
+#pragma unroll
+  for (unsigned iter = 0; iter < 4; iter++) {
+    const unsigned vec = tid + (iter << 8);
     const unsigned k = vec >> 3;
     const unsigned p4 = vec & 7u;
     const unsigned p0 = p4 << 2;
@@ -1089,7 +1101,9 @@ DEVICE_FORCEINLINE void hypercube_evals_into_coeffs_bitrev_noninitial7_impl(
 
   __syncthreads();
 
-  for (unsigned p = warp; p < P; p += warps) {
+#pragma unroll
+  for (unsigned iter = 0; iter < 4; iter++) {
+    const unsigned p = warp + (iter << 3);
     const unsigned idx0 = noninitial6_smem_idx(lane + 0u, p);
     const unsigned idx1 = noninitial6_smem_idx(lane + 32u, p);
     const unsigned idx2 = noninitial6_smem_idx(lane + 64u, p);
@@ -1111,7 +1125,9 @@ DEVICE_FORCEINLINE void hypercube_evals_into_coeffs_bitrev_noninitial7_impl(
 
   __syncthreads();
 
-  for (unsigned vec = tid; vec < TOTAL_VECS; vec += blockDim.x) {
+#pragma unroll
+  for (unsigned iter = 0; iter < 4; iter++) {
+    const unsigned vec = tid + (iter << 8);
     const unsigned k = vec >> 3;
     const unsigned p4 = vec & 7u;
     const unsigned p0 = p4 << 2;
