@@ -6,8 +6,8 @@ usage() {
 Usage: gpu_prover/profiling/hypercube_stage_ab.sh [options]
 
 Runs A/B profiling using stage-breakdown profiling tests:
-  - ops::hypercube::tests::profile_hypercube_bitrev_bf_stage_breakdown_multi_invocation_log24_col1
-  - ops::hypercube::tests::profile_hypercube_bitrev_bf_stage_breakdown_multi_invocation_log23_col1
+  - ops::hypercube::tests::profile_hypercube_bitrev_bf_stage_breakdown_multi_invocation_log24
+  - ops::hypercube::tests::profile_hypercube_bitrev_bf_stage_breakdown_multi_invocation_log23
 
 Options:
   --baseline <ref|WORKTREE>   Baseline git ref (default: WORKTREE)
@@ -253,10 +253,10 @@ CAND_BIN="$(build_test_binary "$CAND_DIR" "candidate")"
 
 declare -a TESTS=()
 if ((RUN_LOG24 == 1)); then
-  TESTS+=("24:ops::hypercube::tests::profile_hypercube_bitrev_bf_stage_breakdown_multi_invocation_log24_col1")
+  TESTS+=("24:ops::hypercube::tests::profile_hypercube_bitrev_bf_stage_breakdown_multi_invocation_log24")
 fi
 if ((RUN_LOG23 == 1)); then
-  TESTS+=("23:ops::hypercube::tests::profile_hypercube_bitrev_bf_stage_breakdown_multi_invocation_log23_col1")
+  TESTS+=("23:ops::hypercube::tests::profile_hypercube_bitrev_bf_stage_breakdown_multi_invocation_log23")
 fi
 
 for spec in "${TESTS[@]}"; do

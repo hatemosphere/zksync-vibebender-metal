@@ -7,17 +7,37 @@ use era_cudart::{cuda_kernel_declaration, cuda_kernel_signature_arguments_and_fu
 use crate::field::BF;
 
 const BLOCK_THREADS: u32 = 256;
-const MIN_SUPPORTED_LOG_ROWS: u32 = 23;
+const MIN_SUPPORTED_LOG_ROWS: u32 = 21;
 const MAX_SUPPORTED_LOG_ROWS: u32 = 24;
-const NONINITIAL_GRID_LOG_ROWS: u32 = 11;
+const NONINITIAL_PARTITION_LOG_ROWS: u32 = 5;
+
+const LOG21_INITIAL_ROUNDS: u32 = 11;
+const LOG21_NONINITIAL_STAGE2_ROUNDS: u32 = 5;
+const LOG21_NONINITIAL_STAGE3_ROUNDS: u32 = 5;
+const LOG21_NONINITIAL_STAGE2_START: u32 = LOG21_INITIAL_ROUNDS;
+const LOG21_NONINITIAL_STAGE3_START: u32 =
+    LOG21_NONINITIAL_STAGE2_START + LOG21_NONINITIAL_STAGE2_ROUNDS;
+
+const LOG22_INITIAL_ROUNDS: u32 = 11;
+const LOG22_NONINITIAL_STAGE2_ROUNDS: u32 = 5;
+const LOG22_NONINITIAL_STAGE3_ROUNDS: u32 = 6;
+const LOG22_NONINITIAL_STAGE2_START: u32 = LOG22_INITIAL_ROUNDS;
+const LOG22_NONINITIAL_STAGE3_START: u32 =
+    LOG22_NONINITIAL_STAGE2_START + LOG22_NONINITIAL_STAGE2_ROUNDS;
 
 const LOG23_INITIAL_ROUNDS: u32 = 11;
+const LOG23_NONINITIAL_STAGE2_ROUNDS: u32 = 6;
+const LOG23_NONINITIAL_STAGE3_ROUNDS: u32 = 6;
 const LOG23_NONINITIAL_STAGE2_START: u32 = LOG23_INITIAL_ROUNDS;
-const LOG23_NONINITIAL_STAGE3_START: u32 = LOG23_NONINITIAL_STAGE2_START + 6;
+const LOG23_NONINITIAL_STAGE3_START: u32 =
+    LOG23_NONINITIAL_STAGE2_START + LOG23_NONINITIAL_STAGE2_ROUNDS;
 
 const LOG24_INITIAL_ROUNDS: u32 = 12;
+const LOG24_NONINITIAL_STAGE2_ROUNDS: u32 = 6;
+const LOG24_NONINITIAL_STAGE3_ROUNDS: u32 = 6;
 const LOG24_NONINITIAL_STAGE2_START: u32 = LOG24_INITIAL_ROUNDS;
-const LOG24_NONINITIAL_STAGE3_START: u32 = LOG24_NONINITIAL_STAGE2_START + 6;
+const LOG24_NONINITIAL_STAGE3_START: u32 =
+    LOG24_NONINITIAL_STAGE2_START + LOG24_NONINITIAL_STAGE2_ROUNDS;
 
 cuda_kernel_signature_arguments_and_function!(
     HypercubeBitrevInitial,
@@ -59,14 +79,24 @@ declare_h2m_initial_kernel!(ab_h2m_bitrev_bf_initial12_out_kernel);
 declare_h2m_initial_kernel!(ab_h2m_bitrev_bf_initial12_in_kernel);
 declare_h2m_initial_kernel!(ab_h2m_bitrev_bf_initial11_out_kernel);
 declare_h2m_initial_kernel!(ab_h2m_bitrev_bf_initial11_in_kernel);
+declare_h2m_noninitial_kernel!(ab_h2m_bitrev_bf_noninitial5_stage2_out_kernel);
+declare_h2m_noninitial_kernel!(ab_h2m_bitrev_bf_noninitial5_stage2_in_kernel);
+declare_h2m_noninitial_kernel!(ab_h2m_bitrev_bf_noninitial5_stage3_in_kernel);
+declare_h2m_noninitial_kernel!(ab_h2m_bitrev_bf_noninitial5_stage3_out_kernel);
 declare_h2m_noninitial_kernel!(ab_h2m_bitrev_bf_noninitial6_stage2_out_kernel);
 declare_h2m_noninitial_kernel!(ab_h2m_bitrev_bf_noninitial6_stage2_in_kernel);
 declare_h2m_noninitial_kernel!(ab_h2m_bitrev_bf_noninitial6_stage3_in_kernel);
 declare_h2m_noninitial_kernel!(ab_h2m_bitrev_bf_noninitial6_stage3_out_kernel);
+declare_h2m_noninitial_kernel!(ab_h2m_bitrev_bf_noninitial5_stage2_out_start11_kernel);
+declare_h2m_noninitial_kernel!(ab_h2m_bitrev_bf_noninitial5_stage2_in_start11_kernel);
+declare_h2m_noninitial_kernel!(ab_h2m_bitrev_bf_noninitial5_stage3_out_start16_kernel);
+declare_h2m_noninitial_kernel!(ab_h2m_bitrev_bf_noninitial5_stage3_in_start16_kernel);
 declare_h2m_noninitial_kernel!(ab_h2m_bitrev_bf_noninitial6_stage2_out_start11_kernel);
 declare_h2m_noninitial_kernel!(ab_h2m_bitrev_bf_noninitial6_stage2_out_start12_kernel);
 declare_h2m_noninitial_kernel!(ab_h2m_bitrev_bf_noninitial6_stage2_in_start11_kernel);
 declare_h2m_noninitial_kernel!(ab_h2m_bitrev_bf_noninitial6_stage2_in_start12_kernel);
+declare_h2m_noninitial_kernel!(ab_h2m_bitrev_bf_noninitial6_stage3_out_start16_kernel);
+declare_h2m_noninitial_kernel!(ab_h2m_bitrev_bf_noninitial6_stage3_in_start16_kernel);
 declare_h2m_noninitial_kernel!(ab_h2m_bitrev_bf_noninitial6_stage3_out_start17_kernel);
 declare_h2m_noninitial_kernel!(ab_h2m_bitrev_bf_noninitial6_stage3_out_start18_kernel);
 declare_h2m_noninitial_kernel!(ab_h2m_bitrev_bf_noninitial6_stage3_in_start17_kernel);
@@ -77,7 +107,7 @@ fn validate_len(rows: usize) -> u32 {
     let log_rows = rows.trailing_zeros();
     assert!(
         (MIN_SUPPORTED_LOG_ROWS..=MAX_SUPPORTED_LOG_ROWS).contains(&log_rows),
-        "only log23/log24 (2^23/2^24 rows) are supported",
+        "only log21/log22/log23/log24 (2^21..2^24 rows) are supported",
     );
     log_rows
 }
@@ -88,6 +118,8 @@ struct LaunchPlan {
     noninitial_stage2_kernel: HypercubeBitrevNonInitialSignature,
     noninitial_stage3_kernel: HypercubeBitrevNonInitialSignature,
     initial_rounds: u32,
+    noninitial_stage2_rounds: u32,
+    noninitial_stage3_rounds: u32,
     noninitial_stage2_start: u32,
     noninitial_stage3_start: u32,
 }
@@ -99,6 +131,8 @@ fn select_out_of_place_plan(log_rows: u32) -> LaunchPlan {
             noninitial_stage2_kernel: ab_h2m_bitrev_bf_noninitial6_stage2_out_start12_kernel,
             noninitial_stage3_kernel: ab_h2m_bitrev_bf_noninitial6_stage3_out_start18_kernel,
             initial_rounds: LOG24_INITIAL_ROUNDS,
+            noninitial_stage2_rounds: LOG24_NONINITIAL_STAGE2_ROUNDS,
+            noninitial_stage3_rounds: LOG24_NONINITIAL_STAGE3_ROUNDS,
             noninitial_stage2_start: LOG24_NONINITIAL_STAGE2_START,
             noninitial_stage3_start: LOG24_NONINITIAL_STAGE3_START,
         },
@@ -107,8 +141,30 @@ fn select_out_of_place_plan(log_rows: u32) -> LaunchPlan {
             noninitial_stage2_kernel: ab_h2m_bitrev_bf_noninitial6_stage2_out_start11_kernel,
             noninitial_stage3_kernel: ab_h2m_bitrev_bf_noninitial6_stage3_out_start17_kernel,
             initial_rounds: LOG23_INITIAL_ROUNDS,
+            noninitial_stage2_rounds: LOG23_NONINITIAL_STAGE2_ROUNDS,
+            noninitial_stage3_rounds: LOG23_NONINITIAL_STAGE3_ROUNDS,
             noninitial_stage2_start: LOG23_NONINITIAL_STAGE2_START,
             noninitial_stage3_start: LOG23_NONINITIAL_STAGE3_START,
+        },
+        22 => LaunchPlan {
+            initial_kernel: ab_h2m_bitrev_bf_initial11_out_kernel,
+            noninitial_stage2_kernel: ab_h2m_bitrev_bf_noninitial5_stage2_out_start11_kernel,
+            noninitial_stage3_kernel: ab_h2m_bitrev_bf_noninitial6_stage3_out_start16_kernel,
+            initial_rounds: LOG22_INITIAL_ROUNDS,
+            noninitial_stage2_rounds: LOG22_NONINITIAL_STAGE2_ROUNDS,
+            noninitial_stage3_rounds: LOG22_NONINITIAL_STAGE3_ROUNDS,
+            noninitial_stage2_start: LOG22_NONINITIAL_STAGE2_START,
+            noninitial_stage3_start: LOG22_NONINITIAL_STAGE3_START,
+        },
+        21 => LaunchPlan {
+            initial_kernel: ab_h2m_bitrev_bf_initial11_out_kernel,
+            noninitial_stage2_kernel: ab_h2m_bitrev_bf_noninitial5_stage2_out_start11_kernel,
+            noninitial_stage3_kernel: ab_h2m_bitrev_bf_noninitial5_stage3_out_start16_kernel,
+            initial_rounds: LOG21_INITIAL_ROUNDS,
+            noninitial_stage2_rounds: LOG21_NONINITIAL_STAGE2_ROUNDS,
+            noninitial_stage3_rounds: LOG21_NONINITIAL_STAGE3_ROUNDS,
+            noninitial_stage2_start: LOG21_NONINITIAL_STAGE2_START,
+            noninitial_stage3_start: LOG21_NONINITIAL_STAGE3_START,
         },
         _ => unreachable!("validate_len enforces supported log rows"),
     }
@@ -121,6 +177,8 @@ fn select_in_place_plan(log_rows: u32) -> LaunchPlan {
             noninitial_stage2_kernel: ab_h2m_bitrev_bf_noninitial6_stage2_in_start12_kernel,
             noninitial_stage3_kernel: ab_h2m_bitrev_bf_noninitial6_stage3_in_start18_kernel,
             initial_rounds: LOG24_INITIAL_ROUNDS,
+            noninitial_stage2_rounds: LOG24_NONINITIAL_STAGE2_ROUNDS,
+            noninitial_stage3_rounds: LOG24_NONINITIAL_STAGE3_ROUNDS,
             noninitial_stage2_start: LOG24_NONINITIAL_STAGE2_START,
             noninitial_stage3_start: LOG24_NONINITIAL_STAGE3_START,
         },
@@ -129,11 +187,37 @@ fn select_in_place_plan(log_rows: u32) -> LaunchPlan {
             noninitial_stage2_kernel: ab_h2m_bitrev_bf_noninitial6_stage2_in_start11_kernel,
             noninitial_stage3_kernel: ab_h2m_bitrev_bf_noninitial6_stage3_in_start17_kernel,
             initial_rounds: LOG23_INITIAL_ROUNDS,
+            noninitial_stage2_rounds: LOG23_NONINITIAL_STAGE2_ROUNDS,
+            noninitial_stage3_rounds: LOG23_NONINITIAL_STAGE3_ROUNDS,
             noninitial_stage2_start: LOG23_NONINITIAL_STAGE2_START,
             noninitial_stage3_start: LOG23_NONINITIAL_STAGE3_START,
         },
+        22 => LaunchPlan {
+            initial_kernel: ab_h2m_bitrev_bf_initial11_in_kernel,
+            noninitial_stage2_kernel: ab_h2m_bitrev_bf_noninitial5_stage2_in_start11_kernel,
+            noninitial_stage3_kernel: ab_h2m_bitrev_bf_noninitial6_stage3_in_start16_kernel,
+            initial_rounds: LOG22_INITIAL_ROUNDS,
+            noninitial_stage2_rounds: LOG22_NONINITIAL_STAGE2_ROUNDS,
+            noninitial_stage3_rounds: LOG22_NONINITIAL_STAGE3_ROUNDS,
+            noninitial_stage2_start: LOG22_NONINITIAL_STAGE2_START,
+            noninitial_stage3_start: LOG22_NONINITIAL_STAGE3_START,
+        },
+        21 => LaunchPlan {
+            initial_kernel: ab_h2m_bitrev_bf_initial11_in_kernel,
+            noninitial_stage2_kernel: ab_h2m_bitrev_bf_noninitial5_stage2_in_start11_kernel,
+            noninitial_stage3_kernel: ab_h2m_bitrev_bf_noninitial5_stage3_in_start16_kernel,
+            initial_rounds: LOG21_INITIAL_ROUNDS,
+            noninitial_stage2_rounds: LOG21_NONINITIAL_STAGE2_ROUNDS,
+            noninitial_stage3_rounds: LOG21_NONINITIAL_STAGE3_ROUNDS,
+            noninitial_stage2_start: LOG21_NONINITIAL_STAGE2_START,
+            noninitial_stage3_start: LOG21_NONINITIAL_STAGE3_START,
+        },
         _ => unreachable!("validate_len enforces supported log rows"),
     }
+}
+
+fn noninitial_grid(rows: usize, rounds: u32) -> u32 {
+    (rows >> (NONINITIAL_PARTITION_LOG_ROWS + rounds)) as u32
 }
 
 fn launch_chain(
@@ -141,6 +225,8 @@ fn launch_chain(
     launch1_kernel: HypercubeBitrevNonInitialSignature,
     launch2_kernel: HypercubeBitrevNonInitialSignature,
     initial_rounds: u32,
+    noninitial_stage2_rounds: u32,
+    noninitial_stage3_rounds: u32,
     noninitial_stage2_start: u32,
     noninitial_stage3_start: u32,
     launch0_src: *const BF,
@@ -151,11 +237,14 @@ fn launch_chain(
     // Locked cache policy by stage role:
     // - log24 schedule: [12, 6, 6]
     // - log23 schedule: [11, 6, 6]
+    // - log22 schedule: [11, 5, 6]
+    // - log21 schedule: [11, 5, 5]
     // Noninitial stages use fixed-start kernel entrypoints selected on host.
     // out-of-place:  #1 ld.cs/st.wt, #2 ld.cs/st.wt, #3 ld.cs/st.cs
     // in-place:      #1 ld.cg/st.wt, #2 ld.ca/st.wt, #3 ld.ca/st.cs
     let grid_initial = (rows >> initial_rounds) as u32;
-    let grid_noninitial_6 = (rows >> NONINITIAL_GRID_LOG_ROWS) as u32;
+    let grid_stage2 = noninitial_grid(rows, noninitial_stage2_rounds);
+    let grid_stage3 = noninitial_grid(rows, noninitial_stage3_rounds);
 
     let config0 = CudaLaunchConfig::basic(
         Dim3 {
@@ -173,7 +262,7 @@ fn launch_chain(
 
     let config1 = CudaLaunchConfig::basic(
         Dim3 {
-            x: grid_noninitial_6,
+            x: grid_stage2,
             y: 1,
             z: 1,
         },
@@ -184,9 +273,18 @@ fn launch_chain(
         HypercubeBitrevNonInitialArguments::new(launch1_src, launch_dst, noninitial_stage2_start);
     HypercubeBitrevNonInitialFunction(launch1_kernel).launch(&config1, &args1)?;
 
+    let config2 = CudaLaunchConfig::basic(
+        Dim3 {
+            x: grid_stage3,
+            y: 1,
+            z: 1,
+        },
+        BLOCK_THREADS,
+        stream,
+    );
     let args2 =
         HypercubeBitrevNonInitialArguments::new(launch1_src, launch_dst, noninitial_stage3_start);
-    HypercubeBitrevNonInitialFunction(launch2_kernel).launch(&config1, &args2)?;
+    HypercubeBitrevNonInitialFunction(launch2_kernel).launch(&config2, &args2)?;
 
     Ok(())
 }
@@ -206,6 +304,8 @@ pub fn hypercube_evals_into_coeffs_bitrev_bf(
         plan.noninitial_stage2_kernel,
         plan.noninitial_stage3_kernel,
         plan.initial_rounds,
+        plan.noninitial_stage2_rounds,
+        plan.noninitial_stage3_rounds,
         plan.noninitial_stage2_start,
         plan.noninitial_stage3_start,
         src.as_ptr(),
@@ -228,6 +328,8 @@ pub fn hypercube_evals_into_coeffs_bitrev_bf_in_place(
         plan.noninitial_stage2_kernel,
         plan.noninitial_stage3_kernel,
         plan.initial_rounds,
+        plan.noninitial_stage2_rounds,
+        plan.noninitial_stage3_rounds,
         plan.noninitial_stage2_start,
         plan.noninitial_stage3_start,
         dst as *const BF,
@@ -250,6 +352,10 @@ mod tests {
     const PROFILE_MULTI_MEASURE_ITERS: usize = 100;
     const PROFILE_STAGE_WARMUP_ITERS: usize = 20;
     const PROFILE_STAGE_MEASURE_ITERS: usize = 100;
+    const LOG21_ROWS: usize = 1usize << 21;
+    const LOG22_ROWS: usize = 1usize << 22;
+    const LOG23_ROWS: usize = 1usize << 23;
+    const LOG24_ROWS: usize = 1usize << 24;
 
     #[derive(Clone, Copy)]
     struct ProfileStats {
@@ -477,7 +583,8 @@ mod tests {
         stream.synchronize().unwrap();
 
         let initial_grid = (rows >> plan.initial_rounds) as u32;
-        let noninitial_grid = (rows >> NONINITIAL_GRID_LOG_ROWS) as u32;
+        let noninitial_stage2_grid = super::noninitial_grid(rows, plan.noninitial_stage2_rounds);
+        let noninitial_stage3_grid = super::noninitial_grid(rows, plan.noninitial_stage3_rounds);
         let config_initial = CudaLaunchConfig::basic(
             Dim3 {
                 x: initial_grid,
@@ -487,9 +594,18 @@ mod tests {
             BLOCK_THREADS,
             &stream,
         );
-        let config_noninitial = CudaLaunchConfig::basic(
+        let config_stage2 = CudaLaunchConfig::basic(
             Dim3 {
-                x: noninitial_grid,
+                x: noninitial_stage2_grid,
+                y: 1,
+                z: 1,
+            },
+            BLOCK_THREADS,
+            &stream,
+        );
+        let config_stage3 = CudaLaunchConfig::basic(
+            Dim3 {
+                x: noninitial_stage3_grid,
                 y: 1,
                 z: 1,
             },
@@ -532,17 +648,17 @@ mod tests {
         initial_fn.launch(&config_initial, &initial_args).unwrap();
         stream.synchronize().unwrap();
         let stage2_samples = run_profile_invocations(warmup_iters, measure_iters, &stream, || {
-            stage2_fn.launch(&config_noninitial, &stage2_args)
+            stage2_fn.launch(&config_stage2, &stage2_args)
         });
         let stage2_stats = compute_profile_stats(&stage2_samples);
         print_stage_profile(rows, "stage2", warmup_iters, measure_iters, stage2_stats);
 
         memory_copy_async(&mut d_stage, &h_input, &stream).unwrap();
         initial_fn.launch(&config_initial, &initial_args).unwrap();
-        stage2_fn.launch(&config_noninitial, &stage2_args).unwrap();
+        stage2_fn.launch(&config_stage2, &stage2_args).unwrap();
         stream.synchronize().unwrap();
         let stage3_samples = run_profile_invocations(warmup_iters, measure_iters, &stream, || {
-            stage3_fn.launch(&config_noninitial, &stage3_args)
+            stage3_fn.launch(&config_stage3, &stage3_args)
         });
         let stage3_stats = compute_profile_stats(&stage3_samples);
         print_stage_profile(rows, "stage3", warmup_iters, measure_iters, stage3_stats);
@@ -572,34 +688,50 @@ mod tests {
     }
 
     #[test]
-    #[ignore]
     fn hypercube_bitrev_bf_out_of_place_log24() {
-        run_out_of_place_case(1usize << MAX_SUPPORTED_LOG_ROWS);
+        run_out_of_place_case(LOG24_ROWS);
     }
 
     #[test]
-    #[ignore]
     fn hypercube_bitrev_bf_in_place_log24() {
-        run_in_place_case(1usize << MAX_SUPPORTED_LOG_ROWS);
+        run_in_place_case(LOG24_ROWS);
     }
 
     #[test]
-    #[ignore]
     fn hypercube_bitrev_bf_out_of_place_log23() {
-        run_out_of_place_case(1usize << MIN_SUPPORTED_LOG_ROWS);
+        run_out_of_place_case(LOG23_ROWS);
     }
 
     #[test]
-    #[ignore]
     fn hypercube_bitrev_bf_in_place_log23() {
-        run_in_place_case(1usize << MIN_SUPPORTED_LOG_ROWS);
+        run_in_place_case(LOG23_ROWS);
+    }
+
+    #[test]
+    fn hypercube_bitrev_bf_out_of_place_log22() {
+        run_out_of_place_case(LOG22_ROWS);
+    }
+
+    #[test]
+    fn hypercube_bitrev_bf_in_place_log22() {
+        run_in_place_case(LOG22_ROWS);
+    }
+
+    #[test]
+    fn hypercube_bitrev_bf_out_of_place_log21() {
+        run_out_of_place_case(LOG21_ROWS);
+    }
+
+    #[test]
+    fn hypercube_bitrev_bf_in_place_log21() {
+        run_in_place_case(LOG21_ROWS);
     }
 
     #[test]
     #[ignore]
-    fn profile_hypercube_bitrev_bf_single_invocation_log24_col1() {
+    fn profile_hypercube_bitrev_bf_single_invocation_log24() {
         // Profiling-only entrypoint: launches one kernel chain without correctness checks.
-        let rows = 1usize << MAX_SUPPORTED_LOG_ROWS;
+        let rows = LOG24_ROWS;
         let mut rng = rng();
         let h_input = (0..rows)
             .map(|_| BF::from_nonreduced_u32(rng.random()))
@@ -616,9 +748,9 @@ mod tests {
 
     #[test]
     #[ignore]
-    fn profile_hypercube_bitrev_bf_single_invocation_log23_col1() {
+    fn profile_hypercube_bitrev_bf_single_invocation_log23() {
         // Profiling-only entrypoint: launches one kernel chain without correctness checks.
-        let rows = 1usize << MIN_SUPPORTED_LOG_ROWS;
+        let rows = LOG23_ROWS;
         let mut rng = rng();
         let h_input = (0..rows)
             .map(|_| BF::from_nonreduced_u32(rng.random()))
@@ -635,9 +767,47 @@ mod tests {
 
     #[test]
     #[ignore]
-    fn profile_hypercube_bitrev_bf_multi_invocation_log24_col1() {
+    fn profile_hypercube_bitrev_bf_single_invocation_log22() {
+        // Profiling-only entrypoint: launches one kernel chain without correctness checks.
+        let rows = LOG22_ROWS;
+        let mut rng = rng();
+        let h_input = (0..rows)
+            .map(|_| BF::from_nonreduced_u32(rng.random()))
+            .collect::<Vec<_>>();
+
+        let stream = CudaStream::default();
+        let mut d_src = DeviceAllocation::alloc(rows).unwrap();
+        let mut d_dst = DeviceAllocation::alloc(rows).unwrap();
+        memory_copy_async(&mut d_src, &h_input, &stream).unwrap();
+
+        hypercube_evals_into_coeffs_bitrev_bf(&d_src, &mut d_dst, &stream).unwrap();
+        stream.synchronize().unwrap();
+    }
+
+    #[test]
+    #[ignore]
+    fn profile_hypercube_bitrev_bf_single_invocation_log21() {
+        // Profiling-only entrypoint: launches one kernel chain without correctness checks.
+        let rows = LOG21_ROWS;
+        let mut rng = rng();
+        let h_input = (0..rows)
+            .map(|_| BF::from_nonreduced_u32(rng.random()))
+            .collect::<Vec<_>>();
+
+        let stream = CudaStream::default();
+        let mut d_src = DeviceAllocation::alloc(rows).unwrap();
+        let mut d_dst = DeviceAllocation::alloc(rows).unwrap();
+        memory_copy_async(&mut d_src, &h_input, &stream).unwrap();
+
+        hypercube_evals_into_coeffs_bitrev_bf(&d_src, &mut d_dst, &stream).unwrap();
+        stream.synchronize().unwrap();
+    }
+
+    #[test]
+    #[ignore]
+    fn profile_hypercube_bitrev_bf_multi_invocation_log24() {
         run_profile_out_of_place_multi_invocation(
-            1usize << MAX_SUPPORTED_LOG_ROWS,
+            LOG24_ROWS,
             PROFILE_MULTI_WARMUP_ITERS,
             PROFILE_MULTI_MEASURE_ITERS,
         );
@@ -645,9 +815,9 @@ mod tests {
 
     #[test]
     #[ignore]
-    fn profile_hypercube_bitrev_bf_multi_invocation_log23_col1() {
+    fn profile_hypercube_bitrev_bf_multi_invocation_log23() {
         run_profile_out_of_place_multi_invocation(
-            1usize << MIN_SUPPORTED_LOG_ROWS,
+            LOG23_ROWS,
             PROFILE_MULTI_WARMUP_ITERS,
             PROFILE_MULTI_MEASURE_ITERS,
         );
@@ -655,9 +825,29 @@ mod tests {
 
     #[test]
     #[ignore]
-    fn profile_hypercube_bitrev_bf_stage_breakdown_multi_invocation_log24_col1() {
+    fn profile_hypercube_bitrev_bf_multi_invocation_log22() {
+        run_profile_out_of_place_multi_invocation(
+            LOG22_ROWS,
+            PROFILE_MULTI_WARMUP_ITERS,
+            PROFILE_MULTI_MEASURE_ITERS,
+        );
+    }
+
+    #[test]
+    #[ignore]
+    fn profile_hypercube_bitrev_bf_multi_invocation_log21() {
+        run_profile_out_of_place_multi_invocation(
+            LOG21_ROWS,
+            PROFILE_MULTI_WARMUP_ITERS,
+            PROFILE_MULTI_MEASURE_ITERS,
+        );
+    }
+
+    #[test]
+    #[ignore]
+    fn profile_hypercube_bitrev_bf_stage_breakdown_multi_invocation_log24() {
         run_profile_out_of_place_stage_breakdown_multi_invocation(
-            1usize << MAX_SUPPORTED_LOG_ROWS,
+            LOG24_ROWS,
             PROFILE_STAGE_WARMUP_ITERS,
             PROFILE_STAGE_MEASURE_ITERS,
         );
@@ -665,9 +855,29 @@ mod tests {
 
     #[test]
     #[ignore]
-    fn profile_hypercube_bitrev_bf_stage_breakdown_multi_invocation_log23_col1() {
+    fn profile_hypercube_bitrev_bf_stage_breakdown_multi_invocation_log23() {
         run_profile_out_of_place_stage_breakdown_multi_invocation(
-            1usize << MIN_SUPPORTED_LOG_ROWS,
+            LOG23_ROWS,
+            PROFILE_STAGE_WARMUP_ITERS,
+            PROFILE_STAGE_MEASURE_ITERS,
+        );
+    }
+
+    #[test]
+    #[ignore]
+    fn profile_hypercube_bitrev_bf_stage_breakdown_multi_invocation_log22() {
+        run_profile_out_of_place_stage_breakdown_multi_invocation(
+            LOG22_ROWS,
+            PROFILE_STAGE_WARMUP_ITERS,
+            PROFILE_STAGE_MEASURE_ITERS,
+        );
+    }
+
+    #[test]
+    #[ignore]
+    fn profile_hypercube_bitrev_bf_stage_breakdown_multi_invocation_log21() {
+        run_profile_out_of_place_stage_breakdown_multi_invocation(
+            LOG21_ROWS,
             PROFILE_STAGE_WARMUP_ITERS,
             PROFILE_STAGE_MEASURE_ITERS,
         );
@@ -676,7 +886,7 @@ mod tests {
     #[test]
     #[should_panic]
     fn unsupported_log_rows_panics() {
-        let len = 1usize << 22;
+        let len = 1usize << 20;
         let stream = CudaStream::default();
         let mut d_values = DeviceAllocation::alloc(len).unwrap();
         hypercube_evals_into_coeffs_bitrev_bf_in_place(&mut d_values, &stream).unwrap();
