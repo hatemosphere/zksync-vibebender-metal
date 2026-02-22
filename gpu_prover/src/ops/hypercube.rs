@@ -218,7 +218,11 @@ mod tests {
     use era_cudart::memory::{memory_copy_async, DeviceAllocation};
     use field::Field;
     use prover::gkr::whir::hypercube_to_monomial::multivariate_hypercube_evals_into_coeffs;
-    use rand::{rng, Rng};
+    use rand::{rng, rngs::StdRng, Rng, SeedableRng};
+    use std::time::Instant;
+
+    const PROFILE_MULTI_WARMUP_ITERS: usize = 20;
+    const PROFILE_MULTI_MEASURE_ITERS: usize = 100;
 
     fn bitreverse_permute(values: &[BF]) -> Vec<BF> {
         assert!(values.len().is_power_of_two());
@@ -273,6 +277,75 @@ mod tests {
         memory_copy_async(&mut h_actual, &d_values, &stream).unwrap();
         stream.synchronize().unwrap();
         assert_eq!(h_actual, h_expected);
+    }
+
+    fn percentile_from_sorted(sorted_samples_us: &[f64], percentile: f64) -> f64 {
+        assert!(!sorted_samples_us.is_empty());
+        let clamped = percentile.clamp(0.0, 1.0);
+        let idx = ((sorted_samples_us.len() - 1) as f64 * clamped).round() as usize;
+        sorted_samples_us[idx]
+    }
+
+    fn run_profile_out_of_place_multi_invocation(
+        rows: usize,
+        warmup_iters: usize,
+        measure_iters: usize,
+    ) {
+        assert!(measure_iters > 0);
+        let mut rng = StdRng::seed_from_u64(0xA1B2_C3D4_55AA_77EEu64 ^ rows as u64);
+        let h_input = (0..rows)
+            .map(|_| BF::from_nonreduced_u32(rng.random()))
+            .collect::<Vec<_>>();
+
+        let stream = CudaStream::default();
+        let mut d_src = DeviceAllocation::alloc(rows).unwrap();
+        let mut d_dst = DeviceAllocation::alloc(rows).unwrap();
+        memory_copy_async(&mut d_src, &h_input, &stream).unwrap();
+        stream.synchronize().unwrap();
+
+        for _ in 0..warmup_iters {
+            hypercube_evals_into_coeffs_bitrev_bf(&d_src, &mut d_dst, &stream).unwrap();
+        }
+        stream.synchronize().unwrap();
+
+        let mut samples_us = Vec::with_capacity(measure_iters);
+        for _ in 0..measure_iters {
+            let start = Instant::now();
+            hypercube_evals_into_coeffs_bitrev_bf(&d_src, &mut d_dst, &stream).unwrap();
+            stream.synchronize().unwrap();
+            samples_us.push(start.elapsed().as_secs_f64() * 1_000_000.0);
+        }
+
+        let mut sorted = samples_us.clone();
+        sorted.sort_by(|a, b| a.partial_cmp(b).unwrap());
+
+        let mean = samples_us.iter().sum::<f64>() / samples_us.len() as f64;
+        let variance = samples_us
+            .iter()
+            .map(|sample| {
+                let delta = sample - mean;
+                delta * delta
+            })
+            .sum::<f64>()
+            / samples_us.len() as f64;
+        let stddev = variance.sqrt();
+        let cv_pct = if mean > 0.0 { (stddev / mean) * 100.0 } else { 0.0 };
+
+        println!(
+            "profile_h2m_chain rows={} log_rows={} warmup={} iters={} mean_us={:.3} median_us={:.3} p90_us={:.3} p95_us={:.3} min_us={:.3} max_us={:.3} stddev_us={:.3} cv_pct={:.2}",
+            rows,
+            rows.trailing_zeros(),
+            warmup_iters,
+            measure_iters,
+            mean,
+            percentile_from_sorted(&sorted, 0.50),
+            percentile_from_sorted(&sorted, 0.90),
+            percentile_from_sorted(&sorted, 0.95),
+            sorted[0],
+            sorted[sorted.len() - 1],
+            stddev,
+            cv_pct,
+        );
     }
 
     #[test]
@@ -335,6 +408,26 @@ mod tests {
 
         hypercube_evals_into_coeffs_bitrev_bf(&d_src, &mut d_dst, &stream).unwrap();
         stream.synchronize().unwrap();
+    }
+
+    #[test]
+    #[ignore]
+    fn profile_hypercube_bitrev_bf_multi_invocation_log24_col1() {
+        run_profile_out_of_place_multi_invocation(
+            1usize << MAX_SUPPORTED_LOG_ROWS,
+            PROFILE_MULTI_WARMUP_ITERS,
+            PROFILE_MULTI_MEASURE_ITERS,
+        );
+    }
+
+    #[test]
+    #[ignore]
+    fn profile_hypercube_bitrev_bf_multi_invocation_log23_col1() {
+        run_profile_out_of_place_multi_invocation(
+            1usize << MIN_SUPPORTED_LOG_ROWS,
+            PROFILE_MULTI_WARMUP_ITERS,
+            PROFILE_MULTI_MEASURE_ITERS,
+        );
     }
 
     #[test]
