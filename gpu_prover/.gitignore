@@ -1,1 +1,2 @@
-profiling/
+profiling/*
+!profiling/hypercube_stage_ab.sh

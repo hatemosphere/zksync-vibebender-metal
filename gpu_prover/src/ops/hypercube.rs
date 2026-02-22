@@ -223,6 +223,20 @@ mod tests {
 
     const PROFILE_MULTI_WARMUP_ITERS: usize = 20;
     const PROFILE_MULTI_MEASURE_ITERS: usize = 100;
+    const PROFILE_STAGE_WARMUP_ITERS: usize = 20;
+    const PROFILE_STAGE_MEASURE_ITERS: usize = 100;
+
+    #[derive(Clone, Copy)]
+    struct ProfileStats {
+        mean: f64,
+        median: f64,
+        p90: f64,
+        p95: f64,
+        min: f64,
+        max: f64,
+        stddev: f64,
+        cv_pct: f64,
+    }
 
     fn bitreverse_permute(values: &[BF]) -> Vec<BF> {
         assert!(values.len().is_power_of_two());
@@ -286,37 +300,35 @@ mod tests {
         sorted_samples_us[idx]
     }
 
-    fn run_profile_out_of_place_multi_invocation(
-        rows: usize,
+    fn run_profile_invocations<F>(
         warmup_iters: usize,
         measure_iters: usize,
-    ) {
+        stream: &CudaStream,
+        mut launch: F,
+    ) -> Vec<f64>
+    where
+        F: FnMut() -> CudaResult<()>,
+    {
         assert!(measure_iters > 0);
-        let mut rng = StdRng::seed_from_u64(0xA1B2_C3D4_55AA_77EEu64 ^ rows as u64);
-        let h_input = (0..rows)
-            .map(|_| BF::from_nonreduced_u32(rng.random()))
-            .collect::<Vec<_>>();
-
-        let stream = CudaStream::default();
-        let mut d_src = DeviceAllocation::alloc(rows).unwrap();
-        let mut d_dst = DeviceAllocation::alloc(rows).unwrap();
-        memory_copy_async(&mut d_src, &h_input, &stream).unwrap();
-        stream.synchronize().unwrap();
 
         for _ in 0..warmup_iters {
-            hypercube_evals_into_coeffs_bitrev_bf(&d_src, &mut d_dst, &stream).unwrap();
+            launch().unwrap();
         }
         stream.synchronize().unwrap();
 
         let mut samples_us = Vec::with_capacity(measure_iters);
         for _ in 0..measure_iters {
             let start = Instant::now();
-            hypercube_evals_into_coeffs_bitrev_bf(&d_src, &mut d_dst, &stream).unwrap();
+            launch().unwrap();
             stream.synchronize().unwrap();
             samples_us.push(start.elapsed().as_secs_f64() * 1_000_000.0);
         }
+        samples_us
+    }
 
-        let mut sorted = samples_us.clone();
+    fn compute_profile_stats(samples_us: &[f64]) -> ProfileStats {
+        assert!(!samples_us.is_empty());
+        let mut sorted = samples_us.to_vec();
         sorted.sort_by(|a, b| a.partial_cmp(b).unwrap());
 
         let mean = samples_us.iter().sum::<f64>() / samples_us.len() as f64;
@@ -329,22 +341,228 @@ mod tests {
             .sum::<f64>()
             / samples_us.len() as f64;
         let stddev = variance.sqrt();
-        let cv_pct = if mean > 0.0 { (stddev / mean) * 100.0 } else { 0.0 };
+        let cv_pct = if mean > 0.0 {
+            (stddev / mean) * 100.0
+        } else {
+            0.0
+        };
 
+        ProfileStats {
+            mean,
+            median: percentile_from_sorted(&sorted, 0.50),
+            p90: percentile_from_sorted(&sorted, 0.90),
+            p95: percentile_from_sorted(&sorted, 0.95),
+            min: sorted[0],
+            max: sorted[sorted.len() - 1],
+            stddev,
+            cv_pct,
+        }
+    }
+
+    fn print_chain_profile(
+        rows: usize,
+        warmup_iters: usize,
+        measure_iters: usize,
+        stats: ProfileStats,
+    ) {
         println!(
             "profile_h2m_chain rows={} log_rows={} warmup={} iters={} mean_us={:.3} median_us={:.3} p90_us={:.3} p95_us={:.3} min_us={:.3} max_us={:.3} stddev_us={:.3} cv_pct={:.2}",
             rows,
             rows.trailing_zeros(),
             warmup_iters,
             measure_iters,
-            mean,
-            percentile_from_sorted(&sorted, 0.50),
-            percentile_from_sorted(&sorted, 0.90),
-            percentile_from_sorted(&sorted, 0.95),
-            sorted[0],
-            sorted[sorted.len() - 1],
-            stddev,
-            cv_pct,
+            stats.mean,
+            stats.median,
+            stats.p90,
+            stats.p95,
+            stats.min,
+            stats.max,
+            stats.stddev,
+            stats.cv_pct,
+        );
+    }
+
+    fn print_stage_profile(
+        rows: usize,
+        stage: &str,
+        warmup_iters: usize,
+        measure_iters: usize,
+        stats: ProfileStats,
+    ) {
+        println!(
+            "profile_h2m_stage rows={} log_rows={} stage={} warmup={} iters={} mean_us={:.3} median_us={:.3} p90_us={:.3} p95_us={:.3} min_us={:.3} max_us={:.3} stddev_us={:.3} cv_pct={:.2}",
+            rows,
+            rows.trailing_zeros(),
+            stage,
+            warmup_iters,
+            measure_iters,
+            stats.mean,
+            stats.median,
+            stats.p90,
+            stats.p95,
+            stats.min,
+            stats.max,
+            stats.stddev,
+            stats.cv_pct,
+        );
+    }
+
+    fn dispatch_out_of_place_for_log_rows(
+        log_rows: u32,
+    ) -> (
+        HypercubeBitrevInitialSignature,
+        u32,
+        u32,
+        u32,
+    ) {
+        match log_rows {
+            24 => (
+                ab_h2m_bitrev_bf_initial12_out_kernel,
+                LOG24_INITIAL_ROUNDS,
+                LOG24_NONINITIAL_STAGE2_START,
+                LOG24_NONINITIAL_STAGE3_START,
+            ),
+            23 => (
+                ab_h2m_bitrev_bf_initial11_out_kernel,
+                LOG23_INITIAL_ROUNDS,
+                LOG23_NONINITIAL_STAGE2_START,
+                LOG23_NONINITIAL_STAGE3_START,
+            ),
+            _ => unreachable!("validate_len enforces supported log rows"),
+        }
+    }
+
+    fn run_profile_out_of_place_multi_invocation(
+        rows: usize,
+        warmup_iters: usize,
+        measure_iters: usize,
+    ) {
+        let mut rng = StdRng::seed_from_u64(0xA1B2_C3D4_55AA_77EEu64 ^ rows as u64);
+        let h_input = (0..rows)
+            .map(|_| BF::from_nonreduced_u32(rng.random()))
+            .collect::<Vec<_>>();
+
+        let stream = CudaStream::default();
+        let mut d_src = DeviceAllocation::alloc(rows).unwrap();
+        let mut d_dst = DeviceAllocation::alloc(rows).unwrap();
+        memory_copy_async(&mut d_src, &h_input, &stream).unwrap();
+        stream.synchronize().unwrap();
+
+        let samples_us = run_profile_invocations(warmup_iters, measure_iters, &stream, || {
+            hypercube_evals_into_coeffs_bitrev_bf(&d_src, &mut d_dst, &stream)
+        });
+        let stats = compute_profile_stats(&samples_us);
+        print_chain_profile(rows, warmup_iters, measure_iters, stats);
+    }
+
+    fn run_profile_out_of_place_stage_breakdown_multi_invocation(
+        rows: usize,
+        warmup_iters: usize,
+        measure_iters: usize,
+    ) {
+        let log_rows = validate_len(rows);
+        let (initial_kernel, initial_rounds, stage2_start, stage3_start) =
+            dispatch_out_of_place_for_log_rows(log_rows);
+
+        let mut rng = StdRng::seed_from_u64(0x9C7F_D142_1B35_EAAAu64 ^ rows as u64);
+        let h_input = (0..rows)
+            .map(|_| BF::from_nonreduced_u32(rng.random()))
+            .collect::<Vec<_>>();
+
+        let stream = CudaStream::default();
+        let mut d_src = DeviceAllocation::alloc(rows).unwrap();
+        let mut d_dst = DeviceAllocation::alloc(rows).unwrap();
+        let mut d_stage = DeviceAllocation::alloc(rows).unwrap();
+        memory_copy_async(&mut d_src, &h_input, &stream).unwrap();
+        memory_copy_async(&mut d_stage, &h_input, &stream).unwrap();
+        stream.synchronize().unwrap();
+
+        let initial_grid = (rows >> initial_rounds) as u32;
+        let noninitial_grid = (rows >> NONINITIAL_GRID_LOG_ROWS) as u32;
+        let config_initial = CudaLaunchConfig::basic(
+            Dim3 {
+                x: initial_grid,
+                y: 1,
+                z: 1,
+            },
+            BLOCK_THREADS,
+            &stream,
+        );
+        let config_noninitial = CudaLaunchConfig::basic(
+            Dim3 {
+                x: noninitial_grid,
+                y: 1,
+                z: 1,
+            },
+            BLOCK_THREADS,
+            &stream,
+        );
+
+        let initial_fn = HypercubeBitrevInitialFunction(initial_kernel);
+        let stage2_fn = HypercubeBitrevNonInitialFunction(ab_h2m_bitrev_bf_noninitial6_stage2_out_kernel);
+        let stage3_fn = HypercubeBitrevNonInitialFunction(ab_h2m_bitrev_bf_noninitial6_stage3_out_kernel);
+
+        let stage_ptr = d_stage.as_mut_ptr();
+        let initial_args = HypercubeBitrevInitialArguments::new(d_src.as_ptr(), stage_ptr);
+        let stage2_args =
+            HypercubeBitrevNonInitialArguments::new(stage_ptr as *const BF, stage_ptr, stage2_start);
+        let stage3_args =
+            HypercubeBitrevNonInitialArguments::new(stage_ptr as *const BF, stage_ptr, stage3_start);
+
+        let chain_samples = run_profile_invocations(warmup_iters, measure_iters, &stream, || {
+            hypercube_evals_into_coeffs_bitrev_bf(&d_src, &mut d_dst, &stream)
+        });
+        let chain_stats = compute_profile_stats(&chain_samples);
+        print_chain_profile(rows, warmup_iters, measure_iters, chain_stats);
+
+        memory_copy_async(&mut d_stage, &h_input, &stream).unwrap();
+        stream.synchronize().unwrap();
+        let initial_samples = run_profile_invocations(warmup_iters, measure_iters, &stream, || {
+            initial_fn.launch(&config_initial, &initial_args)
+        });
+        let initial_stats = compute_profile_stats(&initial_samples);
+        print_stage_profile(rows, "initial", warmup_iters, measure_iters, initial_stats);
+
+        memory_copy_async(&mut d_stage, &h_input, &stream).unwrap();
+        initial_fn.launch(&config_initial, &initial_args).unwrap();
+        stream.synchronize().unwrap();
+        let stage2_samples = run_profile_invocations(warmup_iters, measure_iters, &stream, || {
+            stage2_fn.launch(&config_noninitial, &stage2_args)
+        });
+        let stage2_stats = compute_profile_stats(&stage2_samples);
+        print_stage_profile(rows, "stage2", warmup_iters, measure_iters, stage2_stats);
+
+        memory_copy_async(&mut d_stage, &h_input, &stream).unwrap();
+        initial_fn.launch(&config_initial, &initial_args).unwrap();
+        stage2_fn.launch(&config_noninitial, &stage2_args).unwrap();
+        stream.synchronize().unwrap();
+        let stage3_samples = run_profile_invocations(warmup_iters, measure_iters, &stream, || {
+            stage3_fn.launch(&config_noninitial, &stage3_args)
+        });
+        let stage3_stats = compute_profile_stats(&stage3_samples);
+        print_stage_profile(rows, "stage3", warmup_iters, measure_iters, stage3_stats);
+
+        let stage_sum_median = initial_stats.median + stage2_stats.median + stage3_stats.median;
+        let median_gap = chain_stats.median - stage_sum_median;
+        let chain_median = chain_stats.median;
+        let initial_share_pct = (initial_stats.median / chain_median) * 100.0;
+        let stage2_share_pct = (stage2_stats.median / chain_median) * 100.0;
+        let stage3_share_pct = (stage3_stats.median / chain_median) * 100.0;
+        println!(
+            "profile_h2m_stage_breakdown rows={} log_rows={} warmup={} iters={} chain_median_us={:.3} initial_median_us={:.3} stage2_median_us={:.3} stage3_median_us={:.3} initial_pct={:.2} stage2_pct={:.2} stage3_pct={:.2} stage_sum_median_us={:.3} median_gap_us={:.3}",
+            rows,
+            log_rows,
+            warmup_iters,
+            measure_iters,
+            chain_median,
+            initial_stats.median,
+            stage2_stats.median,
+            stage3_stats.median,
+            initial_share_pct,
+            stage2_share_pct,
+            stage3_share_pct,
+            stage_sum_median,
+            median_gap,
         );
     }
 
@@ -427,6 +645,26 @@ mod tests {
             1usize << MIN_SUPPORTED_LOG_ROWS,
             PROFILE_MULTI_WARMUP_ITERS,
             PROFILE_MULTI_MEASURE_ITERS,
+        );
+    }
+
+    #[test]
+    #[ignore]
+    fn profile_hypercube_bitrev_bf_stage_breakdown_multi_invocation_log24_col1() {
+        run_profile_out_of_place_stage_breakdown_multi_invocation(
+            1usize << MAX_SUPPORTED_LOG_ROWS,
+            PROFILE_STAGE_WARMUP_ITERS,
+            PROFILE_STAGE_MEASURE_ITERS,
+        );
+    }
+
+    #[test]
+    #[ignore]
+    fn profile_hypercube_bitrev_bf_stage_breakdown_multi_invocation_log23_col1() {
+        run_profile_out_of_place_stage_breakdown_multi_invocation(
+            1usize << MIN_SUPPORTED_LOG_ROWS,
+            PROFILE_STAGE_WARMUP_ITERS,
+            PROFILE_STAGE_MEASURE_ITERS,
         );
     }
 
