@@ -27,10 +27,17 @@ use crate::ntt::{
 
 type BF = BaseField;
 
+#[derive(PartialEq)]
+enum InOrOutOfPlace {
+  In,
+  Out,
+}
+
 fn run_main_to_coset(
     log_n_range: Range<usize>,
     num_bf_cols: usize,
     kernel: usize,
+    in_or_out_of_place: InOrOutOfPlace,
 ) {
     let ctx = DeviceContext::create(12).unwrap();
     let n_max = 1 << (log_n_range.end - 1);
@@ -69,159 +76,164 @@ fn run_main_to_coset(
 
         (&mut inputs_host[0..memory_size]).copy_from_slice(&inputs_orig_host[0..memory_size]);
 
-        // out of place
-        memory_copy_async(
-            &mut inputs_device[0..memory_size],
-            &inputs_host[0..memory_size],
-            &stream,
-        )
-        .unwrap();
-        flush_l2();
-        let inputs_device_matrix =
-            DeviceMatrixChunk::new(&inputs_device[0..memory_size], stride, OFFSET, n);
-        let mut outputs_device_matrix =
-            DeviceMatrixChunkMut::new(&mut outputs_device[0..memory_size], stride, OFFSET, n);
-        match kernel {
-            0 => main_to_coset(
-                &inputs_device_matrix,
-                &mut outputs_device_matrix,
-                log_n,
-                &stream,
-            )
-            .unwrap(),
-            1 => main_to_coset_tile_8(
-                &inputs_device_matrix,
-                &mut outputs_device_matrix,
-                log_n,
-                &stream,
-            )
-            .unwrap(),
-            2 => main_to_coset_coalesced(
-                &inputs_device_matrix,
-                &mut outputs_device_matrix,
-                log_n,
-                &stream,
-            )
-            .unwrap(),
-            3 => main_to_coset_register_pipeline(
-                &inputs_device_matrix,
-                &mut outputs_device_matrix,
-                log_n,
-                &stream,
-            )
-            .unwrap(),
-            4 => main_to_coset_pipeline_tile_8(
-                &inputs_device_matrix,
-                &mut outputs_device_matrix,
-                log_n,
-                &stream,
-            )
-            .unwrap(),
-            5 => main_to_coset_pc(
-                &inputs_device_matrix,
-                &mut outputs_device_matrix,
-                log_n,
-                &stream,
-            )
-            .unwrap(),
-            6 => main_to_monomials_3_pass(
-                &inputs_device_matrix,
-                &mut outputs_device_matrix,
-                log_n,
-                &stream,
-            )
-            .unwrap(),
-            _ => {},
-        };
-        memory_copy_async(
-            &mut outputs_host[0..memory_size],
-            &outputs_device[0..memory_size],
-            &stream,
-        )
-        .unwrap();
-
-        // in place
-        memory_copy_async(
-            &mut inplace_device[0..memory_size],
-            &inputs_host[0..memory_size],
-            &stream,
-        )
-        .unwrap();
-        flush_l2();
-        let inplace_output_view = &mut inplace_device[0..memory_size];
-        let inplace_input_view = unsafe {
-            DeviceSlice::from_raw_parts(inplace_output_view.as_ptr(), inplace_output_view.len())
-        };
-        let inplace_input_view_matrix =
-            DeviceMatrixChunk::new(&inplace_input_view[0..memory_size], stride, OFFSET, n);
-        let mut inplace_output_view_matrix =
-            DeviceMatrixChunkMut::new(&mut inplace_output_view[0..memory_size], stride, OFFSET, n);
-        match kernel {
-            0 => main_to_coset(
-                &inplace_input_view_matrix,
-                &mut inplace_output_view_matrix,
-                log_n,
-                &stream,
-            )
-            .unwrap(),
-            1 => main_to_coset_tile_8(
-                &inplace_input_view_matrix,
-                &mut inplace_output_view_matrix,
-                log_n,
-                &stream,
-            )
-            .unwrap(),
-            2 => main_to_coset_coalesced(
-                &inplace_input_view_matrix,
-                &mut inplace_output_view_matrix,
-                log_n,
-                &stream,
-            )
-            .unwrap(),
-            3 => main_to_coset_register_pipeline(
-                &inplace_input_view_matrix,
-                &mut inplace_output_view_matrix,
-                log_n,
-                &stream,
-            )
-            .unwrap(),
-            4 => main_to_coset_pipeline_tile_8(
-                &inplace_input_view_matrix,
-                &mut inplace_output_view_matrix,
-                log_n,
-                &stream,
-            )
-            .unwrap(),
-            5 => main_to_coset_pc(
-                &inplace_input_view_matrix,
-                &mut inplace_output_view_matrix,
-                log_n,
-                &stream,
-            )
-            .unwrap(),
-            6 => main_to_monomials_3_pass(
-                &inplace_input_view_matrix,
-                &mut inplace_output_view_matrix,
-                log_n,
-                &stream,
-            )
-            .unwrap(),
-            _ => {},
-        };
-        memory_copy_async(
-            &mut inplace_host[0..memory_size],
-            inplace_output_view,
-            &stream,
-        )
-        .unwrap();
+        match in_or_out_of_place {
+            InOrOutOfPlace::Out => {
+                memory_copy_async(
+                    &mut inputs_device[0..memory_size],
+                    &inputs_host[0..memory_size],
+                    &stream,
+                )
+                .unwrap();
+                flush_l2();
+                let inputs_device_matrix =
+                    DeviceMatrixChunk::new(&inputs_device[0..memory_size], stride, OFFSET, n);
+                let mut outputs_device_matrix =
+                    DeviceMatrixChunkMut::new(&mut outputs_device[0..memory_size], stride, OFFSET, n);
+                match kernel {
+                    0 => main_to_coset(
+                        &inputs_device_matrix,
+                        &mut outputs_device_matrix,
+                        log_n,
+                        &stream,
+                    )
+                    .unwrap(),
+                    1 => main_to_coset_tile_8(
+                        &inputs_device_matrix,
+                        &mut outputs_device_matrix,
+                        log_n,
+                        &stream,
+                    )
+                    .unwrap(),
+                    2 => main_to_coset_coalesced(
+                        &inputs_device_matrix,
+                        &mut outputs_device_matrix,
+                        log_n,
+                        &stream,
+                    )
+                    .unwrap(),
+                    3 => main_to_coset_register_pipeline(
+                        &inputs_device_matrix,
+                        &mut outputs_device_matrix,
+                        log_n,
+                        &stream,
+                    )
+                    .unwrap(),
+                    4 => main_to_coset_pipeline_tile_8(
+                        &inputs_device_matrix,
+                        &mut outputs_device_matrix,
+                        log_n,
+                        &stream,
+                    )
+                    .unwrap(),
+                    5 => main_to_coset_pc(
+                        &inputs_device_matrix,
+                        &mut outputs_device_matrix,
+                        log_n,
+                        &stream,
+                    )
+                    .unwrap(),
+                    6 => main_to_monomials_3_pass(
+                        &inputs_device_matrix,
+                        &mut outputs_device_matrix,
+                        log_n,
+                        &stream,
+                    )
+                    .unwrap(),
+                    _ => {},
+                };
+                memory_copy_async(
+                    &mut outputs_host[0..memory_size],
+                    &outputs_device[0..memory_size],
+                    &stream,
+                )
+                .unwrap();
+            }
+            InOrOutOfPlace::In => {
+                memory_copy_async(
+                    &mut inplace_device[0..memory_size],
+                    &inputs_host[0..memory_size],
+                    &stream,
+                )
+                .unwrap();
+                flush_l2();
+                let inplace_output_view = &mut inplace_device[0..memory_size];
+                let inplace_input_view = unsafe {
+                    DeviceSlice::from_raw_parts(inplace_output_view.as_ptr(), inplace_output_view.len())
+                };
+                let inplace_input_view_matrix =
+                    DeviceMatrixChunk::new(&inplace_input_view[0..memory_size], stride, OFFSET, n);
+                let mut inplace_output_view_matrix =
+                    DeviceMatrixChunkMut::new(&mut inplace_output_view[0..memory_size], stride, OFFSET, n);
+                match kernel {
+                    0 => main_to_coset(
+                        &inplace_input_view_matrix,
+                        &mut inplace_output_view_matrix,
+                        log_n,
+                        &stream,
+                    )
+                    .unwrap(),
+                    1 => main_to_coset_tile_8(
+                        &inplace_input_view_matrix,
+                        &mut inplace_output_view_matrix,
+                        log_n,
+                        &stream,
+                    )
+                    .unwrap(),
+                    2 => main_to_coset_coalesced(
+                        &inplace_input_view_matrix,
+                        &mut inplace_output_view_matrix,
+                        log_n,
+                        &stream,
+                    )
+                    .unwrap(),
+                    3 => main_to_coset_register_pipeline(
+                        &inplace_input_view_matrix,
+                        &mut inplace_output_view_matrix,
+                        log_n,
+                        &stream,
+                    )
+                    .unwrap(),
+                    4 => main_to_coset_pipeline_tile_8(
+                        &inplace_input_view_matrix,
+                        &mut inplace_output_view_matrix,
+                        log_n,
+                        &stream,
+                    )
+                    .unwrap(),
+                    5 => main_to_coset_pc(
+                        &inplace_input_view_matrix,
+                        &mut inplace_output_view_matrix,
+                        log_n,
+                        &stream,
+                    )
+                    .unwrap(),
+                    6 => main_to_monomials_3_pass(
+                        &inplace_input_view_matrix,
+                        &mut inplace_output_view_matrix,
+                        log_n,
+                        &stream,
+                    )
+                    .unwrap(),
+                    _ => {},
+                };
+                memory_copy_async(
+                    &mut inplace_host[0..memory_size],
+                    inplace_output_view,
+                    &stream,
+                )
+                .unwrap();
+            }
+        }
 
         stream.synchronize().unwrap();
 
         for col in 0..num_bf_cols {
             let start = (col * stride + OFFSET) as usize;
             let range = start..start + n;
-            // bitreverse_enumeration_inplace(&mut outputs_host[range.clone()]);
-            // bitreverse_enumeration_inplace(&mut inplace_host[range.clone()]);
+            // match in_or_out_of_place {
+            //     InOrOutOfPlace::Out => bitreverse_enumeration_inplace(&mut outputs_host[range.clone()]),
+            //     InOrOutOfPlace::In => bitreverse_enumeration_inplace(&mut inplace_host[range.clone()]),
+            // }
         }
 
         // Check forward variants against CPU forward results
@@ -235,23 +247,31 @@ fn run_main_to_coset(
             let mut cpu_refs: Vec<BF> = (&inputs_host[xs_range.clone()]).to_vec();
             let mut cpu_dif_refs: Vec<BF> = (&inputs_host[xs_range.clone()]).to_vec();
             ifft_natural_to_natural::<BF, BF, BF>(&mut cpu_refs, BF::ONE, twiddles);
-            for k in 0..n {
-                assert_eq!(
-                    gpu_results_out_of_place[k],
-                    cpu_refs[k],
-                    "out of place 2^{} ntt {} k {}",
-                    log_n,
-                    ntt,
-                    k,
-                );
-                assert_eq!(
-                    gpu_results_in_place[k],
-                    cpu_refs[k],
-                    "in place 2^{} ntt {} k {}",
-                    log_n,
-                    ntt,
-                    k,
-                );
+            match in_or_out_of_place {
+                InOrOutOfPlace::Out => {
+                    for k in 0..n {
+                        assert_eq!(
+                            gpu_results_out_of_place[k],
+                            cpu_refs[k],
+                            "out of place 2^{} ntt {} k {}",
+                            log_n,
+                            ntt,
+                            k,
+                        );
+                    }
+                }
+                InOrOutOfPlace::In => {
+                    for k in 0..n {
+                        assert_eq!(
+                            gpu_results_in_place[k],
+                            cpu_refs[k],
+                            "in place 2^{} ntt {} k {}",
+                            log_n,
+                            ntt,
+                            k,
+                        );
+                    }
+                }
             }
         }
     }
@@ -260,42 +280,84 @@ fn run_main_to_coset(
 
 #[test]
 #[serial]
-fn test_main_to_coset_tile_16() {
-    run_main_to_coset(24..25, 8, 0);
+fn test_main_to_coset_tile_16_out_of_place() {
+    run_main_to_coset(24..25, 8, 0, InOrOutOfPlace::Out);
 }
 
 #[test]
 #[serial]
-fn test_main_to_coset_tile_8() {
-    run_main_to_coset(24..25, 1, 1);
+fn test_main_to_coset_tile_16_in_place() {
+    run_main_to_coset(24..25, 8, 0, InOrOutOfPlace::In);
 }
 
 #[test]
 #[serial]
-fn test_main_to_coset_coalesced() {
-    run_main_to_coset(24..25, 1, 2);
+fn test_main_to_coset_tile_8_out_of_place() {
+    run_main_to_coset(24..25, 1, 1, InOrOutOfPlace::Out);
 }
 
 #[test]
 #[serial]
-fn test_main_to_coset_register_pipeline() {
-    run_main_to_coset(23..24, 1, 3);
+fn test_main_to_coset_tile_8_in_place() {
+    run_main_to_coset(24..25, 1, 1, InOrOutOfPlace::In);
 }
 
 #[test]
 #[serial]
-fn test_main_to_coset_pipeline_tile_8() {
-    run_main_to_coset(24..25, 1, 4);
+fn test_main_to_coset_coalesced_out_of_place() {
+    run_main_to_coset(24..25, 1, 2, InOrOutOfPlace::Out);
 }
 
 #[test]
 #[serial]
-fn test_main_to_coset_pc() {
-    run_main_to_coset(24..25, 8, 5);
+fn test_main_to_coset_coalesced_in_place() {
+    run_main_to_coset(24..25, 1, 2, InOrOutOfPlace::In);
 }
 
 #[test]
 #[serial]
-fn test_main_to_monomials_3_pass() {
-    run_main_to_coset(24..25, 1, 6);
+fn test_main_to_coset_register_pipeline_out_of_place() {
+    run_main_to_coset(24..25, 1, 3, InOrOutOfPlace::Out);
+}
+
+#[test]
+#[serial]
+fn test_main_to_coset_register_pipeline_in_place() {
+    run_main_to_coset(24..25, 1, 3, InOrOutOfPlace::In);
+}
+
+#[test]
+#[serial]
+fn test_main_to_coset_pipeline_tile_8_out_of_place() {
+    run_main_to_coset(24..25, 1, 4, InOrOutOfPlace::Out);
+}
+
+#[test]
+#[serial]
+fn test_main_to_coset_pipeline_tile_8_in_place() {
+    run_main_to_coset(24..25, 1, 4, InOrOutOfPlace::In);
+}
+
+#[test]
+#[serial]
+fn test_main_to_coset_pc_out_of_place() {
+    run_main_to_coset(24..25, 8, 5, InOrOutOfPlace::Out);
+}
+
+#[test]
+#[serial]
+fn test_main_to_coset_pc_in_place() {
+    run_main_to_coset(24..25, 8, 5, InOrOutOfPlace::In);
+}
+
+#[test]
+#[serial]
+fn test_main_to_monomials_3_pass_out_of_place() {
+    run_main_to_coset(24..25, 1, 6, InOrOutOfPlace::Out);
+}
+
+#[test]
+#[serial]
+fn test_main_to_monomials_3_pass_in_place() {
+    run_main_to_coset(24..25, 1, 6, InOrOutOfPlace::In);
 }
