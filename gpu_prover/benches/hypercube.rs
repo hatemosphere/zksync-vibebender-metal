@@ -3,7 +3,7 @@
 
 use std::time::Duration;
 
-use criterion::{criterion_group, criterion_main, BenchmarkId, Bencher, Criterion, Throughput};
+use criterion::{criterion_group, criterion_main, Bencher, BenchmarkId, Criterion, Throughput};
 use era_criterion_cuda::CudaMeasurement;
 use era_cudart::memory::{memory_copy_async, DeviceAllocation};
 use era_cudart::result::CudaResult;
@@ -14,6 +14,8 @@ use gpu_prover::{
     hypercube_evals_into_coeffs_bitrev_bf, hypercube_evals_into_coeffs_bitrev_bf_in_place,
 };
 
+const LOG_ROWS: u32 = 24;
+
 struct HypercubeBitrevBenchCase {
     rows: usize,
     d_src: DeviceAllocation<BF>,
@@ -21,25 +23,18 @@ struct HypercubeBitrevBenchCase {
 }
 
 impl HypercubeBitrevBenchCase {
-    fn new(log_rows: u32, stream: &CudaStream) -> CudaResult<Self> {
-        assert!((20..=24).contains(&log_rows));
+    fn new(stream: &CudaStream) -> CudaResult<Self> {
+        let rows = 1usize << LOG_ROWS;
 
-        let rows = 1usize << log_rows;
-        let len = rows;
-
-        let mut d_src = DeviceAllocation::alloc(len)?;
-        let d_dst = DeviceAllocation::alloc(len)?;
+        let mut d_src = DeviceAllocation::alloc(rows)?;
+        let d_dst = DeviceAllocation::alloc(rows)?;
 
         // Fill once to avoid benchmarking uninitialized memory reads.
-        let h_src = vec![BF::ZERO; len];
+        let h_src = vec![BF::ZERO; rows];
         memory_copy_async(&mut d_src, &h_src, stream)?;
         stream.synchronize()?;
 
-        Ok(Self {
-            rows,
-            d_src,
-            d_dst,
-        })
+        Ok(Self { rows, d_src, d_dst })
     }
 
     fn run_out_of_place(&mut self, stream: &CudaStream) -> CudaResult<()> {
@@ -56,8 +51,6 @@ impl HypercubeBitrevBenchCase {
     }
 }
 
-const LOG_ROWS_CASES: [u32; 5] = [20, 21, 22, 23, 24];
-
 fn benchmark_out_of_place(c: &mut Criterion<CudaMeasurement>) {
     let stream = CudaStream::default();
     let mut group = c.benchmark_group("hypercube_bitrev_bf_out_of_place");
@@ -65,20 +58,18 @@ fn benchmark_out_of_place(c: &mut Criterion<CudaMeasurement>) {
     group.warm_up_time(Duration::from_secs(1));
     group.measurement_time(Duration::from_secs(4));
 
-    for log_rows in LOG_ROWS_CASES {
-        let mut bench_case = HypercubeBitrevBenchCase::new(log_rows, &stream).unwrap();
-        group.throughput(Throughput::Bytes(bench_case.bytes_per_transform()));
-        group.bench_with_input(
-            BenchmarkId::new("transform", format!("log_rows={log_rows}")),
-            &log_rows,
-            |b: &mut Bencher<CudaMeasurement>, _| {
-                b.iter(|| {
-                    bench_case.run_out_of_place(&stream).unwrap();
-                    stream.synchronize().unwrap();
-                })
-            },
-        );
-    }
+    let mut bench_case = HypercubeBitrevBenchCase::new(&stream).unwrap();
+    group.throughput(Throughput::Bytes(bench_case.bytes_per_transform()));
+    group.bench_with_input(
+        BenchmarkId::new("transform", format!("log_rows={LOG_ROWS}")),
+        &LOG_ROWS,
+        |b: &mut Bencher<CudaMeasurement>, _| {
+            b.iter(|| {
+                bench_case.run_out_of_place(&stream).unwrap();
+                stream.synchronize().unwrap();
+            })
+        },
+    );
 
     group.finish();
 }
@@ -90,20 +81,18 @@ fn benchmark_in_place(c: &mut Criterion<CudaMeasurement>) {
     group.warm_up_time(Duration::from_secs(1));
     group.measurement_time(Duration::from_secs(4));
 
-    for log_rows in LOG_ROWS_CASES {
-        let mut bench_case = HypercubeBitrevBenchCase::new(log_rows, &stream).unwrap();
-        group.throughput(Throughput::Bytes(bench_case.bytes_per_transform()));
-        group.bench_with_input(
-            BenchmarkId::new("transform", format!("log_rows={log_rows}")),
-            &log_rows,
-            |b: &mut Bencher<CudaMeasurement>, _| {
-                b.iter(|| {
-                    bench_case.run_in_place(&stream).unwrap();
-                    stream.synchronize().unwrap();
-                })
-            },
-        );
-    }
+    let mut bench_case = HypercubeBitrevBenchCase::new(&stream).unwrap();
+    group.throughput(Throughput::Bytes(bench_case.bytes_per_transform()));
+    group.bench_with_input(
+        BenchmarkId::new("transform", format!("log_rows={LOG_ROWS}")),
+        &LOG_ROWS,
+        |b: &mut Bencher<CudaMeasurement>, _| {
+            b.iter(|| {
+                bench_case.run_in_place(&stream).unwrap();
+                stream.synchronize().unwrap();
+            })
+        },
+    );
 
     group.finish();
 }
