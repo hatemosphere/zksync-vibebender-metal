@@ -4,4 +4,4 @@ target_sources(gpu_prover_new_native PRIVATE
         complex.cuh
         simple.cu
 )
-add_subdirectory(cub)
+# add_subdirectory(cub)

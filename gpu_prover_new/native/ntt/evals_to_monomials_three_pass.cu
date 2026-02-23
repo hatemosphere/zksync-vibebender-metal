@@ -136,8 +136,12 @@ DEVICE_FORCEINLINE void main_to_monomials_final_up_to_8_stages(bf_matrix_getter<
       }
       if (STAGES == 7) {
         bf *vals_this_region = vals + 4 * i;
-        reg_exchg_cmem_twiddles_inv<2, 4, 2>(vals_this_region, exchg_region_offset); exchg_region_offset <<= 1;
-        reg_exchg_cmem_twiddles_inv<1, 2, 4>(vals_this_region, exchg_region_offset);
+        reg_exchg_cmem_twiddles_inv<2, 4, 1>(vals_this_region, exchg_region_offset); exchg_region_offset <<= 1;
+        reg_exchg_cmem_twiddles_inv<1, 2, 2>(vals_this_region, exchg_region_offset);
+      }
+      if (STAGES == 6) {
+        bf *vals_this_region = vals + 2 * i;
+        reg_exchg_cmem_twiddles_inv<1, 2, 1>(vals_this_region, exchg_region_offset);
       }
     }
   }
@@ -182,7 +186,7 @@ DEVICE_FORCEINLINE void main_to_monomials_final_up_to_8_stages(bf_matrix_getter<
   reg_exchg_cmem_smem_twiddles_inv<EightStages, 2, 4, 8, cmem_twiddles>(vals, thread_exchg_region_offset, smem_twiddles); thread_exchg_region_offset <<= 1;
   reg_exchg_cmem_smem_twiddles_inv<EightStages, 1, 2, 16, cmem_twiddles>(vals, thread_exchg_region_offset, smem_twiddles);
 
-//   // Simple option: uncoalesced, but vectorized and should fire off quickly.
+  // Simple option: uncoalesced, but vectorized and should fire off quickly.
 //   uint4 *gmem_monomials_out_ptr = reinterpret_cast<uint4 *>(gmem_out.ptr + VALS_PER_THREAD * lane_id);
 // #pragma unroll
 //   for (int i{0}; i < VALS_PER_THREAD; i += 4, gmem_monomials_out_ptr++)
