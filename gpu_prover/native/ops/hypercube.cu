@@ -63,6 +63,27 @@ DEVICE_FORCEINLINE unsigned initial14_smem_idx(const unsigned k, const unsigned 
   return (k << 7) | (p_lo2 << 5) | (p_hi5 ^ (k >> 2));
 }
 
+DEVICE_FORCEINLINE unsigned initial13_smem_idx(const unsigned k, const unsigned p) {
+  // Initial13 shared layout helper for a 64 x 128 scalar tile.
+  //
+  // Layout decomposition:
+  // - p = (p_hi5 << 2) | p_lo2
+  // - p_hi5 in [0,31], p_lo2 in [0,3]
+  //
+  // Bank swizzle:
+  // - base term: p_hi5 ^ (k >> 2)
+  // - extra term: ((p >> 5) << 4) toggles bank-half across 32-step p stripes
+  //
+  // Why this layout:
+  // - Row pass keeps lane32 access as a bijection over banks.
+  // - k-pass uses two 16-lane subgroups per warp over p values separated by 32;
+  //   the extra bank-half toggle prevents systematic cross-subgroup collisions.
+  const unsigned p_lo2 = p & 3u;
+  const unsigned p_hi5 = p >> 2;
+  const unsigned bank_swizzle = (p >> 5) << 4;
+  return (k << 7) | (p_lo2 << 5) | ((p_hi5 ^ (k >> 2) ^ bank_swizzle) & 31u);
+}
+
 DEVICE_FORCEINLINE unsigned noninitial6_smem_idx(const unsigned k, const unsigned p) {
   // Noninitial6 shared layout helper.
   //
@@ -554,6 +575,26 @@ DEVICE_FORCEINLINE unsigned noninitial10_half_p8_smem_idx(const unsigned k, cons
   return (kh << 8) | (p_local << 5) | (kl ^ kh);
 }
 
+DEVICE_FORCEINLINE unsigned noninitial8_half_p8_smem_idx(const unsigned k, const unsigned p_local) {
+  // Noninitial8 shared layout helper for one 128 x 8 half-tile.
+  //
+  // k decomposition:
+  // - k = (kh << 5) | kl
+  // - kh in [0,3], kl in [0,31]
+  //
+  // Bank swizzle:
+  // - base term: kl ^ kh
+  // - extra term: ((p_local >> 2) << 4) separates p groups {0..3} and {4..7}
+  //
+  // Why this layout:
+  // - Keeps warp32 compute passes bank-friendly.
+  // - Avoids paired-thread conflicts during load/store of p_local0 in {0,4}.
+  const unsigned kh = k >> 5;
+  const unsigned kl = k & 31u;
+  const unsigned bank_swizzle = (p_local >> 2) << 4;
+  return (kh << 8) | (p_local << 5) | ((kl ^ kh ^ bank_swizzle) & 31u);
+}
+
 DEVICE_FORCEINLINE unsigned noninitial11_full_p8_smem_idx(const unsigned k, const unsigned p_local) {
   // Noninitial11 shared layout helper for one full 2048 x 8 tile.
   //
@@ -838,7 +879,7 @@ DEVICE_FORCEINLINE void hypercube_evals_into_coeffs_bitrev_initial13(const bf *_
   //
   // - Logical tile is [k=64][p=128].
   // - First 7 rounds are computed warp-local across p (lane32 domain).
-  // - Results are remapped in shared with initial14_smem_idx swizzle.
+  // - Results are remapped in shared with initial13_smem_idx swizzle.
   // - Last 6 rounds are computed subgroup-local across k (lane16 domain).
   //
   // Global IO remains fully vectorized/coalesced (uint4 loads/stores).
@@ -882,10 +923,10 @@ DEVICE_FORCEINLINE void hypercube_evals_into_coeffs_bitrev_initial13(const bf *_
     };
     apply_7_rounds_pair_major_warp32_quad(vals, lane32);
 
-    smem[initial14_smem_idx(k, p_base + 0u)] = vals[0];
-    smem[initial14_smem_idx(k, p_base + 1u)] = vals[1];
-    smem[initial14_smem_idx(k, p_base + 2u)] = vals[2];
-    smem[initial14_smem_idx(k, p_base + 3u)] = vals[3];
+    smem[initial13_smem_idx(k, p_base + 0u)] = vals[0];
+    smem[initial13_smem_idx(k, p_base + 1u)] = vals[1];
+    smem[initial13_smem_idx(k, p_base + 2u)] = vals[2];
+    smem[initial13_smem_idx(k, p_base + 3u)] = vals[3];
   }
 
   __syncthreads();
@@ -904,30 +945,30 @@ DEVICE_FORCEINLINE void hypercube_evals_into_coeffs_bitrev_initial13(const bf *_
 
     bf regs[2][4] = {
         {
-            smem[initial14_smem_idx(k_local_base + 0u, p0)],
-            smem[initial14_smem_idx(k_local_base + 1u, p0)],
-            smem[initial14_smem_idx(k_local_base + 2u, p0)],
-            smem[initial14_smem_idx(k_local_base + 3u, p0)],
+            smem[initial13_smem_idx(k_local_base + 0u, p0)],
+            smem[initial13_smem_idx(k_local_base + 1u, p0)],
+            smem[initial13_smem_idx(k_local_base + 2u, p0)],
+            smem[initial13_smem_idx(k_local_base + 3u, p0)],
         },
         {
-            smem[initial14_smem_idx(k_local_base + 0u, p1)],
-            smem[initial14_smem_idx(k_local_base + 1u, p1)],
-            smem[initial14_smem_idx(k_local_base + 2u, p1)],
-            smem[initial14_smem_idx(k_local_base + 3u, p1)],
+            smem[initial13_smem_idx(k_local_base + 0u, p1)],
+            smem[initial13_smem_idx(k_local_base + 1u, p1)],
+            smem[initial13_smem_idx(k_local_base + 2u, p1)],
+            smem[initial13_smem_idx(k_local_base + 3u, p1)],
         },
     };
 
     apply_6_rounds_pair_major_2groups(regs, lane16);
 
-    smem[initial14_smem_idx(k_local_base + 0u, p0)] = regs[0][0];
-    smem[initial14_smem_idx(k_local_base + 1u, p0)] = regs[0][1];
-    smem[initial14_smem_idx(k_local_base + 2u, p0)] = regs[0][2];
-    smem[initial14_smem_idx(k_local_base + 3u, p0)] = regs[0][3];
+    smem[initial13_smem_idx(k_local_base + 0u, p0)] = regs[0][0];
+    smem[initial13_smem_idx(k_local_base + 1u, p0)] = regs[0][1];
+    smem[initial13_smem_idx(k_local_base + 2u, p0)] = regs[0][2];
+    smem[initial13_smem_idx(k_local_base + 3u, p0)] = regs[0][3];
 
-    smem[initial14_smem_idx(k_local_base + 0u, p1)] = regs[1][0];
-    smem[initial14_smem_idx(k_local_base + 1u, p1)] = regs[1][1];
-    smem[initial14_smem_idx(k_local_base + 2u, p1)] = regs[1][2];
-    smem[initial14_smem_idx(k_local_base + 3u, p1)] = regs[1][3];
+    smem[initial13_smem_idx(k_local_base + 0u, p1)] = regs[1][0];
+    smem[initial13_smem_idx(k_local_base + 1u, p1)] = regs[1][1];
+    smem[initial13_smem_idx(k_local_base + 2u, p1)] = regs[1][2];
+    smem[initial13_smem_idx(k_local_base + 3u, p1)] = regs[1][3];
   }
 
   __syncthreads();
@@ -939,10 +980,10 @@ DEVICE_FORCEINLINE void hypercube_evals_into_coeffs_bitrev_initial13(const bf *_
     const unsigned p_base = lane32 << 2;
     const unsigned row_base = block_base + (k * P) + p_base;
     const uint4 packed = uint4{
-        smem[initial14_smem_idx(k, p_base + 0u)].limb,
-        smem[initial14_smem_idx(k, p_base + 1u)].limb,
-        smem[initial14_smem_idx(k, p_base + 2u)].limb,
-        smem[initial14_smem_idx(k, p_base + 3u)].limb,
+        smem[initial13_smem_idx(k, p_base + 0u)].limb,
+        smem[initial13_smem_idx(k, p_base + 1u)].limb,
+        smem[initial13_smem_idx(k, p_base + 2u)].limb,
+        smem[initial13_smem_idx(k, p_base + 3u)].limb,
     };
     store_u4_mod<STORE_MODIFIER>(dst, row_base, packed);
   }
@@ -1553,18 +1594,18 @@ DEVICE_FORCEINLINE void hypercube_evals_into_coeffs_bitrev_noninitial8_half_p8_c
   const unsigned row_base = block_base + (k << start_stage) + low_base + p_global0;
   const uint4 packed = load_u4_mod<LOAD_MODIFIER>(src, row_base);
 
-  smem[noninitial10_half_p8_smem_idx(k_local, p_local0 + 0u)] = bf(packed.x);
-  smem[noninitial10_half_p8_smem_idx(k_local, p_local0 + 1u)] = bf(packed.y);
-  smem[noninitial10_half_p8_smem_idx(k_local, p_local0 + 2u)] = bf(packed.z);
-  smem[noninitial10_half_p8_smem_idx(k_local, p_local0 + 3u)] = bf(packed.w);
+  smem[noninitial8_half_p8_smem_idx(k_local, p_local0 + 0u)] = bf(packed.x);
+  smem[noninitial8_half_p8_smem_idx(k_local, p_local0 + 1u)] = bf(packed.y);
+  smem[noninitial8_half_p8_smem_idx(k_local, p_local0 + 2u)] = bf(packed.z);
+  smem[noninitial8_half_p8_smem_idx(k_local, p_local0 + 3u)] = bf(packed.w);
 
   __syncthreads();
 
   const unsigned p_local = warp; // [0,7]
-  const unsigned idx0 = noninitial10_half_p8_smem_idx(lane + 0u, p_local);
-  const unsigned idx1 = noninitial10_half_p8_smem_idx(lane + 32u, p_local);
-  const unsigned idx2 = noninitial10_half_p8_smem_idx(lane + 64u, p_local);
-  const unsigned idx3 = noninitial10_half_p8_smem_idx(lane + 96u, p_local);
+  const unsigned idx0 = noninitial8_half_p8_smem_idx(lane + 0u, p_local);
+  const unsigned idx1 = noninitial8_half_p8_smem_idx(lane + 32u, p_local);
+  const unsigned idx2 = noninitial8_half_p8_smem_idx(lane + 64u, p_local);
+  const unsigned idx3 = noninitial8_half_p8_smem_idx(lane + 96u, p_local);
 
   bf vals[4] = {
       smem[idx0],
@@ -1587,9 +1628,8 @@ DEVICE_FORCEINLINE void hypercube_evals_into_coeffs_bitrev_noninitial8_impl(
     const bf *__restrict__ src,
     bf *__restrict__ dst,
     const unsigned start_stage) {
-  // Noninitial8 split-half x2 path for start_stage=13 (2-launch log21 [13,8]):
-  // - split logical [256 x 32] tile into two CTAs over p-dimension halves
-  // - within each CTA, process two p-groups of 8
+  // Noninitial8 split-half x4 path for start_stage=13 (2-launch log21 [13,8]):
+  // - split logical [256 x 32] tile into four CTAs over p groups (width 8)
   // - low half (k=0..127): run 7 rounds, cache outputs in registers
   // - high half (k=128..255): run 7 rounds in shared
   // - final merge round: high -= low
@@ -1597,7 +1637,6 @@ DEVICE_FORCEINLINE void hypercube_evals_into_coeffs_bitrev_noninitial8_impl(
   // Shared footprint: one 128 x 8 half-tile (4KB).
   constexpr unsigned HALF_K = 128;
   constexpr unsigned P_GROUP = 8;
-  constexpr unsigned P_GROUPS_PER_BLOCK = 2;
   constexpr unsigned LOW_TILE_LOG = 5u;
   __shared__ bf smem[HALF_K * P_GROUP]; // 128 * 8 = 1024 BF values (4KB)
 
@@ -1608,63 +1647,53 @@ DEVICE_FORCEINLINE void hypercube_evals_into_coeffs_bitrev_noninitial8_impl(
   const unsigned tid = threadIdx.x;
   const unsigned stride = 1u << start_stage;
   const unsigned low_tiles = stride >> LOW_TILE_LOG;
-  const unsigned tile_x2 = blockIdx.x;
-  const unsigned tile = tile_x2 >> 1;
-  const unsigned p_half = tile_x2 & 1u;
+  const unsigned tile_x4 = blockIdx.x;
+  const unsigned tile = tile_x4 >> 2;
+  const unsigned p_group = tile_x4 & 3u;
   const unsigned high = tile / low_tiles;
   const unsigned low_tile_id = tile - high * low_tiles;
   const unsigned low_base = low_tile_id << LOW_TILE_LOG;
   const unsigned block_base = high << (start_stage + 8u);
   const unsigned half_stride = HALF_K << start_stage;
-  const unsigned p_group_start = p_half * P_GROUPS_PER_BLOCK;
+  const unsigned p_group_base = p_group * P_GROUP;
 
   const unsigned k_local = tid >> 1;  // [0,127]
   const unsigned p4 = tid & 1u;       // [0,1]
   const unsigned p_local0 = p4 << 2;  // {0,4}
   uint4 low_cache;
 
-#pragma unroll
-  for (unsigned group_local = 0; group_local < P_GROUPS_PER_BLOCK; group_local++) {
-    const unsigned group = p_group_start + group_local;
-    const unsigned p_group_base = group * P_GROUP;
+  hypercube_evals_into_coeffs_bitrev_noninitial8_half_p8_compute<LOAD_MODIFIER>(
+      src, start_stage, block_base, low_base, 0u, p_group_base, smem);
 
-    hypercube_evals_into_coeffs_bitrev_noninitial8_half_p8_compute<LOAD_MODIFIER>(
-        src, start_stage, block_base, low_base, 0u, p_group_base, smem);
+  low_cache = uint4{
+      smem[noninitial8_half_p8_smem_idx(k_local, p_local0 + 0u)].limb,
+      smem[noninitial8_half_p8_smem_idx(k_local, p_local0 + 1u)].limb,
+      smem[noninitial8_half_p8_smem_idx(k_local, p_local0 + 2u)].limb,
+      smem[noninitial8_half_p8_smem_idx(k_local, p_local0 + 3u)].limb,
+  };
 
-    low_cache = uint4{
-        smem[noninitial10_half_p8_smem_idx(k_local, p_local0 + 0u)].limb,
-        smem[noninitial10_half_p8_smem_idx(k_local, p_local0 + 1u)].limb,
-        smem[noninitial10_half_p8_smem_idx(k_local, p_local0 + 2u)].limb,
-        smem[noninitial10_half_p8_smem_idx(k_local, p_local0 + 3u)].limb,
-    };
+  __syncthreads();
 
-    __syncthreads();
+  hypercube_evals_into_coeffs_bitrev_noninitial8_half_p8_compute<LOAD_MODIFIER>(
+      src, start_stage, block_base, low_base, HALF_K, p_group_base, smem);
 
-    hypercube_evals_into_coeffs_bitrev_noninitial8_half_p8_compute<LOAD_MODIFIER>(
-        src, start_stage, block_base, low_base, HALF_K, p_group_base, smem);
-
-    const unsigned p_global0 = p_group_base + p_local0;
-    const unsigned low_row_base = block_base + (k_local << start_stage) + low_base + p_global0;
-    const unsigned high_row_base = low_row_base + half_stride;
-    const uint4 high_packed = uint4{
-        smem[noninitial10_half_p8_smem_idx(k_local, p_local0 + 0u)].limb,
-        smem[noninitial10_half_p8_smem_idx(k_local, p_local0 + 1u)].limb,
-        smem[noninitial10_half_p8_smem_idx(k_local, p_local0 + 2u)].limb,
-        smem[noninitial10_half_p8_smem_idx(k_local, p_local0 + 3u)].limb,
-    };
-    const uint4 merged = uint4{
-        bf::sub(bf(high_packed.x), bf(low_cache.x)).limb,
-        bf::sub(bf(high_packed.y), bf(low_cache.y)).limb,
-        bf::sub(bf(high_packed.z), bf(low_cache.z)).limb,
-        bf::sub(bf(high_packed.w), bf(low_cache.w)).limb,
-    };
-    store_u4_mod<STORE_MODIFIER>(dst, low_row_base, low_cache);
-    store_u4_mod<STORE_MODIFIER>(dst, high_row_base, merged);
-
-    if (group_local + 1u < P_GROUPS_PER_BLOCK) {
-      __syncthreads();
-    }
-  }
+  const unsigned p_global0 = p_group_base + p_local0;
+  const unsigned low_row_base = block_base + (k_local << start_stage) + low_base + p_global0;
+  const unsigned high_row_base = low_row_base + half_stride;
+  const uint4 high_packed = uint4{
+      smem[noninitial8_half_p8_smem_idx(k_local, p_local0 + 0u)].limb,
+      smem[noninitial8_half_p8_smem_idx(k_local, p_local0 + 1u)].limb,
+      smem[noninitial8_half_p8_smem_idx(k_local, p_local0 + 2u)].limb,
+      smem[noninitial8_half_p8_smem_idx(k_local, p_local0 + 3u)].limb,
+  };
+  const uint4 merged = uint4{
+      bf::sub(bf(high_packed.x), bf(low_cache.x)).limb,
+      bf::sub(bf(high_packed.y), bf(low_cache.y)).limb,
+      bf::sub(bf(high_packed.z), bf(low_cache.z)).limb,
+      bf::sub(bf(high_packed.w), bf(low_cache.w)).limb,
+  };
+  store_u4_mod<STORE_MODIFIER>(dst, low_row_base, low_cache);
+  store_u4_mod<STORE_MODIFIER>(dst, high_row_base, merged);
 }
 
 template <ld_modifier LOAD_MODIFIER, st_modifier STORE_MODIFIER>
@@ -2868,7 +2897,7 @@ EXTERN __launch_bounds__(256, 6) __global__ void ab_h2m_bitrev_bf_noninitial8_st
     const unsigned start_stage) {
   // Final-stage noninitial8 (out-of-place) for 2-launch log21 [13,8].
   (void)start_stage;
-  hypercube_evals_into_coeffs_bitrev_noninitial8<ld_modifier::cs, st_modifier::cs>(src, dst, 13u);
+  hypercube_evals_into_coeffs_bitrev_noninitial8<ld_modifier::ca, st_modifier::cs>(src, dst, 13u);
 }
 
 EXTERN __launch_bounds__(256, 6) __global__ void ab_h2m_bitrev_bf_noninitial8_stage3_in_start13_kernel(
