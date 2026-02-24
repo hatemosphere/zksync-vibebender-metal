@@ -122,9 +122,6 @@ EXTERN __launch_bounds__(512, 1) __global__
   const int thread_il_smem_start = lane_in_tile + tile_id * TILE_SIZE;
   const int thread_ct_smem_start = lane_in_tile + tile_id * TILE_SIZE * 2 * THREAD_TILES_PER_BLOCK;
 
-  for (int i{0}, addr{thread_il_gmem_start}; i < 32; i++, addr += IL_GMEM_STRIDE)
-    vals[i] = gmem_in.get_at_row(addr);
-
   const bf twiddle = ab_inv_cmem_twiddles_coarse[1];
   prefetch_pipeline_group<0, IL_GMEM_STRIDE, PL_GROUP_SIZE, PL_STRIDE>(vals, gmem_in, thread_il_gmem_start);
   exchg_pipeline_group<0>(vals, twiddle);
