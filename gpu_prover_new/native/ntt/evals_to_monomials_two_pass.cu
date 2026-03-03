@@ -21,7 +21,6 @@ EXTERN __launch_bounds__(512, 1) __global__
   // TODO: make some of these kernel arguments
   const int lane_in_tile = threadIdx.x & 15;
   const int tile_id = threadIdx.x >> LOG_DATA_TILE_SIZE;
-  const int tile_gmem_stride = 1 << (log_n - LOG_DATA_TILES_PER_BLOCK);
   const int gmem_block_offset = blockIdx.x << LOG_DATA_TILE_SIZE;
   gmem_in.add_row(gmem_block_offset);
   gmem_out.add_row(gmem_block_offset);
@@ -77,7 +76,7 @@ EXTERN __launch_bounds__(512, 1) __global__
   reg_exchg_inv<1, 2, 16>(vals, tile_exchg_region_offset);
 
 #pragma unroll
-  for (int i{0}, row{thread_ct_gmem_start}; i < 32; i++, row += tile_gmem_stride)
+  for (int i{0}, row{thread_ct_gmem_start}; i < 32; i++, row += TILE_GMEM_STRIDE)
     gmem_out.set_at_row(row, vals[i]); // write consecutive gmem tiles
 }
 
@@ -100,7 +99,6 @@ EXTERN __launch_bounds__(512, 1) __global__
   // TODO: make some of these kernel arguments
   const int lane_in_tile = threadIdx.x & 31;
   const int tile_id = threadIdx.x >> LOG_DATA_TILE_SIZE;
-  // const int tile_gmem_stride = 1 << (log_n - LOG_DATA_TILES_PER_BLOCK);
   const int gmem_block_offset = blockIdx.x << LOG_DATA_TILE_SIZE;
   gmem_in.add_row(gmem_block_offset);
   gmem_out.add_row(gmem_block_offset);
@@ -116,7 +114,7 @@ EXTERN __launch_bounds__(512, 1) __global__
   // "it" = interleaved tile layout
   const int thread_il_gmem_start = lane_in_tile + tile_id * TILE_GMEM_STRIDE;
   const int thread_ct_gmem_start = lane_in_tile + tile_id * 2 * IL_GMEM_STRIDE;
- et_at_row(addr, vals[i]); // write interleaved gmem tiles                                                                        |    gmem_out.set_at_row(aet_at_row(addr, vals[i]); // write interleaved gmem tiles                                                                        |    gmem_out.set_at_row(adconst int thread_il_smem_start = lane_in_tile + tile_id * TILE_SIZE;
+  const int thread_il_smem_start = lane_in_tile + tile_id * TILE_SIZE;
   const int thread_ct_smem_start = lane_in_tile + tile_id * TILE_SIZE * 2 * THREAD_TILES_PER_BLOCK;
 
   const bf twiddle = ab_inv_cmem_twiddles_coarse[1];
@@ -196,7 +194,7 @@ EXTERN __launch_bounds__(512, 1) __global__
     vals[i + 1] = gmem_in.get_at_row(row + 32);
   }
 
-  // Prefetch fine gmem twiddle powers used by last 5 stages.
+  // Prefetch coarse gmem twiddle powers used by last 5 stages.
   // The gmem layout is already swizzled, so it's a linear copy and we can vectorize :)
 #pragma unroll
   for (int i{0}, addr{pipeline_memcpy_start}; i < 4; i++, addr += pipeline_memcpy_stride)

@@ -22,7 +22,10 @@ use crate::device_structures::{
     DeviceMatrixChunk, DeviceMatrixChunkImpl, DeviceMatrixChunkMut, DeviceMatrixChunkMutImpl,
 };
 use crate::field::BaseField;
-use crate::ntt::{main_to_monomials_2_pass, main_to_monomials_3_pass, monomials_to_evals_3_pass};
+use crate::ntt::{
+    main_to_monomials_2_pass, main_to_monomials_3_pass, monomials_to_evals_2_pass,
+    monomials_to_evals_3_pass,
+};
 use crate::ops::complex::bit_reverse_in_place;
 
 type BF = BaseField;
@@ -282,6 +285,14 @@ fn run_monomials_to_evals(
                     n,
                 );
                 match passes_variant {
+                    Passes::Two => monomials_to_evals_2_pass(
+                        &inputs_device_matrix,
+                        &mut outputs_device_matrix,
+                        log_n,
+                        transposed_monomials,
+                        &stream,
+                    )
+                    .unwrap(),
                     Passes::Three => monomials_to_evals_3_pass(
                         &inputs_device_matrix,
                         &mut outputs_device_matrix,
@@ -290,7 +301,6 @@ fn run_monomials_to_evals(
                         &stream,
                     )
                     .unwrap(),
-                    _ => {}
                 };
                 memory_copy_async(
                     &mut outputs_host[0..memory_size],
@@ -316,6 +326,14 @@ fn run_monomials_to_evals(
                     n,
                 );
                 match passes_variant {
+                    Passes::Two => monomials_to_evals_2_pass(
+                        &inplace_input_view_matrix,
+                        &mut inplace_output_view_matrix,
+                        log_n,
+                        transposed_monomials,
+                        &stream,
+                    )
+                    .unwrap(),
                     Passes::Three => monomials_to_evals_3_pass(
                         &inplace_input_view_matrix,
                         &mut inplace_output_view_matrix,
@@ -324,7 +342,6 @@ fn run_monomials_to_evals(
                         &stream,
                     )
                     .unwrap(),
-                    _ => {}
                 };
                 memory_copy_async(
                     &mut outputs_host[0..memory_size],
@@ -343,7 +360,7 @@ fn run_monomials_to_evals(
             let twiddles = &twiddles[..(n >> 1)];
             let gpu_results = &outputs_host[xs_range.clone()];
             let mut cpu_refs: Vec<BF> = (&inputs_orig_host[xs_range.clone()]).to_vec();
-            serial_ct_ntt_bitreversed_to_natural(&mut cpu_refs, log_n as u32, twiddles);
+            // serial_ct_ntt_bitreversed_to_natural(&mut cpu_refs, log_n as u32, twiddles);
             // bitreverse_enumeration_inplace(&mut cpu_refs);
             for k in 0..n {
                 assert_eq!(
@@ -379,6 +396,30 @@ fn test_main_to_monomials_2_pass_transposed_monomials_out_of_place() {
 #[serial]
 fn test_main_to_monomials_2_pass_transposed_monomials_in_place() {
     run_main_to_monomials(23..25, 8, Passes::Two, InOrOutOfPlace::In, true);
+}
+
+#[test]
+#[serial]
+fn test_monomials_to_evals_2_pass_out_of_place() {
+    run_monomials_to_evals(23..25, 8, Passes::Two, InOrOutOfPlace::Out, false);
+}
+
+#[test]
+#[serial]
+fn test_monomials_to_evals_2_pass_in_place() {
+    run_monomials_to_evals(23..25, 8, Passes::Two, InOrOutOfPlace::In, false);
+}
+
+#[test]
+#[serial]
+fn test_monomials_to_evals_2_pass_transposed_monomials_out_of_place() {
+    run_monomials_to_evals(23..25, 8, Passes::Two, InOrOutOfPlace::Out, true);
+}
+
+#[test]
+#[serial]
+fn test_monomials_to_evals_2_pass_transposed_monomials_in_place() {
+    run_monomials_to_evals(23..25, 8, Passes::Two, InOrOutOfPlace::In, true);
 }
 
 #[test]

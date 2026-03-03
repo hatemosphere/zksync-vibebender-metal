@@ -14,7 +14,7 @@ add_library(gpu_prover_new_native STATIC
         ntt/evals_to_monomials_three_pass.cu
         ntt/evals_to_monomials_two_pass.cu
         ntt/monomials_to_evals_three_pass.cu
-        # ntt/monomials_to_evals_two_pass.cu
+        ntt/monomials_to_evals_two_pass.cu
         ntt/ntt.cuh
         ptx.cuh
 )

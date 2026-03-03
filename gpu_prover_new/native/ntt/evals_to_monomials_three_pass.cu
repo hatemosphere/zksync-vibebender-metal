@@ -110,7 +110,7 @@ DEVICE_FORCEINLINE void main_to_monomials_final_up_to_8_stages(bf_matrix_getter<
 
   bf vals[VALS_PER_THREAD];
 
-  // Cooperatively fetch fine gmem twiddle powers used by last 5 stages.
+  // Cooperatively fetch coarse gmem twiddle powers used by last 5 stages.
   // The gmem layout is already swizzled, so it's a linear copy and we can vectorize :)
   // The cooperative twiddle fetch is actually the only reason this kernel needs a __syncthreads().
   // Unlike the 2-pass kernel, there's no compute overlap here, but gmem->smem is preferable to gmem->register->smem.
