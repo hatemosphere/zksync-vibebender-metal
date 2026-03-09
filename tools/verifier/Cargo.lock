@@ -327,6 +327,7 @@ dependencies = [
  "cs",
  "field",
  "non_determinism_source",
+ "poseidon2",
  "serde",
  "serde-big-array",
  "transcript",
