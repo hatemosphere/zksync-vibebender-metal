@@ -615,6 +615,7 @@ where
                 &sumchecked_poly_monomial_form,
                 twiddles,
                 lde_factor,
+                Some(worker),
             );
             let next_folding_steps = *whir_steps_schedule.peek().unwrap();
             let next_oracle = commit_single_ext_poly::<F, E, T>(
@@ -931,6 +932,7 @@ where
                 &sumchecked_poly_monomial_form,
                 twiddles,
                 lde_factor,
+                Some(worker),
             );
             let next_folding_steps = *whir_steps_schedule.peek().unwrap();
             let next_oracle = commit_single_ext_poly::<F, E, T>(
