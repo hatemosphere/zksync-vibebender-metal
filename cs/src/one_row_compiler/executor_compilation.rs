@@ -3,6 +3,7 @@ use crate::one_row_compiler::compile_layout::*;
 use crate::one_row_compiler::delegation::*;
 
 impl<F: PrimeField> OneRowCompiler<F> {
+    #[allow(unreachable_code, unused_variables)]
     pub fn compile_executor_circuit(
         &self,
         circuit_output: CircuitOutput<F>,
@@ -382,7 +383,7 @@ impl<F: PrimeField> OneRowCompiler<F> {
         let mut compiled_quadratic_terms = vec![];
         let mut compiled_linear_terms = vec![];
 
-        // Now we will pause and place boolean variables, as those can have their contraints special-handled in quotient
+        // Now we will pause and place boolean variables, as those can have their constraints special-handled in quotient
 
         // normalize again just in case
         for (el, _) in constraints.iter_mut() {

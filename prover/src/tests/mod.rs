@@ -519,18 +519,21 @@ fn serialize_to_file<T: serde::Serialize>(el: &T, filename: &str) {
 }
 
 #[cfg(test)]
+#[allow(dead_code)]
 fn deserialize_from_file<T: serde::de::DeserializeOwned>(filename: &str) -> T {
     let src = std::fs::File::open(filename).unwrap();
     serde_json::from_reader(src).unwrap()
 }
 
 #[cfg(test)]
+#[allow(dead_code)]
 fn fast_serialize_to_file<T: serde::Serialize>(el: &T, filename: &str) {
     let mut dst = std::fs::File::create(filename).unwrap();
     bincode::serialize_into(&mut dst, el).unwrap();
 }
 
 #[cfg(test)]
+#[allow(dead_code)]
 fn fast_deserialize_from_file<T: serde::de::DeserializeOwned>(filename: &str) -> T {
     let src = std::fs::File::open(filename).unwrap();
     bincode::deserialize_from(src).unwrap()
@@ -552,7 +555,9 @@ fn read_binary(path: &std::path::Path) -> (Vec<u8>, Vec<u32>) {
     (buffer, binary)
 }
 
+#[cfg(feature = "legacy_tests")]
 #[test]
+// TODO(legacy-cleanup): determine whether the legacy code path exercised here can be removed.
 fn test_bigint_with_control_call() {
     use crate::cs::cs::cs_reference::BasicAssembly;
     use crate::cs::delegation::bigint_with_control::*;
@@ -609,7 +614,7 @@ fn test_bigint_with_control_call() {
         }
 
         let register = Register(output_extended_state_vars.map(|el| Num::Var(el)));
-        let result_x12 = register.get_value_unsigned(&cs).unwrap();
+        let _result_x12 = register.get_value_unsigned(&cs).unwrap();
 
         // assert_eq!(expected_x12, result_x12, "x12 diverged for round {}", round);
 

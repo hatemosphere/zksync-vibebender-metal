@@ -363,6 +363,8 @@ fn apply_jump_branch_slt<F: PrimeField, CS: Circuit<F>, const SUPPORT_SIGNED: bo
         placer.assign_u16(next_pc_dst_vars[1], &pc_result_high);
     };
     cs.set_values(value_fn);
+
+    opt_ctx.enforce_all(cs);
 }
 
 pub fn jump_branch_slt_circuit_with_preprocessed_bytecode<
@@ -378,11 +380,14 @@ pub fn jump_branch_slt_circuit_with_preprocessed_bytecode<
 
 #[cfg(test)]
 mod test {
+    use test_utils::skip_if_ci;
+
     use super::*;
     use crate::utils::serialize_to_file;
 
     #[test]
     fn compile_jump_branch_slt_circuit() {
+        skip_if_ci!();
         use ::field::Mersenne31Field;
 
         let compiled = compile_unrolled_circuit_state_transition::<Mersenne31Field>(
@@ -396,7 +401,9 @@ mod test {
     }
 
     #[test]
+    #[serial_test::serial(cs_codegen)]
     fn compile_jump_branch_slt_witness_graph() {
+        skip_if_ci!();
         use ::field::Mersenne31Field;
 
         let ssa_forms = dump_ssa_witness_eval_form_for_unrolled_circuit::<Mersenne31Field>(

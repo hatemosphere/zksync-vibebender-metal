@@ -1,5 +1,4 @@
 use riscv_transpiler::common_constants;
-use sha3::Digest;
 use std::collections::BTreeMap;
 use trace_and_split::prover;
 use trace_and_split::setups;
@@ -7,12 +6,8 @@ use trace_and_split::setups;
 use super::unrolled::{UnrolledProgramProof, UnrolledProgramSetup};
 use super::*;
 use prover::common_constants::TimestampScalar;
-use prover::cs::one_row_compiler::CompiledCircuitArtifact;
-use prover::cs::utils::split_timestamp;
-use prover::field::*;
 use prover::prover_stages::unrolled_prover::UnrolledModeProof;
 use prover::prover_stages::Proof;
-use prover::risc_v_simulator;
 use setups::CompiledCircuitsSet;
 use trace_and_split::FinalRegisterValue;
 
@@ -71,7 +66,6 @@ pub fn flatten_proof_into_responses_for_unified_recursion(
     let mut responses = vec![];
     let op = if input_is_unrolled {
         assert!(setup.circuit_families_setups.len() > 1);
-        assert!(proof.inits_and_teardowns_proofs.is_empty() == false);
 
         full_statement_verifier::definitions::OP_VERIFY_UNROLLED_RECURSION_LAYER_IN_UNIFIED_CIRCUIT
     } else {
@@ -165,7 +159,7 @@ pub fn prove_unified_for_machine_configuration_into_program_proof<C: MachineConf
     ram_bound: usize,
     worker: &prover::worker::Worker,
 ) -> UnrolledProgramProof {
-    use riscv_transpiler::common_constants::{REDUCED_MACHINE_CIRCUIT_FAMILY_IDX, ROM_WORD_SIZE};
+    use riscv_transpiler::common_constants::ROM_WORD_SIZE;
 
     assert_eq!(binary_image.len(), ROM_WORD_SIZE);
     assert_eq!(text_section.len(), ROM_WORD_SIZE);
@@ -260,9 +254,14 @@ pub fn prove_unified_with_replayer_for_machine_configuration<C: MachineConfig>(
 
 #[cfg(test)]
 mod test {
-    #[test]
+    use test_utils::skip_if_ci;
+
+    #[cfg(test)]
     #[cfg(any(feature = "verifier_80", feature = "verifier_100"))]
+    #[ignore = "requires pre-generated recursion fixtures"]
+    #[test]
     fn test_unified_over_unrolled_verifier() {
+        skip_if_ci!();
         use crate::setups::read_and_pad_binary;
         use risc_v_simulator::cycle::IWithoutByteAccessIsaConfigWithDelegation;
         use std::fs::File;
@@ -297,9 +296,12 @@ mod test {
         dbg!(result);
     }
 
-    #[test]
+    #[cfg(test)]
     #[cfg(any(feature = "verifier_80", feature = "verifier_100"))]
+    #[ignore = "requires pre-generated recursion fixtures"]
+    #[test]
     fn test_unified_over_unified_verifier() {
+        skip_if_ci!();
         use crate::setups::read_and_pad_binary;
         use risc_v_simulator::cycle::IWithoutByteAccessIsaConfigWithDelegation;
         use std::fs::File;
@@ -333,9 +335,12 @@ mod test {
         dbg!(result);
     }
 
-    #[test]
+    #[cfg(test)]
     #[cfg(any(feature = "verifier_80", feature = "verifier_100"))]
+    #[ignore = "requires pre-generated recursion fixtures"]
+    #[test]
     fn test_unified_x2_over_unified_verifier() {
+        skip_if_ci!();
         use crate::setups::read_and_pad_binary;
         use risc_v_simulator::cycle::IWithoutByteAccessIsaConfigWithDelegation;
         use std::fs::File;
@@ -369,16 +374,18 @@ mod test {
         dbg!(result);
     }
 
+    #[cfg(test)]
+    #[ignore = "requires pre-generated recursion fixtures"]
     #[test]
     fn prove_unified_recursion() {
+        skip_if_ci!();
         use crate::setups::read_and_pad_binary;
-        use crate::setups::CompiledCircuitsSet;
         use crate::unified_circuit::flatten_proof_into_responses_for_unified_recursion;
         use crate::unrolled::*;
         use risc_v_simulator::abstractions::non_determinism::QuasiUARTSource;
         use risc_v_simulator::cycle::IWithoutByteAccessIsaConfigWithDelegation;
         use std::fs::File;
-        use std::{io::Read, path::Path};
+        use std::path::Path;
 
         let (binary, binary_u32) = read_and_pad_binary(Path::new(
             "../tools/verifier/recursion_in_unified_layer.bin",

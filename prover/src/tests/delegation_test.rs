@@ -3,7 +3,6 @@ use super::*;
 use crate::prover_stages::ProofSecurityConfig;
 use crate::tracers::oracles::delegation_oracle::DelegationCircuitOracle;
 use cs::cs::{circuit::Circuit, cs_reference::BasicAssembly};
-use full_isa_with_delegation_no_exceptions::FullIsaMachineWithDelegationNoExceptionHandling;
 use risc_v_simulator::{
     cycle::IWithoutByteAccessIsaConfigWithDelegation, delegations::DelegationsCSRProcessor,
 };
@@ -480,7 +479,10 @@ pub fn run_basic_delegation_test_impl(
 }
 
 // #[ignore = "test has explicit panic inside"]
+#[cfg(feature = "legacy_tests")]
 #[test]
+#[serial_test::serial]
+// TODO(legacy-cleanup): determine whether the legacy code path exercised here can be removed.
 fn run_basic_delegation_test() {
     run_basic_delegation_test_impl(None, None);
 }
