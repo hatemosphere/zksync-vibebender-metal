@@ -13,6 +13,32 @@ use crate::gkr_compiler::graph::GraphHolder;
 use crate::gkr_compiler::lookup_nodes::LookupDenominator;
 use crate::gkr_compiler::lookup_nodes::LookupInputRelation;
 
+pub fn add_compiler_defined_variable(
+    num_variables: &mut u64,
+    all_variables_to_place: &mut BTreeSet<Variable>,
+) -> Variable {
+    let var = Variable(*num_variables);
+    *num_variables += 1;
+    all_variables_to_place.insert(var);
+
+    var
+}
+
+pub fn add_multiple_compiler_defined_variables<const N: usize>(
+    num_variables: &mut u64,
+    all_variables_to_place: &mut BTreeSet<Variable>,
+) -> [Variable; N] {
+    let output = std::array::from_fn(|_| {
+        let var = Variable(*num_variables);
+        *num_variables += 1;
+        all_variables_to_place.insert(var);
+
+        var
+    });
+
+    output
+}
+
 #[track_caller]
 pub(crate) fn layout_witness_subtree_variable_at_column(
     offset: usize,
@@ -43,7 +69,6 @@ pub struct MachineStateWithDecoderData {
     // can be memory or witness, as there can be some selection there
     pub rs2_index: GKRAddress,
     pub rd_index: GKRAddress,
-    pub rd_is_zero: GKRAddress,
     pub imm: [GKRAddress; REGISTER_SIZE],
     pub funct3: Option<GKRAddress>,
     pub circuit_family_extra_mask: Vec<GKRAddress>,
@@ -144,8 +169,6 @@ pub(crate) fn layout_machine_state_for_preprocessed_bytecode<F: PrimeField>(
         t[0]
     };
 
-    let rd_is_zero =
-        graph.layout_witness_subtree_multiple_variables([rd_is_zero], all_variables_to_place);
     let imm = graph.layout_witness_subtree_multiple_variables(imm, all_variables_to_place);
     let funct3 = if let Some(funct3) = funct3 {
         let funct3 =
@@ -180,7 +203,6 @@ pub(crate) fn layout_machine_state_for_preprocessed_bytecode<F: PrimeField>(
         rs1_index,
         rs2_index,
         rd_index,
-        rd_is_zero: rd_is_zero[0],
         imm,
         funct3,
         circuit_family_extra_mask: bitmask,

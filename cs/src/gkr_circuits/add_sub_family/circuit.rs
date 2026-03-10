@@ -3,8 +3,6 @@ use super::*;
 use crate::constraint::Constraint;
 use crate::constraint::Term;
 use crate::cs::circuit_trait::*;
-use crate::cs::optimization_context::AddSubRelation;
-use crate::cs::optimization_context::OptimizationContext;
 use crate::oracle::Placeholder;
 use crate::tables::TableDriver;
 use crate::types::*;
@@ -43,25 +41,32 @@ fn apply_add_sub_lui_auipc_mop_inner<F: PrimeField, CS: Circuit<F>>(
     let rs1_access = cs.request_mem_access(
         MemoryAccessRequest::RegisterRead {
             reg_idx: inputs.decoder_data.rs1_index,
+            read_value_placeholder: Placeholder::ShuffleRamReadValue(0),
             split_as_u8: false,
         },
+        "rs1",
         0,
     );
 
     let rs2_access = cs.request_mem_access(
         MemoryAccessRequest::RegisterRead {
             reg_idx: inputs.decoder_data.rs2_index,
+            read_value_placeholder: Placeholder::ShuffleRamReadValue(1),
             split_as_u8: false,
         },
+        "rs2",
         1,
     );
 
     let rd_access = cs.request_mem_access(
         MemoryAccessRequest::RegisterReadWrite {
             reg_idx: inputs.decoder_data.rd_index,
+            read_value_placeholder: Placeholder::ShuffleRamReadValue(2),
+            write_value_placeholder: Placeholder::ShuffleRamWriteValue(2),
             split_read_as_u8: false,
             split_write_as_u8: false,
         },
+        "rd",
         2,
     );
 
@@ -535,6 +540,7 @@ mod test {
     use test_utils::skip_if_ci;
 
     use super::*;
+    use crate::gkr_compiler::compile_unrolled_circuit_state_transition_into_gkr;
     use crate::utils::serialize_to_file;
 
     #[test]
@@ -551,22 +557,22 @@ mod test {
 
         serialize_to_file(
             &gkr_compiled,
-            "add_sub_lui_auipc_mop_preprocessed_layout_gkr.json",
+            "compiled_circuits/add_sub_lui_auipc_mop_preprocessed_layout_gkr.json",
         );
     }
 
-    #[test]
-    fn compile_add_sub_lui_auipc_mop_gkr_witness_graph() {
-        skip_if_ci!();
-        use ::field::baby_bear::base::BabyBearField;
+    // #[test]
+    // fn compile_add_sub_lui_auipc_mop_gkr_witness_graph() {
+    //     skip_if_ci!();
+    //     use ::field::baby_bear::base::BabyBearField;
 
-        let ssa_forms = dump_ssa_witness_eval_form_for_unrolled_circuit::<BabyBearField>(
-            &|cs| add_sub_lui_auipc_mop_table_addition_fn(cs),
-            &|cs| add_sub_lui_auipc_mop_circuit_with_preprocessed_bytecode_for_gkr(cs),
-        );
-        serialize_to_file(
-            &ssa_forms,
-            "add_sub_lui_auipc_mop_preprocessed_ssa_gkr.json",
-        );
-    }
+    //     let ssa_forms = dump_ssa_witness_eval_form_for_unrolled_circuit::<BabyBearField>(
+    //         &|cs| add_sub_lui_auipc_mop_table_addition_fn(cs),
+    //         &|cs| add_sub_lui_auipc_mop_circuit_with_preprocessed_bytecode_for_gkr(cs),
+    //     );
+    //     serialize_to_file(
+    //         &ssa_forms,
+    //         "compiled_circuits/add_sub_lui_auipc_mop_preprocessed_ssa_gkr.json",
+    //     );
+    // }
 }

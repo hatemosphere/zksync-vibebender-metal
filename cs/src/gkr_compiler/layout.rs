@@ -1,5 +1,5 @@
+use crate::definitions::gkr::RamAuxComparisonSet;
 use crate::gkr_compiler::graph::{CopyNode, GKRGraph};
-use crate::one_row_compiler::gkr::RamAuxComparisonSet;
 
 use super::*;
 

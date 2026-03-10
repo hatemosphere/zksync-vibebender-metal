@@ -13,11 +13,11 @@ pub mod cs;
 // #[cfg(feature = "compiler")]
 // pub mod delegation;
 #[cfg(feature = "compiler")]
-pub mod oracle;
-// #[cfg(feature = "compiler")]
-// pub mod gkr_compiler;
-#[cfg(feature = "compiler")]
 pub mod gkr_circuits;
+#[cfg(feature = "compiler")]
+pub mod gkr_compiler;
+#[cfg(feature = "compiler")]
+pub mod oracle;
 #[cfg(feature = "compiler")]
 pub mod tables;
 #[cfg(feature = "compiler")]

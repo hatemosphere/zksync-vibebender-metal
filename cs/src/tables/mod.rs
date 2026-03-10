@@ -9,11 +9,10 @@ use std::sync::{LazyLock, Mutex};
 use std::{
     collections::{HashMap, HashSet},
     sync::Arc,
-    vec,
 };
 use type_map::concurrent::TypeMap;
 
-// mod binops;
+mod binops;
 // mod branch_opcode_related;
 // mod jump_opcode_related;
 // mod keccak_precompile_related;
@@ -42,10 +41,9 @@ const TOTAL_NUM_OF_TABLES: usize = TableType::DynamicPlaceholder as u32 as usize
 // so it's always fixed size, but "unused" values are 0s
 
 // keys -> index in table and values
-pub type PureTableGenerationFn<F: PrimeField> =
-    fn(&ArrayVec<F, MAX_TABLE_WIDTH>) -> (usize, ArrayVec<F, MAX_TABLE_WIDTH>);
+pub type PureTableGenerationFn<F: PrimeField> = fn(&[F]) -> (usize, ArrayVec<F, MAX_TABLE_WIDTH>);
 pub type TableGenerationClosure<F: PrimeField> = std::sync::Arc<
-    dyn Fn(&ArrayVec<F, MAX_TABLE_WIDTH>) -> (usize, ArrayVec<F, MAX_TABLE_WIDTH>)
+    dyn Fn(&[F]) -> (usize, ArrayVec<F, MAX_TABLE_WIDTH>)
         + 'static
         + Send
         + Sync
@@ -78,7 +76,8 @@ pub const TABLE_TYPES_UPPER_BOUNDS: usize = TOTAL_NUM_OF_TABLES;
 #[derivative(Clone, Debug)]
 pub struct LookupTable<F: PrimeField> {
     pub name: String,
-
+    pub num_key_columns: usize,
+    pub num_value_columns: usize,
     // NOTE: for small fields and not too large N hashmaps are the most efficient here
 
     // to lookup value from key
@@ -86,17 +85,14 @@ pub struct LookupTable<F: PrimeField> {
     pub lookup_data: Arc<HashMap<LookupKey<F>, LookupValue<F>>>,
     // to lookup table index from full row
     #[derivative(Debug = "ignore")]
-    pub content_data: Arc<HashMap<DataKey<F>, usize>>,
+    pub content_data: Arc<HashMap<ArrayVec<F, MAX_TABLE_WIDTH>, usize>>,
     // for setup - plain content of the table
     #[derivative(Debug = "ignore")]
-    pub data: Arc<Vec<DataKey<F>>>,
+    pub data: Arc<Vec<ArrayVec<F, MAX_TABLE_WIDTH>>>,
     #[derivative(Debug = "ignore")]
     pub quick_value_lookup_fn: ValueLookupFn<F>,
     #[derivative(Debug = "ignore")]
     pub quick_index_lookup_fn: IndexLookupFn<F>,
-
-    pub num_key_columns: usize,
-    pub num_value_columns: usize,
 
     pub id: u32,
 }
@@ -105,7 +101,6 @@ pub struct LookupTable<F: PrimeField> {
 pub struct LookupKey<F: PrimeField>(ArrayVec<F, MAX_TABLE_WIDTH>);
 
 pub type LookupValue<F> = LookupKey<F>;
-pub type DataKey<F> = LookupKey<F>;
 
 impl<F: PrimeField> LookupKey<F> {
     fn from_keys(keys: &[F]) -> Self {
@@ -179,329 +174,355 @@ impl<F: PrimeField> LookupTable<F> {
         self.content_data.len()
     }
 
-    // pub(crate) fn create_table_from_key_and_pure_generation_fn(
-    //     keys: &Vec<[F; N]>,
-    //     name: String,
-    //     num_key_columns: usize,
-    //     table_gen_func: PureTableGenerationFn<F, N>,
-    //     index_gen_fn: Option<fn(&[F; N]) -> usize>,
-    //     id: u32,
-    // ) -> Self {
-    //     assert!(num_key_columns <= N);
-    //     let num_value_columns = N - num_key_columns;
+    pub(crate) fn create_table_from_key_and_pure_generation_fn<
+        K: AsRef<[F]> + Send + Sync + 'static,
+    >(
+        keys: &Vec<K>,
+        name: String,
+        num_key_columns: usize,
+        num_value_columns: usize,
+        table_gen_func: PureTableGenerationFn<F>,
+        index_gen_fn: Option<fn(&[F]) -> usize>,
+        id: u32,
+    ) -> Self {
+        assert!(num_key_columns + num_value_columns + 1 <= MAX_TABLE_WIDTH);
 
-    //     let mut content = Vec::with_capacity(keys.len());
-    //     if keys.len() < 1 << 14 {
-    //         for key in keys.iter() {
-    //             let (_index, values) = table_gen_func(&key);
-    //             let mut row = [F::ZERO; N];
-    //             row[..num_key_columns].copy_from_slice(&key[..num_key_columns]);
-    //             row[num_key_columns..].copy_from_slice(&values[..num_value_columns]);
-    //             content.push(row);
-    //         }
-    //     } else {
-    //         keys.par_iter()
-    //             .map(|key| {
-    //                 let (_index, values) = table_gen_func(&key);
-    //                 let mut row = [F::ZERO; N];
-    //                 row[..num_key_columns].copy_from_slice(&key[..num_key_columns]);
-    //                 row[num_key_columns..].copy_from_slice(&values[..num_value_columns]);
-    //                 row
-    //             })
-    //             .collect_into_vec(&mut content);
-    //     }
+        let mut content = Vec::with_capacity(keys.len());
+        if keys.len() < 1 << 14 {
+            for key in keys.iter() {
+                let (_index, values) = table_gen_func(key.as_ref());
+                assert_eq!(key.as_ref().len(), num_key_columns);
+                assert_eq!(values.len(), num_value_columns);
+                let mut row = ArrayVec::<F, MAX_TABLE_WIDTH>::new();
+                row.try_extend_from_slice(&key.as_ref()[..num_key_columns])
+                    .expect("keys must fit");
+                row.try_extend_from_slice(&values[..num_value_columns])
+                    .expect("values must fit");
+                content.push(row);
+            }
+        } else {
+            keys.par_iter()
+                .map(|key: &K| {
+                    let (_index, values) = table_gen_func(key.as_ref());
+                    assert_eq!(key.as_ref().len(), num_key_columns);
+                    assert_eq!(values.len(), num_value_columns);
+                    let mut row = ArrayVec::<F, MAX_TABLE_WIDTH>::new();
+                    row.try_extend_from_slice(&key.as_ref()[..num_key_columns])
+                        .expect("keys must fit");
+                    row.try_extend_from_slice(&values[..num_value_columns])
+                        .expect("values must fit");
+                    row
+                })
+                .collect_into_vec(&mut content);
+        }
 
-    //     let (lookup_data, content_data) =
-    //         Self::compute_default_lookup_impls(&content, num_key_columns);
+        let (lookup_data, content_data) =
+            Self::compute_default_lookup_impls(&content, num_key_columns, num_value_columns);
 
-    //     let index_gen_fn = if let Some(index_gen_fn) = index_gen_fn {
-    //         IndexLookupFn::Pure(index_gen_fn)
-    //     } else {
-    //         IndexLookupFn::ReuseGenerationFn(table_gen_func)
-    //     };
+        let index_gen_fn = if let Some(index_gen_fn) = index_gen_fn {
+            IndexLookupFn::Pure(index_gen_fn)
+        } else {
+            IndexLookupFn::ReuseGenerationFn(table_gen_func)
+        };
 
-    //     Self {
-    //         name,
-    //         lookup_data: Arc::new(lookup_data),
-    //         content_data: Arc::new(content_data),
-    //         data: Arc::new(content),
-    //         quick_value_lookup_fn: ValueLookupFn::ReuseGenerationFn(table_gen_func),
-    //         quick_index_lookup_fn: index_gen_fn,
-    //         num_key_columns,
-    //         num_value_columns,
-    //         id,
-    //     }
-    // }
+        Self {
+            name,
+            lookup_data: Arc::new(lookup_data),
+            content_data: Arc::new(content_data),
+            data: Arc::new(content),
+            quick_value_lookup_fn: ValueLookupFn::ReuseGenerationFn(table_gen_func),
+            quick_index_lookup_fn: index_gen_fn,
+            num_key_columns,
+            num_value_columns,
+            id,
+        }
+    }
 
-    // pub(crate) fn create_table_from_key_and_key_generation_closure<
-    //     FN: Fn(&[F; N]) -> (usize, [F; N])
-    //         + 'static
-    //         + Send
-    //         + Sync
-    //         + Clone
-    //         + std::panic::UnwindSafe
-    //         + std::panic::RefUnwindSafe,
-    // >(
-    //     keys: &Vec<[F; N]>,
-    //     name: String,
-    //     num_key_columns: usize,
-    //     table_gen_closure: FN,
-    //     index_gen_fn: Option<fn(&[F; N]) -> usize>,
-    //     id: u32,
-    // ) -> Self {
-    //     assert!(num_key_columns <= N);
-    //     let num_value_columns = N - num_key_columns;
+    pub(crate) fn create_table_from_key_and_key_generation_closure<
+        K: AsRef<[F]> + Send + Sync + 'static,
+        FN: Fn(&[F]) -> (usize, ArrayVec<F, MAX_TABLE_WIDTH>)
+            + 'static
+            + Send
+            + Sync
+            + Clone
+            + std::panic::UnwindSafe
+            + std::panic::RefUnwindSafe,
+    >(
+        keys: &Vec<K>,
+        name: String,
+        num_key_columns: usize,
+        num_value_columns: usize,
+        table_gen_closure: FN,
+        index_gen_fn: Option<fn(&[F]) -> usize>,
+        id: u32,
+    ) -> Self {
+        assert!(num_key_columns + num_value_columns + 1 <= MAX_TABLE_WIDTH);
 
-    //     let mut content = Vec::with_capacity(keys.len());
-    //     if keys.len() < 1 << 14 {
-    //         for key in keys.iter() {
-    //             let (_index, values) = table_gen_closure(&key);
-    //             let mut row = [F::ZERO; N];
-    //             row[..num_key_columns].copy_from_slice(&key[..num_key_columns]);
-    //             row[num_key_columns..].copy_from_slice(&values[..num_value_columns]);
-    //             content.push(row);
-    //         }
-    //     } else {
-    //         keys.par_iter()
-    //             .map(|key| {
-    //                 let (_index, values) = table_gen_closure(&key);
-    //                 let mut row = [F::ZERO; N];
-    //                 row[..num_key_columns].copy_from_slice(&key[..num_key_columns]);
-    //                 row[num_key_columns..].copy_from_slice(&values[..num_value_columns]);
-    //                 row
-    //             })
-    //             .collect_into_vec(&mut content);
-    //     }
+        let mut content = Vec::with_capacity(keys.len());
+        if keys.len() < 1 << 14 {
+            for key in keys.iter() {
+                let (_index, values) = table_gen_closure(key.as_ref());
+                assert_eq!(key.as_ref().len(), num_key_columns);
+                assert_eq!(values.len(), num_value_columns);
+                let mut row = ArrayVec::<F, MAX_TABLE_WIDTH>::new();
+                row.try_extend_from_slice(&key.as_ref()[..num_key_columns])
+                    .expect("keys must fit");
+                row.try_extend_from_slice(&values[..num_value_columns])
+                    .expect("values must fit");
+                content.push(row);
+            }
+        } else {
+            keys.par_iter()
+                .map(|key: &K| {
+                    let (_index, values) = table_gen_closure(key.as_ref());
+                    assert_eq!(key.as_ref().len(), num_key_columns);
+                    assert_eq!(values.len(), num_value_columns);
+                    let mut row = ArrayVec::<F, MAX_TABLE_WIDTH>::new();
+                    row.try_extend_from_slice(&key.as_ref()[..num_key_columns])
+                        .expect("keys must fit");
+                    row.try_extend_from_slice(&values[..num_value_columns])
+                        .expect("values must fit");
+                    row
+                })
+                .collect_into_vec(&mut content);
+        }
 
-    //     let (lookup_data, content_data) =
-    //         Self::compute_default_lookup_impls(&content, num_key_columns);
+        let (lookup_data, content_data) =
+            Self::compute_default_lookup_impls(&content, num_key_columns, num_value_columns);
 
-    //     let index_gen_fn = if let Some(index_gen_fn) = index_gen_fn {
-    //         IndexLookupFn::Pure(index_gen_fn)
-    //     } else {
-    //         IndexLookupFn::ReuseGenerationClosure(Arc::new(table_gen_closure.clone()))
-    //     };
+        let index_gen_fn = if let Some(index_gen_fn) = index_gen_fn {
+            IndexLookupFn::Pure(index_gen_fn)
+        } else {
+            IndexLookupFn::ReuseGenerationClosure(Arc::new(table_gen_closure.clone()))
+        };
 
-    //     Self {
-    //         name,
-    //         lookup_data: Arc::new(lookup_data),
-    //         content_data: Arc::new(content_data),
-    //         data: Arc::new(content),
-    //         quick_value_lookup_fn: ValueLookupFn::Closure(Arc::new(table_gen_closure)),
-    //         quick_index_lookup_fn: index_gen_fn,
-    //         num_key_columns,
-    //         num_value_columns,
-    //         id,
-    //     }
-    // }
+        Self {
+            name,
+            lookup_data: Arc::new(lookup_data),
+            content_data: Arc::new(content_data),
+            data: Arc::new(content),
+            quick_value_lookup_fn: ValueLookupFn::Closure(Arc::new(table_gen_closure)),
+            quick_index_lookup_fn: index_gen_fn,
+            num_key_columns,
+            num_value_columns,
+            id,
+        }
+    }
 
-    // fn compute_default_lookup_impls(
-    //     data: &Vec<[F; N]>,
-    //     num_key_columns: usize,
-    // ) -> (
-    //     HashMap<LookupKey<F, N>, LookupValue<F, N>>,
-    //     HashMap<DataKey<F, N>, usize>,
-    // ) {
-    //     let lookup_data: HashMap<LookupKey<F, N>, LookupValue<F, N>> =
-    //         Self::compute_lookup_data(data, num_key_columns);
-    //     let content_data: HashMap<_, _> = data
-    //         .par_iter()
-    //         .enumerate()
-    //         .map(|(idx, el)| (DataKey(*el), idx))
-    //         .collect();
+    fn compute_default_lookup_impls(
+        data: &Vec<ArrayVec<F, MAX_TABLE_WIDTH>>,
+        num_key_columns: usize,
+        num_value_columns: usize,
+    ) -> (
+        HashMap<LookupKey<F>, LookupValue<F>>,
+        HashMap<ArrayVec<F, MAX_TABLE_WIDTH>, usize>,
+    ) {
+        let lookup_data: HashMap<LookupKey<F>, LookupValue<F>> =
+            Self::compute_lookup_data(data, num_key_columns, num_value_columns);
+        let content_data: HashMap<_, _> = data
+            .par_iter()
+            .enumerate()
+            .map(|(idx, el)| (el.clone(), idx))
+            .collect();
 
-    //     (lookup_data, content_data)
-    // }
+        (lookup_data, content_data)
+    }
 
-    // /// Splits data elements into key, value.
-    // /// We treat first num_key_columns elements from each data item
-    // /// as key, and the rest as value.
-    // fn compute_lookup_data(
-    //     data: &Vec<[F; N]>,
-    //     num_key_columns: usize,
-    // ) -> HashMap<LookupKey<F, N>, LookupValue<F, N>> {
-    //     assert!(num_key_columns <= N);
-    //     let result: HashMap<_, _> = data
-    //         .par_iter()
-    //         .map(|row| {
-    //             let key = LookupKey::from_keys(&row[..num_key_columns]);
-    //             let value = LookupValue::from_keys(&row[num_key_columns..]);
-    //             (key, value)
-    //         })
-    //         .collect();
-    //     assert_eq!(
-    //         result.len(),
-    //         data.len(),
-    //         "Can't compute lookup cache if using only {} first columns out of {} as logical key",
-    //         num_key_columns,
-    //         N
-    //     );
-    //     result
-    // }
+    /// Splits data elements into key, value.
+    /// We treat first num_key_columns elements from each data item
+    /// as key, and the rest as value.
+    fn compute_lookup_data(
+        data: &Vec<ArrayVec<F, MAX_TABLE_WIDTH>>,
+        num_key_columns: usize,
+        num_value_columns: usize,
+    ) -> HashMap<LookupKey<F>, LookupValue<F>> {
+        assert!(num_key_columns + num_value_columns + 1 <= MAX_TABLE_WIDTH);
+        let result: HashMap<_, _> = data
+            .par_iter()
+            .map(|row| {
+                let key = LookupKey::from_keys(&row[..num_key_columns]);
+                let value = LookupValue::from_keys(&row[num_key_columns..]);
+                (key, value)
+            })
+            .collect();
+        assert_eq!(
+            result.len(),
+            data.len(),
+            "Can't compute lookup cache if using only {} first columns out of {} as logical key",
+            num_key_columns,
+            num_key_columns + num_value_columns,
+        );
+        result
+    }
 
-    // #[track_caller]
-    // #[inline(always)]
-    // pub fn lookup_value<const VALUES: usize>(&self, keys: &[F]) -> [F; VALUES] {
-    //     assert!(keys.len() < N);
-    //     assert!(VALUES < N);
-    //     assert_eq!(keys.len(), N - VALUES);
-    //     // NOTE that lookup function return padded values in generation functions
-    //     match &self.quick_value_lookup_fn {
-    //         ValueLookupFn::None => {
-    //             let keys = LookupKey::from_keys(keys);
-    //             let Some(value) = self.lookup_data.get(&keys).cloned() else {
-    //                 panic!(
-    //                     "There is no value for key {:?} for table {}",
-    //                     keys,
-    //                     self.name()
-    //                 );
-    //             };
+    #[track_caller]
+    #[inline(always)]
+    pub fn lookup_value<const VALUES: usize>(&self, keys: &[F]) -> [F; VALUES] {
+        assert_eq!(keys.len(), self.num_key_columns);
+        assert!(VALUES < MAX_TABLE_WIDTH);
+        // NOTE that lookup function return padded values in generation functions
+        match &self.quick_value_lookup_fn {
+            ValueLookupFn::None => {
+                let keys = LookupKey::from_keys(keys);
+                let Some(values) = self.lookup_data.get(&keys).cloned() else {
+                    panic!(
+                        "There is no value for key {:?} for table {}",
+                        keys,
+                        self.name()
+                    );
+                };
+                assert_eq!(values.0.len(), VALUES);
 
-    //             std::array::from_fn(|i| value.0[i])
-    //         }
-    //         ValueLookupFn::Pure(..) => {
-    //             unimplemented!()
-    //         }
-    //         ValueLookupFn::ReuseGenerationFn(gen_fn) => {
-    //             let mut input = [F::ZERO; N];
-    //             input[..keys.len()].copy_from_slice(keys);
-    //             let (_, values) = (gen_fn)(&input);
+                std::array::from_fn(|i| values.0[i])
+            }
+            ValueLookupFn::Pure(..) => {
+                unimplemented!()
+            }
+            ValueLookupFn::ReuseGenerationFn(gen_fn) => {
+                let (_, values) = (gen_fn)(keys);
+                assert_eq!(values.len(), VALUES);
 
-    //             std::array::from_fn(|i| values[i])
-    //         }
-    //         ValueLookupFn::Closure(gen_closure) => {
-    //             let mut input = [F::ZERO; N];
-    //             input[..keys.len()].copy_from_slice(keys);
-    //             let (_, values) = (gen_closure)(&input);
+                std::array::from_fn(|i| values[i])
+            }
+            ValueLookupFn::Closure(gen_closure) => {
+                let (_, values) = (gen_closure)(keys);
+                assert_eq!(values.len(), VALUES);
 
-    //             std::array::from_fn(|i| values[i])
-    //         }
-    //     }
-    // }
+                std::array::from_fn(|i| values[i])
+            }
+        }
+    }
 
-    // #[track_caller]
-    // #[inline(always)]
-    // pub fn lookup_values_and_get_index<const VALUES: usize>(
-    //     &self,
-    //     keys: &[F],
-    // ) -> (usize, [F; VALUES]) {
-    //     assert!(keys.len() < N);
-    //     assert!(VALUES < N);
-    //     assert_eq!(keys.len(), N - VALUES);
-    //     // NOTE that lookup function return padded values in generation functions
-    //     match &self.quick_value_lookup_fn {
-    //         ValueLookupFn::None => {
-    //             let keys = LookupKey::from_keys(keys);
-    //             let Some(_value) = self.lookup_data.get(&keys).cloned() else {
-    //                 panic!(
-    //                     "There is no value for key {:?} for table {}",
-    //                     keys,
-    //                     self.name()
-    //                 );
-    //             };
+    #[track_caller]
+    #[inline(always)]
+    pub fn lookup_values_and_get_index<const VALUES: usize>(
+        &self,
+        keys: &[F],
+    ) -> (usize, [F; VALUES]) {
+        assert_eq!(keys.len(), self.num_key_columns);
+        assert!(VALUES < MAX_TABLE_WIDTH);
+        // NOTE that lookup function return padded values in generation functions
+        match &self.quick_value_lookup_fn {
+            ValueLookupFn::None => {
+                let keys = LookupKey::from_keys(keys);
+                let Some(_values) = self.lookup_data.get(&keys).cloned() else {
+                    panic!(
+                        "There is no value for key {:?} for table {}",
+                        keys,
+                        self.name()
+                    );
+                };
 
-    //             todo!();
+                todo!();
 
-    //             // std::array::from_fn(|i| value.0[i])
-    //         }
-    //         ValueLookupFn::Pure(..) => {
-    //             unimplemented!()
-    //         }
-    //         ValueLookupFn::ReuseGenerationFn(gen_fn) => {
-    //             let mut input = [F::ZERO; N];
-    //             input[..keys.len()].copy_from_slice(keys);
-    //             let (index, values) = (gen_fn)(&input);
+                // std::array::from_fn(|i| value.0[i])
+            }
+            ValueLookupFn::Pure(..) => {
+                unimplemented!()
+            }
+            ValueLookupFn::ReuseGenerationFn(gen_fn) => {
+                let (index, values) = (gen_fn)(keys);
+                assert_eq!(values.len(), VALUES);
 
-    //             (index, std::array::from_fn(|i| values[i]))
-    //         }
-    //         ValueLookupFn::Closure(gen_closure) => {
-    //             let mut input = [F::ZERO; N];
-    //             input[..keys.len()].copy_from_slice(keys);
-    //             let (index, values) = (gen_closure)(&input);
+                (index, std::array::from_fn(|i| values[i]))
+            }
+            ValueLookupFn::Closure(gen_closure) => {
+                let (index, values) = (gen_closure)(keys);
+                assert_eq!(values.len(), VALUES);
 
-    //             (index, std::array::from_fn(|i| values[i]))
-    //         }
-    //     }
-    // }
+                (index, std::array::from_fn(|i| values[i]))
+            }
+        }
+    }
 
-    // #[track_caller]
-    // #[inline(always)]
-    // pub fn lookup_row(&self, key: &[F]) -> usize {
-    //     assert_eq!(key.len(), N);
-    //     match &self.quick_index_lookup_fn {
-    //         IndexLookupFn::None => {
-    //             let keys = unsafe { key.as_ptr().cast::<[F; N]>().read() };
-    //             let key = DataKey(keys);
-    //             self.content_data.get(&key).copied().unwrap()
-    //         }
-    //         IndexLookupFn::Pure(index_fn) => {
-    //             let keys = unsafe { key.as_ptr().cast::<[F; N]>().as_ref_unchecked() };
-    //             let index = (index_fn)(&keys);
-    //             assert!(
-    //                 index < self.table_size(),
-    //                 "index {} is beyond table size {} for table {}",
-    //                 index,
-    //                 self.table_size(),
-    //                 &self.name
-    //             );
+    #[track_caller]
+    #[inline(always)]
+    pub fn lookup_row(&self, key: &[F]) -> usize {
+        assert_eq!(key.len(), self.num_key_columns + self.num_value_columns);
+        match &self.quick_index_lookup_fn {
+            IndexLookupFn::None => {
+                let mut keys = ArrayVec::<F, MAX_TABLE_WIDTH>::new();
+                keys.try_extend_from_slice(key).expect("must fit");
+                self.content_data
+                    .get(&keys)
+                    .copied()
+                    .expect("element must be present in the table")
+            }
+            IndexLookupFn::Pure(index_fn) => {
+                let mut keys = ArrayVec::<F, MAX_TABLE_WIDTH>::new();
+                keys.try_extend_from_slice(key).expect("must fit");
+                let index = (index_fn)(&keys);
+                assert!(
+                    index < self.table_size(),
+                    "index {} is beyond table size {} for table {}",
+                    index,
+                    self.table_size(),
+                    &self.name
+                );
 
-    //             index
-    //         }
-    //         IndexLookupFn::ReuseGenerationFn(gen_fn) => {
-    //             let keys = unsafe { key.as_ptr().cast::<[F; N]>().as_ref_unchecked() };
-    //             // NOTE: generation functions do not use padding places, so we can feed as-is
-    //             let (index, values) = (gen_fn)(keys);
-    //             // can self-check
-    //             assert_eq!(
-    //                 &values[..self.num_value_columns],
-    //                 &key[self.num_key_columns..]
-    //             );
-    //             assert!(
-    //                 index < self.table_size(),
-    //                 "index {} is beyond table size {} for table {}",
-    //                 index,
-    //                 self.table_size(),
-    //                 &self.name
-    //             );
+                index
+            }
+            IndexLookupFn::ReuseGenerationFn(gen_fn) => {
+                let mut keys = ArrayVec::<F, MAX_TABLE_WIDTH>::new();
+                keys.try_extend_from_slice(key).expect("must fit");
+                // NOTE: generation functions do not use padding places, so we can feed as-is
+                let (index, values) = (gen_fn)(&keys);
+                // can self-check
+                assert_eq!(
+                    &values[..self.num_value_columns],
+                    &key[self.num_key_columns..]
+                );
+                assert!(
+                    index < self.table_size(),
+                    "index {} is beyond table size {} for table {}",
+                    index,
+                    self.table_size(),
+                    &self.name
+                );
 
-    //             index
-    //         }
-    //         IndexLookupFn::ReuseGenerationClosure(gen_closure) => {
-    //             let keys = unsafe { key.as_ptr().cast::<[F; N]>().as_ref_unchecked() };
-    //             // NOTE: generation functions do not use padding places, so we can feed as-is
-    //             let (index, values) = (gen_closure)(&keys);
-    //             // can self-check
-    //             assert_eq!(
-    //                 &values[..self.num_value_columns],
-    //                 &key[self.num_key_columns..]
-    //             );
-    //             assert!(
-    //                 index < self.table_size(),
-    //                 "index {} is beyond table size {} for table {}",
-    //                 index,
-    //                 self.table_size(),
-    //                 &self.name
-    //             );
+                index
+            }
+            IndexLookupFn::ReuseGenerationClosure(gen_closure) => {
+                let mut keys = ArrayVec::<F, MAX_TABLE_WIDTH>::new();
+                keys.try_extend_from_slice(key).expect("must fit");
+                // NOTE: generation functions do not use padding places, so we can feed as-is
+                let (index, values) = (gen_closure)(&keys);
+                // can self-check
+                assert_eq!(
+                    &values[..self.num_value_columns],
+                    &key[self.num_key_columns..]
+                );
+                assert!(
+                    index < self.table_size(),
+                    "index {} is beyond table size {} for table {}",
+                    index,
+                    self.table_size(),
+                    &self.name
+                );
 
-    //             index
-    //         }
-    //         IndexLookupFn::Closure(..) => {
-    //             unimplemented!()
-    //         }
-    //     }
-    // }
+                index
+            }
+            IndexLookupFn::Closure(..) => {
+                unimplemented!()
+            }
+        }
+    }
 
-    // pub fn num_values(&self) -> usize {
-    //     self.num_value_columns
-    // }
+    pub fn num_values(&self) -> usize {
+        self.num_value_columns
+    }
 
-    // pub fn num_keys(&self) -> usize {
-    //     self.num_key_columns
-    // }
+    pub fn num_keys(&self) -> usize {
+        self.num_key_columns
+    }
 
-    // pub fn data_at_row(&self, row: usize) -> &[F] {
-    //     &self.data[row].0[..]
-    // }
+    pub fn width(&self) -> usize {
+        self.num_key_columns + self.num_value_columns
+    }
+
+    pub fn data_at_row(&self, row: usize) -> &[F] {
+        &self.data[row][..]
+    }
 
     // pub fn dump_into<const M: usize>(&self, dst: &mut Vec<[F; M]>, id: Option<u32>) {
     //     let required_len = N + id.is_some() as usize;
@@ -538,12 +559,12 @@ impl<F: PrimeField> LookupWrapper<F> {
         }
     }
 
-    // pub fn width(&self) -> usize {
-    //     match self {
-    //         Self::Initialized(table) => table.width(),
-    //         Self::Uninitialized => 0,
-    //     }
-    // }
+    pub fn width(&self) -> usize {
+        match self {
+            Self::Initialized(table) => table.width(),
+            Self::Uninitialized => 0,
+        }
+    }
 
     pub fn get_table_id(&self) -> u32 {
         match self {
@@ -554,41 +575,41 @@ impl<F: PrimeField> LookupWrapper<F> {
         }
     }
 
-    // #[track_caller]
-    // #[inline]
-    // pub fn lookup_value(&self, keys: &[F]) -> ArrayVec<F, MAX_TABLE_WIDTH> {
-    //     match self {
-    //         Self::Initialized(inner) => inner.lookup_value(keys),
-    //         Self::Uninitialized => {
-    //             panic!("Trying to lookup into uninitialized table wrapper");
-    //         }
-    //     }
-    // }
+    #[track_caller]
+    #[inline]
+    pub fn lookup_value<const VALUES: usize>(&self, keys: &[F]) -> [F; VALUES] {
+        match self {
+            Self::Initialized(inner) => inner.lookup_value::<VALUES>(keys),
+            Self::Uninitialized => {
+                panic!("Trying to lookup into uninitialized table wrapper");
+            }
+        }
+    }
 
-    // #[track_caller]
-    // #[inline]
-    // pub fn lookup_values_and_get_index(
-    //     &self,
-    //     keys: &[F],
-    // ) -> (usize, ArrayVec<F, MAX_TABLE_WIDTH>) {
-    //     match self {
-    //         Self::Initialized(inner) => inner.lookup_values_and_get_index(keys),
-    //         Self::Uninitialized => {
-    //             panic!("Table is not initialized");
-    //         }
-    //     }
-    // }
+    #[track_caller]
+    #[inline]
+    pub fn lookup_values_and_get_index<const VALUES: usize>(
+        &self,
+        keys: &[F],
+    ) -> (usize, [F; VALUES]) {
+        match self {
+            Self::Initialized(inner) => inner.lookup_values_and_get_index::<VALUES>(keys),
+            Self::Uninitialized => {
+                panic!("Table is not initialized");
+            }
+        }
+    }
 
-    // #[track_caller]
-    // #[inline]
-    // pub fn lookup_row(&self, row: &[F]) -> usize {
-    //     match self {
-    //         Self::Initialized(inner) => inner.lookup_row(row),
-    //         Self::Uninitialized => {
-    //             panic!("Trying to lookup into uninitialized table wrapper");
-    //         }
-    //     }
-    // }
+    #[track_caller]
+    #[inline]
+    pub fn lookup_row(&self, row: &[F]) -> usize {
+        match self {
+            Self::Initialized(inner) => inner.lookup_row(row),
+            Self::Uninitialized => {
+                panic!("Trying to lookup into uninitialized table wrapper");
+            }
+        }
+    }
 
     pub fn get_size(&self) -> usize {
         match self {
@@ -818,6 +839,18 @@ fn u8_chunks_index_gen_fn<F: PrimeField, const N: usize>(keys: &[F; N]) -> usize
     assert!(b <= u8::MAX as u32);
 
     index_for_binary_key(a, b)
+}
+
+#[inline(always)]
+fn bit_chunks_slice_index_gen_fn<F: PrimeField, const WIDTH: usize>(keys: &[F]) -> usize {
+    assert_eq!(keys.len(), 2);
+    let a = keys[0].as_u32_reduced();
+    let b = keys[1].as_u32_reduced();
+
+    assert!(a < 1u32 << WIDTH);
+    assert!(b < 1u32 << WIDTH);
+
+    index_for_binary_key_for_width::<WIDTH>(a, b)
 }
 
 #[inline(always)]
@@ -1083,9 +1116,9 @@ impl<F: PrimeField> TableDriver<F> {
     //     self.offsets_for_multiplicities[id as usize]
     // }
 
-    // pub fn table_starts_offsets(&self) -> [usize; TABLE_TYPES_UPPER_BOUNDS] {
-    //     self.offsets_for_multiplicities
-    // }
+    pub fn table_starts_offsets(&self) -> [usize; TABLE_TYPES_UPPER_BOUNDS] {
+        self.offsets_for_multiplicities
+    }
 
     // #[inline(always)]
     // pub fn get_table(&self, table_type: TableType) -> &LookupWrapper<F> {

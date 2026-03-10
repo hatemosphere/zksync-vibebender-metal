@@ -11,11 +11,12 @@ use crate::witness_placer::*;
 // use crate::devices::optimization_context::OptCtxIndexers;
 // use crate::devices::optimization_context::OptimizationContext;
 // use crate::tables::LookupWrapper;
-// use crate::tables::TableDriver;
 // use crate::tables::TableType;
+use crate::tables::TableDriver;
 use crate::types::*;
 use field::PrimeField;
 use std::collections::HashMap;
+use std::collections::HashSet;
 use std::vec;
 
 #[cfg(feature = "debug_evaluate_witness")]
@@ -36,7 +37,8 @@ pub struct BasicAssembly<
     boolean_variables: Vec<Variable>,
     rangechecked_expressions: Vec<RangeCheckQuery<F>>,
     placeholder_query: HashMap<(Placeholder, usize), Variable>,
-    // table_driver: TableDriver<F>,
+    layers_mapping: HashMap<Variable, usize>,
+    table_driver: TableDriver<F>,
     // register_and_indirect_memory_accesses: Vec<RegisterAndIndirectAccesses>,
     // register_and_indirect_memory_accesses_offset_variables_idxes: HashMap<Variable, usize>,
     executor_machine_state: Option<OpcodeFamilyCircuitState<F>>,
@@ -65,8 +67,8 @@ impl<F: PrimeField, W: WitnessPlacer<F>, const ASSUME_MEMORY_VALUES_ASSIGNED: bo
             boolean_variables: vec![],
             rangechecked_expressions: vec![],
             placeholder_query: HashMap::new(),
-
-            // table_driver: TableDriver::<F>::new(),
+            layers_mapping: HashMap::new(),
+            table_driver: TableDriver::<F>::new(),
 
             // register_and_indirect_memory_accesses: vec![],
             // register_and_indirect_memory_accesses_offset_variables_idxes: HashMap::new(),
@@ -101,6 +103,24 @@ impl<F: PrimeField, W: WitnessPlacer<F>, const ASSUME_MEMORY_VALUES_ASSIGNED: bo
         self.no_index_assigned += 1;
 
         self.variable_names.insert(variable, name.to_string());
+        self.layers_mapping.insert(variable, 0);
+
+        variable
+    }
+
+    #[track_caller]
+    fn add_intermediate_variable(&mut self, layer_idx: usize) -> Variable {
+        let location = std::panic::Location::caller();
+        let name = format!("Variable at {}::{}", location.file(), location.line());
+        self.add_intermediate_named_variable(&name, layer_idx)
+    }
+
+    fn add_intermediate_named_variable(&mut self, name: &str, layer_idx: usize) -> Variable {
+        let variable = Variable(self.no_index_assigned);
+        self.no_index_assigned += 1;
+
+        self.variable_names.insert(variable, name.to_string());
+        self.layers_mapping.insert(variable, layer_idx);
 
         variable
     }
@@ -118,6 +138,46 @@ impl<F: PrimeField, W: WitnessPlacer<F>, const ASSUME_MEMORY_VALUES_ASSIGNED: bo
         assert!(constraint.terms.iter().all(|x| x.is_constant()) == false);
         constraint.normalize();
         let new_var = self.add_named_variable(name);
+        self.variables_from_constraints
+            .insert(new_var, constraint.clone());
+
+        use crate::cs::utils::collapse_max_quadratic_constraint_into;
+        collapse_max_quadratic_constraint_into(self, constraint.clone(), new_var);
+
+        constraint -= Term::from(new_var);
+        self.add_constraint(constraint);
+
+        new_var
+    }
+
+    fn add_intermediate_named_variable_from_constraint(
+        &mut self,
+        mut constraint: Constraint<F>,
+        name: &str,
+    ) -> Variable {
+        assert!(constraint.is_empty() == false);
+        assert!(constraint.terms.iter().all(|x| x.is_constant()) == false);
+        constraint.normalize();
+        let mut max_input_layer = isize::MIN;
+        let mut all_vars = HashSet::new();
+        constraint.dump_variables(&mut all_vars);
+        for var in all_vars.into_iter() {
+            let layer = *self
+                .layers_mapping
+                .get(&var)
+                .expect("must have layer assigned") as isize;
+            if max_input_layer != isize::MIN {
+                if layer < max_input_layer {
+                    println!(
+                        "Variable {:?} will be copied from layer {} to {}",
+                        var, layer, max_input_layer
+                    );
+                }
+            }
+            max_input_layer = core::cmp::max(max_input_layer, layer);
+        }
+        assert_ne!(max_input_layer, isize::MIN);
+        let new_var = self.add_intermediate_named_variable(name, (max_input_layer as usize) + 1);
         self.variables_from_constraints
             .insert(new_var, constraint.clone());
 
@@ -278,9 +338,148 @@ impl<F: PrimeField, W: WitnessPlacer<F>, const ASSUME_MEMORY_VALUES_ASSIGNED: bo
     fn request_mem_access(
         &mut self,
         request: MemoryAccessRequest,
+        name: &str,
         local_timestamp_in_cycle: u32,
     ) -> MemoryAccess {
-        todo!();
+        match request {
+            MemoryAccessRequest::RegisterRead {
+                reg_idx,
+                read_value_placeholder,
+                split_as_u8,
+            } => {
+                // allocate read value
+
+                // no range check is needed here, as our RAM is consistent by itself - our writes(!) are range-checked,
+                // so any reads will have to be range-checked
+                if split_as_u8 == false {
+                    let read_value = Register::new_unchecked_from_placeholder_named(
+                        self,
+                        read_value_placeholder,
+                        name,
+                    );
+                    let read_value = read_value.0.map(|el| el.get_variable());
+                    let read_value = WordRepresentation::U16Limbs(read_value);
+
+                    let read_timestamp = {
+                        let vars = std::array::from_fn(|i| {
+                            self.add_named_variable(&format!("{}[{}]", name, i))
+                        });
+
+                        if Self::ASSUME_MEMORY_VALUES_ASSIGNED {
+                            let value_fn = move |placer: &mut Self::WitnessPlacer| {
+                                for el in vars.iter() {
+                                    placer.assume_assigned(*el);
+                                }
+                            };
+                            self.set_values(value_fn);
+                        } else {
+                            let value_fn = move |placer: &mut Self::WitnessPlacer| {
+                                let value =
+                                    placer.get_oracle_u32(Placeholder::ShuffleRamReadTimestamp(
+                                        local_timestamp_in_cycle as usize,
+                                    ));
+
+                                placer.assign_u32_from_u16_parts(vars, &value);
+                            };
+                            self.set_values(value_fn);
+                        }
+
+                        vars
+                    };
+
+                    let access = MemoryAccess::RegisterOnly(RegisterAccess {
+                        reg_idx,
+                        read_timestamp,
+                        read_value: read_value.clone(),
+                        write_value: read_value,
+                        local_timestamp_in_cycle,
+                    });
+
+                    self.memory_queries.push(access.clone());
+
+                    access
+                } else {
+                    todo!()
+                }
+            }
+            MemoryAccessRequest::RegisterReadWrite {
+                reg_idx,
+                read_value_placeholder,
+                write_value_placeholder,
+                split_read_as_u8,
+                split_write_as_u8,
+            } => {
+                // allocate read value
+
+                // no range check is needed here, as our RAM is consistent by itself - our writes(!) are range-checked,
+                // so any reads will have to be range-checked
+                match (split_read_as_u8, split_write_as_u8) {
+                    (false, false) => {
+                        let read_value = Register::new_unchecked_from_placeholder_named(
+                            self,
+                            read_value_placeholder,
+                            name,
+                        );
+                        let read_value = read_value.0.map(|el| el.get_variable());
+                        let read_value = WordRepresentation::U16Limbs(read_value);
+
+                        let write_value = Register::new_unchecked_from_placeholder_named(
+                            self,
+                            write_value_placeholder,
+                            name,
+                        );
+                        let write_value = write_value.0.map(|el| el.get_variable());
+                        let write_value = WordRepresentation::U16Limbs(write_value);
+
+                        let read_timestamp = {
+                            let vars = std::array::from_fn(|i| {
+                                self.add_named_variable(&format!("{}[{}]", name, i))
+                            });
+
+                            if Self::ASSUME_MEMORY_VALUES_ASSIGNED {
+                                let value_fn = move |placer: &mut Self::WitnessPlacer| {
+                                    for el in vars.iter() {
+                                        placer.assume_assigned(*el);
+                                    }
+                                };
+                                self.set_values(value_fn);
+                            } else {
+                                let value_fn = move |placer: &mut Self::WitnessPlacer| {
+                                    let value = placer.get_oracle_u32(
+                                        Placeholder::ShuffleRamReadTimestamp(
+                                            local_timestamp_in_cycle as usize,
+                                        ),
+                                    );
+
+                                    placer.assign_u32_from_u16_parts(vars, &value);
+                                };
+                                self.set_values(value_fn);
+                            }
+
+                            vars
+                        };
+
+                        let access = MemoryAccess::RegisterOnly(RegisterAccess {
+                            reg_idx,
+                            read_timestamp,
+                            read_value,
+                            write_value,
+                            local_timestamp_in_cycle,
+                        });
+
+                        self.memory_queries.push(access.clone());
+
+                        access
+                    }
+                    _ => {
+                        todo!()
+                    }
+                }
+            }
+            _ => {
+                todo!();
+            }
+        }
     }
 
     // fn process_delegation_request(&mut self) -> Boolean {
@@ -1059,7 +1258,7 @@ impl<F: PrimeField, W: WitnessPlacer<F>, const ASSUME_MEMORY_VALUES_ASSIGNED: bo
             boolean_variables,
             rangechecked_expressions,
             placeholder_query,
-            // table_driver,
+            table_driver,
             memory_queries,
             // register_and_indirect_memory_accesses,
             executor_machine_state,
@@ -1073,7 +1272,7 @@ impl<F: PrimeField, W: WitnessPlacer<F>, const ASSUME_MEMORY_VALUES_ASSIGNED: bo
             // state_input: Vec::new(),
             // state_output: Vec::new(),
             memory_queries,
-            // table_driver,
+            table_driver,
             num_of_variables: no_index_assigned as usize,
             constraints: constraint_storage,
             lookups: lookup_storage,

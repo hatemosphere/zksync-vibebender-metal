@@ -1,24 +1,23 @@
 use super::*;
-// use crate::one_row_compiler::*;
-// use crate::one_row_compiler::delegation::*;
-// use crate::one_row_compiler::compile_layout::*;
 
 use crate::constraint::Constraint;
 use crate::constraint::Term;
 use crate::cs::circuit::LookupQuery;
 use crate::cs::circuit::LookupQueryTableType;
-use crate::cs::circuit::LookupQueryTableTypeExt;
 use crate::cs::circuit::ShuffleRamQueryType;
+use crate::cs::circuit_trait::MemoryAccess;
+use crate::cs::circuit_trait::RegisterAccess;
+use crate::cs::circuit_trait::WordRepresentation;
 use crate::definitions::gkr::*;
 use crate::definitions::GKRAddress;
 use crate::definitions::Variable;
 use crate::gkr_compiler::graph::GKRGraph;
 use crate::gkr_compiler::graph::GraphHolder;
 use crate::gkr_compiler::layout::LookupOutput;
-use crate::one_row_compiler::compile_layout::ShuffleRamTimestampComparisonPartialData;
-use crate::one_row_compiler::delegation::add_compiler_defined_variable;
-use crate::one_row_compiler::delegation::add_multiple_compiler_defined_variables;
-use crate::one_row_compiler::LookupInput;
+// use crate::one_row_compiler::delegation::add_compiler_defined_variable;
+// use crate::one_row_compiler::delegation::add_multiple_compiler_defined_variables;
+use crate::cs::circuit_output::CircuitOutput;
+use crate::definitions::LookupInput;
 use crate::tables::TableType;
 use crate::types::Boolean;
 
@@ -33,21 +32,15 @@ impl<F: PrimeField> GKRCompiler<F> {
         assert!(max_bytecode_size_in_words.is_power_of_two());
 
         let CircuitOutput {
-            state_input,
-            state_output,
             table_driver,
             num_of_variables,
             constraints,
             lookups,
-            shuffle_ram_queries,
-            linked_variables,
+            memory_queries,
             range_check_expressions,
             boolean_vars,
             substitutions,
-            delegated_computation_requests,
-            degegated_request_to_process,
-            register_and_indirect_memory_accesses,
-            decoder_machine_state,
+            // register_and_indirect_memory_accesses,
             executor_machine_state,
             circuit_family_bitmask,
             variable_names,
@@ -57,13 +50,7 @@ impl<F: PrimeField> GKRCompiler<F> {
 
         assert!(trace_len_log2 >= TIMESTAMP_COLUMNS_NUM_BITS as usize);
 
-        assert!(state_input.is_empty());
-        assert!(state_output.is_empty());
-        assert!(linked_variables.is_empty());
-        assert!(degegated_request_to_process.is_none());
-        assert!(register_and_indirect_memory_accesses.is_empty());
-        assert!(decoder_machine_state.is_none());
-        assert!(delegated_computation_requests.is_empty());
+        // assert!(register_and_indirect_memory_accesses.is_empty());
 
         let trace_len = 1usize << trace_len_log2;
 
@@ -79,8 +66,6 @@ impl<F: PrimeField> GKRCompiler<F> {
             total_tables_size.div_ceil(lookup_table_encoding_capacity);
         assert!(num_required_tuples_for_lookup_setup <= 1);
 
-        drop(linked_variables);
-
         let mut constraints = constraints;
         let mut variables_from_constraints = variables_from_constraints;
 
@@ -93,7 +78,7 @@ impl<F: PrimeField> GKRCompiler<F> {
         // quickly compute generic lookup table width
 
         let (range_check_16_expressions, mut generic_lookups) =
-            super::range_check_exprs::split_range_check_exprs_from_compiler(
+            super::range_check_exprs::split_range_check_exprs_from_compiler::<F>(
                 &range_check_expressions,
             );
         let total_lookups_for_range_checks_16 =
@@ -118,7 +103,6 @@ impl<F: PrimeField> GKRCompiler<F> {
                 // pub rs1_index: F,
                 // pub rs2_index: F,
                 // pub rd_index: F,
-                // pub rd_is_zero: F,
                 // pub imm: [F; REGISTER_SIZE],
                 // pub funct3: F,
                 // pub circuit_family_extra_mask: F,
@@ -133,8 +117,7 @@ impl<F: PrimeField> GKRCompiler<F> {
                 decode_table_columns_mask.resize(decoder_table_width, true);
 
                 if let Some(funct3) = executor_machine_state.decoder_data.funct3 {
-                    decoder_lookup_trivial_vars
-                        .extend([funct3]);
+                    decoder_lookup_trivial_vars.extend([funct3]);
                     decoder_table_width += 1;
                     decode_table_columns_mask.push(true);
                 } else {
@@ -233,25 +216,20 @@ impl<F: PrimeField> GKRCompiler<F> {
         //         &mut layout,
         //     );
 
-        let mut shuffle_ram_access_sets = vec![];
+        let mut ram_access_sets = vec![];
 
-        assert!(shuffle_ram_queries.len() < 4);
-        assert!(shuffle_ram_queries
-            .is_sorted_by(|a, b| a.local_timestamp_in_cycle < b.local_timestamp_in_cycle));
-        shuffle_ram_queries.windows(2).for_each(|el| {
-            assert!(el[0].local_timestamp_in_cycle + 1 == el[1].local_timestamp_in_cycle)
+        assert!(memory_queries.len() < 4);
+        assert!(memory_queries
+            .is_sorted_by(|a, b| a.local_timestamp_in_cycle() < b.local_timestamp_in_cycle()));
+        memory_queries.windows(2).for_each(|el| {
+            assert!(el[0].local_timestamp_in_cycle() + 1 == el[1].local_timestamp_in_cycle())
         });
 
-        let mut shuffle_ram_augmented_sets = vec![];
+        let mut ram_augmented_sets = vec![];
 
-        for (query_idx, memory_query) in shuffle_ram_queries.clone().into_iter().enumerate() {
-            assert_eq!(memory_query.local_timestamp_in_cycle, query_idx);
-
-            let [read_timestamp_low, read_timestamp_high] =
-                add_multiple_compiler_defined_variables::<NUM_TIMESTAMP_COLUMNS_FOR_RAM>(
-                    &mut num_variables,
-                    &mut all_variables_to_place,
-                );
+        for (query_idx, memory_query) in memory_queries.clone().into_iter().enumerate() {
+            assert_eq!(memory_query.local_timestamp_in_cycle() as usize, query_idx);
+            let [read_timestamp_low, read_timestamp_high] = memory_query.read_timestamp();
             variable_names.insert(
                 read_timestamp_low,
                 format!("query {}, read_ts[0]", query_idx),
@@ -278,15 +256,16 @@ impl<F: PrimeField> GKRCompiler<F> {
             let partial_data = ShuffleRamTimestampComparisonPartialData {
                 intermediate_borrow: borrow_var,
                 read_timestamp: [read_timestamp_low, read_timestamp_high],
-                local_timestamp_in_cycle: memory_query.local_timestamp_in_cycle,
+                local_timestamp_in_cycle: memory_query.local_timestamp_in_cycle() as usize,
             };
 
-            shuffle_ram_augmented_sets.push((memory_query, partial_data));
+            ram_augmented_sets.push((memory_query.clone(), partial_data));
 
-            let read_value = graph.layout_memory_subtree_multiple_variables(
-                memory_query.read_value,
-                &mut all_variables_to_place,
-            );
+            let WordRepresentation::U16Limbs(read_value) = memory_query.read_value() else {
+                unreachable!()
+            };
+            let read_value = graph
+                .layout_memory_subtree_multiple_variables(read_value, &mut all_variables_to_place);
 
             let read_timestamp = read_timestamp.map(|el| {
                 let GKRAddress::BaseLayerMemory(el) = el else {
@@ -304,10 +283,16 @@ impl<F: PrimeField> GKRCompiler<F> {
                 el
             });
 
-            let address = match memory_query.query_type {
-                ShuffleRamQueryType::RegisterOnly { register_index } => {
+            let address = match memory_query.clone() {
+                MemoryAccess::RegisterOnly(RegisterAccess {
+                    reg_idx,
+                    read_value,
+                    read_timestamp,
+                    write_value,
+                    local_timestamp_in_cycle,
+                }) => {
                     let [register_index] = graph.layout_memory_subtree_multiple_variables(
-                        [register_index],
+                        [reg_idx],
                         &mut all_variables_to_place,
                     );
                     let GKRAddress::BaseLayerMemory(register_index) = register_index else {
@@ -316,60 +301,58 @@ impl<F: PrimeField> GKRCompiler<F> {
 
                     RamAddress::RegisterOnly(RegisterOnlyAccessAddress { register_index })
                 }
-                ShuffleRamQueryType::RegisterOrRam {
-                    is_register,
-                    address,
-                } => {
-                    let is_register = match is_register {
-                        Boolean::Is(var) => {
-                            let [is_register] = graph.layout_memory_subtree_multiple_variables(
-                                [var],
-                                &mut all_variables_to_place,
-                            );
-                            let GKRAddress::BaseLayerMemory(is_register) = is_register else {
-                                unreachable!()
-                            };
-                            IsRegisterAddress::Is(is_register)
-                        }
-                        Boolean::Not(not_var) => {
-                            let [is_not_register] = graph.layout_memory_subtree_multiple_variables(
-                                [not_var],
-                                &mut all_variables_to_place,
-                            );
-                            let GKRAddress::BaseLayerMemory(is_not_register) = is_not_register
-                            else {
-                                unreachable!()
-                            };
-                            IsRegisterAddress::Not(is_not_register)
-                        }
-                        Boolean::Constant(..) => {
-                            unreachable!()
-                        }
-                    };
-                    let address = graph.layout_memory_subtree_multiple_variables(
-                        address,
-                        &mut all_variables_to_place,
-                    );
-                    let address = address.map(|el| {
-                        let GKRAddress::BaseLayerMemory(el) = el else {
-                            unreachable!()
-                        };
+                MemoryAccess::RegisterOrRam(..) => {
+                    todo!();
+                    // let is_register = match is_register {
+                    //     Boolean::Is(var) => {
+                    //         let [is_register] = graph.layout_memory_subtree_multiple_variables(
+                    //             [var],
+                    //             &mut all_variables_to_place,
+                    //         );
+                    //         let GKRAddress::BaseLayerMemory(is_register) = is_register else {
+                    //             unreachable!()
+                    //         };
+                    //         IsRegisterAddress::Is(is_register)
+                    //     }
+                    //     Boolean::Not(not_var) => {
+                    //         let [is_not_register] = graph.layout_memory_subtree_multiple_variables(
+                    //             [not_var],
+                    //             &mut all_variables_to_place,
+                    //         );
+                    //         let GKRAddress::BaseLayerMemory(is_not_register) = is_not_register
+                    //         else {
+                    //             unreachable!()
+                    //         };
+                    //         IsRegisterAddress::Not(is_not_register)
+                    //     }
+                    //     Boolean::Constant(..) => {
+                    //         unreachable!()
+                    //     }
+                    // };
+                    // let address = graph.layout_memory_subtree_multiple_variables(
+                    //     address,
+                    //     &mut all_variables_to_place,
+                    // );
+                    // let address = address.map(|el| {
+                    //     let GKRAddress::BaseLayerMemory(el) = el else {
+                    //         unreachable!()
+                    //     };
 
-                        el
-                    });
+                    //     el
+                    // });
 
-                    RamAddress::RegisterOrRam(RegisterOrRamAccessAddress {
-                        is_register,
-                        address,
-                    })
+                    // RamAddress::RegisterOrRam(RegisterOrRamAccessAddress {
+                    //     is_register,
+                    //     address,
+                    // })
                 }
             };
 
             let query_columns = if memory_query.is_readonly() {
-                assert_eq!(memory_query.read_value, memory_query.write_value);
+                assert_eq!(memory_query.read_value(), memory_query.write_value());
 
                 let query_columns = RamReadQuery {
-                    in_cycle_write_index: memory_query.local_timestamp_in_cycle as u32,
+                    in_cycle_write_index: memory_query.local_timestamp_in_cycle(),
                     address,
                     read_timestamp,
                     read_value,
@@ -377,8 +360,11 @@ impl<F: PrimeField> GKRCompiler<F> {
 
                 RamQuery::Readonly(query_columns)
             } else {
+                let WordRepresentation::U16Limbs(write_value) = memory_query.write_value() else {
+                    unreachable!()
+                };
                 let write_value = graph.layout_memory_subtree_multiple_variables(
-                    memory_query.write_value,
+                    write_value,
                     &mut all_variables_to_place,
                 );
 
@@ -391,7 +377,7 @@ impl<F: PrimeField> GKRCompiler<F> {
                 });
 
                 let query_columns = RamWriteQuery {
-                    in_cycle_write_index: memory_query.local_timestamp_in_cycle as u32,
+                    in_cycle_write_index: memory_query.local_timestamp_in_cycle(),
                     address,
                     read_timestamp,
                     read_value,
@@ -401,7 +387,7 @@ impl<F: PrimeField> GKRCompiler<F> {
                 RamQuery::Write(query_columns)
             };
 
-            shuffle_ram_access_sets.push(query_columns);
+            ram_access_sets.push(query_columns);
         }
 
         // we can add explicit nodes for memory access accumulation, and we also explicitly check write timestamps to be in range
@@ -459,7 +445,7 @@ impl<F: PrimeField> GKRCompiler<F> {
         ) = layout_initial_grand_product_accumulation(
             &mut graph,
             executor_machine_state.execute,
-            &shuffle_ram_augmented_sets,
+            &ram_augmented_sets,
             executor_machine_state.cycle_start_state.timestamp,
             executor_machine_state.cycle_start_state.pc,
             executor_machine_state.cycle_end_state.timestamp,
@@ -472,7 +458,7 @@ impl<F: PrimeField> GKRCompiler<F> {
         // Timestamps are the easiest - we collect them, and will transform into GKR layers very separately
         super::range_check_exprs::compile_timestamp_comparison_range_checks(
             &mut timestamp_range_check_expressions_to_compile,
-            &shuffle_ram_augmented_sets,
+            &ram_augmented_sets,
             executor_machine_state.cycle_start_state.timestamp,
         );
 
@@ -493,10 +479,9 @@ impl<F: PrimeField> GKRCompiler<F> {
             c.0.normalize();
         }
 
-        use crate::one_row_compiler::optimize_out_linear_constraints;
         let (optimized_out_variables, mut constraints) = optimize_out_linear_constraints(
-            &state_input,
-            &state_output,
+            &[],
+            &[],
             &substitutions,
             constraints,
             &mut all_variables_to_place,
@@ -606,7 +591,7 @@ impl<F: PrimeField> GKRCompiler<F> {
             for (v, c) in variables_from_constraints.into_iter() {
                 // NOTE: defining constraint doesn't have a variable in itself
                 let mut c = c;
-                c -= v.into();
+                c -= Term::from(v);
                 assert!(all_variables_to_place.contains(&v));
                 constraints.push((c, true));
             }
@@ -690,10 +675,6 @@ impl<F: PrimeField> GKRCompiler<F> {
             }
 
             if generic_lookups.len() > 0 || decoder_lookup_pair.is_some() {
-                let generic_lookups = generic_lookups
-                    .into_iter()
-                    .map(|el| (el.0, LookupQueryTableTypeExt::from_simple(el.1)))
-                    .collect();
                 let (multiplicity, final_pair, final_rel, initial_rels) =
                     layout_lookup_expressions::<F, false>(
                         &mut graph,
@@ -817,32 +798,28 @@ impl<F: PrimeField> GKRCompiler<F> {
                 circuit_family_mask_bits.push(pos);
             }
 
-            let (decoder_witness_is_in_memory, (rd_is_zero, imm_low, imm_high, funct3)) =
-                match (rd_is_zero, imm_low, imm_high, funct3) {
+            let (decoder_witness_is_in_memory, (imm_low, imm_high, funct3)) =
+                match (imm_low, imm_high, funct3) {
                     (
-                        GKRAddress::BaseLayerMemory(rd_is_zero),
                         GKRAddress::BaseLayerMemory(imm_low),
                         GKRAddress::BaseLayerMemory(imm_high),
                         Some(GKRAddress::BaseLayerMemory(funct3)),
-                    ) => (true, (rd_is_zero, imm_low, imm_high, Some(funct3))),
+                    ) => (true, (imm_low, imm_high, Some(funct3))),
                     (
-                        GKRAddress::BaseLayerMemory(rd_is_zero),
                         GKRAddress::BaseLayerMemory(imm_low),
                         GKRAddress::BaseLayerMemory(imm_high),
                         None,
-                    ) => (true, (rd_is_zero, imm_low, imm_high, None)),
+                    ) => (true, (imm_low, imm_high, None)),
                     (
-                        GKRAddress::BaseLayerWitness(rd_is_zero),
                         GKRAddress::BaseLayerWitness(imm_low),
                         GKRAddress::BaseLayerWitness(imm_high),
                         Some(GKRAddress::BaseLayerWitness(funct3)),
-                    ) => (false, (rd_is_zero, imm_low, imm_high, Some(funct3))),
+                    ) => (false, (imm_low, imm_high, Some(funct3))),
                     (
-                        GKRAddress::BaseLayerWitness(rd_is_zero),
                         GKRAddress::BaseLayerWitness(imm_low),
                         GKRAddress::BaseLayerWitness(imm_high),
                         None,
-                    ) => (false, (rd_is_zero, imm_low, imm_high, None)),
+                    ) => (false, (imm_low, imm_high, None)),
                     _ => {
                         unreachable!()
                     }
@@ -854,14 +831,13 @@ impl<F: PrimeField> GKRCompiler<F> {
                 rd_index,
                 circuit_family_mask_bits: circuit_family_mask_bits.into_boxed_slice(),
                 decoder_witness_is_in_memory,
-                rd_is_zero,
                 imm: [imm_low, imm_high],
                 funct3,
             }
         };
 
         let memory_layout = GKRMemoryLayout {
-            shuffle_ram_access_sets,
+            ram_access_sets,
             machine_state: Some(machine_state),
             register_and_indirect_accesses: vec![],
             total_width: graph.base_layer_memory.len(),
@@ -900,7 +876,7 @@ impl<F: PrimeField> GKRCompiler<F> {
         };
 
         let aux_layout_data = {
-            let shuffle_ram_timestamp_comparison_aux_vars = shuffle_ram_augmented_sets
+            let shuffle_ram_timestamp_comparison_aux_vars = ram_augmented_sets
                 .iter()
                 .map(|(_, el)| RamAuxComparisonSet {
                     intermediate_borrow: graph.get_address_for_variable(el.intermediate_borrow),

@@ -3,13 +3,14 @@ use crate::constraint::Constraint;
 use crate::cs::circuit::*;
 use crate::cs::circuit_trait::MemoryAccess;
 use crate::oracle::Placeholder;
+use crate::tables::TableDriver;
 use field::PrimeField;
 use std::collections::HashMap;
 
 pub struct CircuitOutput<F: PrimeField> {
     // pub state_input: Vec<Variable>,
     // pub state_output: Vec<Variable>,
-    // pub table_driver: TableDriver<F>,
+    pub table_driver: TableDriver<F>,
     pub num_of_variables: usize,
     pub constraints: Vec<(Constraint<F>, bool)>,
     pub lookups: Vec<LookupQuery<F>>,

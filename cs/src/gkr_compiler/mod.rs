@@ -2,9 +2,11 @@
 // weight function to define optimization goal, but we can not avoid placing all memory related variables
 // into the base layer.
 
-use crate::cs::circuit::CircuitOutput;
 use crate::definitions::gkr::GKRMemoryLayout;
 use crate::definitions::gkr::GKRWitnessLayout;
+use crate::definitions::gkr::NoFieldLinearRelation;
+use crate::definitions::gkr::NoFieldSingleColumnLookupRelation;
+use crate::definitions::gkr::NoFieldVectorLookupRelation;
 use crate::definitions::Degree1Constraint;
 use crate::definitions::Degree2Constraint;
 use crate::definitions::GKRAddress;
@@ -13,18 +15,22 @@ use crate::definitions::REGISTER_SIZE;
 use crate::gkr_compiler::graph::GraphHolder;
 pub use crate::gkr_compiler::layout::GKRAuxLayoutData;
 pub use crate::gkr_compiler::layout::GKRLayerDescription;
-use crate::one_row_compiler::gkr::NoFieldLinearRelation;
-use crate::one_row_compiler::gkr::NoFieldSingleColumnLookupRelation;
-use crate::one_row_compiler::gkr::NoFieldVectorLookupRelation;
 use common_constants::*;
 use field::PrimeField;
 use std::collections::*;
 
+#[derive(Clone, Copy, Debug, Hash, PartialEq, Eq, PartialOrd, Ord)]
+pub(crate) struct ShuffleRamTimestampComparisonPartialData {
+    pub(crate) intermediate_borrow: Variable,
+    pub(crate) read_timestamp: [Variable; 2],
+    pub(crate) local_timestamp_in_cycle: usize,
+}
+
 mod compiled_constraint;
 mod family_circuit;
 mod graph;
-// mod graphviz;
 mod layout;
+mod layout_utils;
 mod lookup;
 pub(crate) mod lookup_nodes;
 pub(crate) mod memory_like_grand_product;
@@ -32,6 +38,7 @@ mod range_check_exprs;
 mod utils;
 
 pub use self::compiled_constraint::*;
+pub use self::layout_utils::*;
 pub use self::lookup::*;
 pub(crate) use self::utils::*;
 
@@ -706,4 +713,63 @@ pub trait GKRGate {
         graph: &mut impl GraphHolder,
         output_layer: usize,
     ) -> (Self::Output, NoFieldGKRRelation);
+}
+
+pub fn compile_unrolled_circuit_state_transition_into_gkr<F: PrimeField>(
+    table_addition_fn: &dyn Fn(&mut crate::cs::circuit_impl::BasicAssembly<F>) -> (),
+    circuit_fn: &dyn Fn(&mut crate::cs::circuit_impl::BasicAssembly<F>) -> (),
+    max_bytecode_size_in_words: usize,
+    trace_len_log2: usize,
+) -> GKRCircuitArtifact<F> {
+    use crate::cs::circuit_impl::BasicAssembly;
+    use crate::cs::circuit_trait::Circuit;
+    use crate::gkr_compiler::GKRCompiler;
+
+    let mut cs = BasicAssembly::<F>::new();
+    (table_addition_fn)(&mut cs);
+    (circuit_fn)(&mut cs);
+
+    let (cs_output, _) = cs.finalize();
+
+    let compiler = GKRCompiler::default();
+    let compiled =
+        compiler.compile_family_circuit(cs_output, max_bytecode_size_in_words, 0, trace_len_log2);
+
+    compiled
+}
+
+use crate::witness_placer::graph_description::WitnessGraphCreator;
+
+pub fn dump_wintess_graph_for_unrolled_circuit<F: PrimeField>(
+    table_addition_fn: &dyn Fn(
+        &mut crate::cs::circuit_impl::BasicAssembly<F, WitnessGraphCreator<F>>,
+    ) -> (),
+    circuit_fn: &dyn Fn(
+        &mut crate::cs::circuit_impl::BasicAssembly<F, WitnessGraphCreator<F>>,
+    ) -> (),
+) -> WitnessGraphCreator<F> {
+    use crate::cs::circuit_impl::BasicAssembly;
+    use crate::cs::circuit_trait::Circuit;
+
+    let mut cs = BasicAssembly::<F, WitnessGraphCreator<F>>::new();
+    cs.witness_placer = Some(WitnessGraphCreator::<F>::new());
+    (table_addition_fn)(&mut cs);
+    (circuit_fn)(&mut cs);
+
+    let (_, witness_placer) = cs.finalize();
+
+    witness_placer.unwrap()
+}
+
+pub fn dump_ssa_witness_eval_form_for_unrolled_circuit<F: PrimeField>(
+    table_addition_fn: &dyn Fn(
+        &mut crate::cs::circuit_impl::BasicAssembly<F, WitnessGraphCreator<F>>,
+    ) -> (),
+    circuit_fn: &dyn Fn(
+        &mut crate::cs::circuit_impl::BasicAssembly<F, WitnessGraphCreator<F>>,
+    ) -> (),
+) -> Vec<Vec<crate::witness_placer::graph_description::RawExpression<F>>> {
+    let graph = dump_wintess_graph_for_unrolled_circuit(table_addition_fn, circuit_fn);
+    let (_resolution_order, ssa_forms) = graph.compute_resolution_order();
+    ssa_forms
 }

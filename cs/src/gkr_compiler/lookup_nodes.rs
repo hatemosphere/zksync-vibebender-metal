@@ -1,8 +1,8 @@
-use crate::cs::circuit::LookupQueryTableTypeExt;
+use crate::cs::circuit::LookupQueryTableType;
 use crate::definitions::gkr::NoFieldSingleColumnLookupRelation;
+use crate::definitions::LookupInput;
 use crate::definitions::{Degree1Constraint, GKRAddress, Variable};
 use crate::gkr_compiler::graph::{CopyNode, GKRGraph, GraphHolder, NodeIndex};
-use crate::one_row_compiler::LookupInput;
 use crate::tables::TableType;
 
 use super::compiled_constraint::GKRCompiledLinearConstraint;
@@ -289,6 +289,34 @@ impl LookupRationalPair {
                 LookupDenominator::Explicit(a_den),
                 LookupNumerator::Identity,
                 LookupDenominator::CopiedCopiedBaseInput(input),
+            ) => {
+                assert!(a.num_node.is_some());
+                assert!(a.den_node.is_some());
+                assert!(b.num_node.is_none());
+                assert!(b.den_node.is_some());
+
+                let node = LookupExplicitPairWithSingleColumnMaterializedInputAggregationNode {
+                    lhs_num: a_num,
+                    lhs_den: a_den,
+                    base_input: input,
+                };
+                let ([num, den], rel) = node.add_at_layer(graph, output_layer);
+
+                let r = Self {
+                    num: LookupNumerator::Positive(num),
+                    num_node: Some(num),
+                    den: LookupDenominator::Explicit(den),
+                    den_node: Some(den),
+                    lookup_type,
+                };
+
+                (r, rel)
+            }
+            (
+                LookupNumerator::Positive(a_num),
+                LookupDenominator::Explicit(a_den),
+                LookupNumerator::Identity,
+                LookupDenominator::CopiedBaseInput(input),
             ) => {
                 assert!(a.num_node.is_some());
                 assert!(a.den_node.is_some());

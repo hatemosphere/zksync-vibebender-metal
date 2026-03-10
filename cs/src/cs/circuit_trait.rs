@@ -19,10 +19,13 @@ pub enum Invariant {
 pub enum MemoryAccessRequest {
     RegisterRead {
         reg_idx: Variable,
+        read_value_placeholder: Placeholder,
         split_as_u8: bool,
     },
     RegisterReadWrite {
         reg_idx: Variable,
+        read_value_placeholder: Placeholder,
+        write_value_placeholder: Placeholder,
         split_read_as_u8: bool,
         split_write_as_u8: bool,
     },
@@ -45,7 +48,6 @@ pub enum WordRepresentation {
 pub struct RegisterAccess {
     pub reg_idx: Variable,
     pub read_timestamp: [Variable; NUM_TIMESTAMP_COLUMNS_FOR_RAM],
-    pub write_timestamp: [Variable; NUM_TIMESTAMP_COLUMNS_FOR_RAM],
     pub read_value: WordRepresentation,
     pub write_value: WordRepresentation,
     pub local_timestamp_in_cycle: u32,
@@ -56,7 +58,6 @@ pub struct RegisterOrRamAccess {
     pub is_register: Boolean,
     pub address: [Variable; REGISTER_SIZE],
     pub read_timestamp: [Variable; NUM_TIMESTAMP_COLUMNS_FOR_RAM],
-    pub write_timestamp: [Variable; NUM_TIMESTAMP_COLUMNS_FOR_RAM],
     pub read_value: WordRepresentation,
     pub write_value: WordRepresentation,
     pub local_timestamp_in_cycle: u32,
@@ -68,6 +69,40 @@ pub enum MemoryAccess {
     RegisterOrRam(RegisterOrRamAccess),
 }
 
+impl MemoryAccess {
+    pub fn local_timestamp_in_cycle(&self) -> u32 {
+        match self {
+            Self::RegisterOnly(inner) => inner.local_timestamp_in_cycle,
+            Self::RegisterOrRam(inner) => inner.local_timestamp_in_cycle,
+        }
+    }
+
+    pub fn is_readonly(&self) -> bool {
+        self.read_value() == self.write_value()
+    }
+
+    pub fn read_value(&self) -> WordRepresentation {
+        match self {
+            Self::RegisterOnly(inner) => inner.read_value.clone(),
+            Self::RegisterOrRam(inner) => inner.read_value.clone(),
+        }
+    }
+
+    pub fn write_value(&self) -> WordRepresentation {
+        match self {
+            Self::RegisterOnly(inner) => inner.write_value.clone(),
+            Self::RegisterOrRam(inner) => inner.write_value.clone(),
+        }
+    }
+
+    pub fn read_timestamp(&self) -> [Variable; NUM_TIMESTAMP_COLUMNS_FOR_RAM] {
+        match self {
+            Self::RegisterOnly(inner) => inner.read_timestamp,
+            Self::RegisterOrRam(inner) => inner.read_timestamp,
+        }
+    }
+}
+
 pub trait Circuit<F: PrimeField>: Sized {
     const ASSUME_MEMORY_VALUES_ASSIGNED: bool;
 
@@ -77,6 +112,8 @@ pub trait Circuit<F: PrimeField>: Sized {
     fn add_variable(&mut self) -> Variable;
     fn add_named_variable(&mut self, name: &str) -> Variable;
     fn set_name_for_variable(&mut self, var: Variable, name: &str);
+    fn add_intermediate_variable(&mut self, layer_idx: usize) -> Variable;
+    fn add_intermediate_named_variable(&mut self, name: &str, layer_idx: usize) -> Variable;
     fn set_values(&mut self, node: impl WitnessResolutionDescription<F, Self::WitnessPlacer>);
     fn get_value(&self, _var: Variable) -> Option<F> {
         None
@@ -98,6 +135,7 @@ pub trait Circuit<F: PrimeField>: Sized {
     fn request_mem_access(
         &mut self,
         request: MemoryAccessRequest,
+        name: &str,
         local_timestamp_in_cycle: u32,
     ) -> MemoryAccess;
 
@@ -144,6 +182,12 @@ pub trait Circuit<F: PrimeField>: Sized {
     }
 
     fn add_named_variable_from_constraint(
+        &mut self,
+        constraint: Constraint<F>,
+        name: &str,
+    ) -> Variable;
+
+    fn add_intermediate_named_variable_from_constraint(
         &mut self,
         constraint: Constraint<F>,
         name: &str,

@@ -1,10 +1,10 @@
-use crate::cs::circuit::LookupQueryTableTypeExt;
+use crate::cs::circuit::LookupQueryTableType;
 use crate::definitions::gkr::DECODER_LOOKUP_FORMAL_SET_INDEX;
+use crate::definitions::LookupInput;
 use crate::definitions::{Degree1Constraint, GKRAddress, Variable};
 use crate::gkr_compiler::graph::{GKRGraph, GraphHolder};
 use crate::gkr_compiler::lookup_nodes::LookupInputRelation;
 use crate::gkr_compiler::lookup_nodes::LookupRationalPair;
-use crate::one_row_compiler::LookupInput;
 use crate::tables::TableType;
 
 use super::compiled_constraint::GKRCompiledLinearConstraint;
@@ -31,7 +31,7 @@ pub(crate) fn layout_width_1_lookup_expressions<F: PrimeField>(
             .map(|el| {
                 (
                     vec![el],
-                    LookupQueryTableTypeExt::Constant(TableType::DynamicPlaceholder),
+                    LookupQueryTableType::Constant(TableType::DynamicPlaceholder),
                 )
             })
             .collect(),
@@ -61,7 +61,7 @@ pub(crate) fn layout_width_1_lookup_expressions<F: PrimeField>(
 }
 
 fn lookup_input_node_from_expr<F: PrimeField, const SINGLE_COLUMN: bool>(
-    expr: &(Vec<LookupInput<F>>, LookupQueryTableTypeExt<F>),
+    expr: &(Vec<LookupInput<F>>, LookupQueryTableType<F>),
     total_width: usize,
     expect_table_id: bool,
 ) -> LookupInputRelation<F> {
@@ -72,7 +72,7 @@ fn lookup_input_node_from_expr<F: PrimeField, const SINGLE_COLUMN: bool>(
         assert_eq!(expr.len(), 1);
         assert_eq!(
             *table_type,
-            LookupQueryTableTypeExt::Constant(TableType::DynamicPlaceholder)
+            LookupQueryTableType::Constant(TableType::DynamicPlaceholder)
         );
     } else {
         assert!(expr.len() <= total_width)
@@ -102,22 +102,22 @@ fn lookup_input_node_from_expr<F: PrimeField, const SINGLE_COLUMN: bool>(
     if SINGLE_COLUMN == false && expect_table_id {
         assert_ne!(
             *table_type,
-            LookupQueryTableTypeExt::Constant(TableType::DynamicPlaceholder)
+            LookupQueryTableType::Constant(TableType::DynamicPlaceholder)
         );
         match table_type {
-            LookupQueryTableTypeExt::Constant(constant) => {
+            LookupQueryTableType::Constant(constant) => {
                 inputs.push(Degree1Constraint {
                     linear_terms: vec![].into_boxed_slice(),
                     constant_term: F::from_u32_unchecked(constant.to_table_id() as u32),
                 });
             }
-            LookupQueryTableTypeExt::Variable(var) => {
+            LookupQueryTableType::Variable(var) => {
                 inputs.push(Degree1Constraint {
                     linear_terms: vec![(F::ONE, *var)].into_boxed_slice(),
                     constant_term: F::ZERO,
                 });
             }
-            LookupQueryTableTypeExt::Expression(expr) => match expr {
+            LookupQueryTableType::Expression(expr) => match expr {
                 LookupInput::Variable(var) => {
                     inputs.push(Degree1Constraint {
                         linear_terms: vec![(F::ONE, *var)].into_boxed_slice(),
@@ -150,7 +150,7 @@ fn lookup_input_node_from_expr<F: PrimeField, const SINGLE_COLUMN: bool>(
 
 pub(crate) fn layout_lookup_expressions<F: PrimeField, const SINGLE_COLUMN: bool>(
     graph: &mut GKRGraph,
-    expressions: Vec<(Vec<LookupInput<F>>, LookupQueryTableTypeExt<F>)>,
+    expressions: Vec<(Vec<LookupInput<F>>, LookupQueryTableType<F>)>,
     num_variables: &mut u64,
     all_variables_to_place: &mut BTreeSet<Variable>,
     variable_names: &mut HashMap<Variable, String>,
@@ -179,7 +179,7 @@ pub(crate) fn layout_lookup_expressions<F: PrimeField, const SINGLE_COLUMN: bool
     //     let input = lookup_input_node_from_expr::<F, SINGLE_COLUMN>(
     //         &(
     //             decoder_lookup,
-    //             LookupQueryTableTypeExt::Constant(TableType::Decoder),
+    //             LookupQueryTableType::Constant(TableType::Decoder),
     //         ),
     //         total_width,
     //         expect_table_id,
@@ -221,7 +221,7 @@ pub(crate) fn layout_lookup_expressions<F: PrimeField, const SINGLE_COLUMN: bool
             assert_eq!(expr.len(), 1);
             assert_eq!(
                 *table_type,
-                LookupQueryTableTypeExt::Constant(TableType::DynamicPlaceholder)
+                LookupQueryTableType::Constant(TableType::DynamicPlaceholder)
             );
         } else {
             assert!(expr.len() <= total_width);
@@ -242,7 +242,7 @@ pub(crate) fn layout_lookup_expressions<F: PrimeField, const SINGLE_COLUMN: bool
                 let input = lookup_input_node_from_expr::<F, SINGLE_COLUMN>(
                     &(
                         decoder_lookup,
-                        LookupQueryTableTypeExt::Constant(TableType::Decoder),
+                        LookupQueryTableType::Constant(TableType::Decoder),
                     ),
                     total_width,
                     expect_table_id,
@@ -421,7 +421,7 @@ pub(crate) fn layout_lookup_expressions<F: PrimeField, const SINGLE_COLUMN: bool
                 let input = lookup_input_node_from_expr::<F, SINGLE_COLUMN>(
                     &(
                         decoder_lookup,
-                        LookupQueryTableTypeExt::Constant(TableType::Decoder),
+                        LookupQueryTableType::Constant(TableType::Decoder),
                     ),
                     total_width,
                     expect_table_id,
