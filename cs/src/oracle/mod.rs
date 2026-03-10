@@ -1,8 +1,10 @@
+use crate::definitions::TimestampScalar;
+use crate::gkr_circuits::ExecutorFamilyDecoderData;
 use field::PrimeField;
 
-use crate::definitions::TimestampScalar;
+mod placeholder;
 
-use super::placeholder::Placeholder;
+pub use self::placeholder::Placeholder;
 
 pub trait Oracle<F: PrimeField>: Send + Sync {
     fn get_witness_from_placeholder(

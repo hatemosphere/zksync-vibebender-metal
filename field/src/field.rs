@@ -93,6 +93,9 @@ pub trait PrimeField: Field {
     const MINUS_ONE: Self;
     const NUM_BYTES_IN_REPR: usize;
 
+    const IS_MONT_REPR: bool;
+    const MONT_K: u32;
+
     const CHAR_BITS: usize;
     const CHARACTERISTICS: u32;
 

@@ -1,7 +1,8 @@
 use super::scalar_witness_type_set::ScalarWitnessTypeSet;
 use super::*;
-use crate::cs::oracle::{ExecutorFamilyDecoderData, Oracle};
 use crate::definitions::Variable;
+use crate::gkr_circuits::ExecutorFamilyDecoderData;
+use crate::oracle::*;
 use crate::tables::TableDriver;
 use field::PrimeField;
 
@@ -250,8 +251,9 @@ impl<F: PrimeField> WitnessPlacer<F> for CSDebugWitnessEvaluator<F> {
         inputs: &[Self::Field; M],
         table_id: &Self::U16,
     ) -> [Self::Field; N] {
-        self.table_driver
-            .lookup_values::<N>(inputs, *table_id as u32)
+        todo!()
+        // self.table_driver
+        //     .lookup_values::<N>(inputs, *table_id as u32)
     }
 
     #[inline(always)]
@@ -270,9 +272,10 @@ impl<F: PrimeField> WitnessPlacer<F> for CSDebugWitnessEvaluator<F> {
 
     #[inline(always)]
     fn lookup_enforce<const M: usize>(&mut self, inputs: &[Self::Field; M], table_id: &Self::U16) {
-        let _ = self
-            .table_driver
-            .enforce_values_and_get_absolute_index(inputs, *table_id as u32);
+        todo!()
+        // let _ = self
+        //     .table_driver
+        //     .enforce_values_and_get_absolute_index(inputs, *table_id as u32);
     }
 
     fn assume_assigned(&mut self, _variable: Variable) {
@@ -290,7 +293,7 @@ impl<F: PrimeField> WitnessPlacer<F> for CSDebugWitnessEvaluator<F> {
         let entry = table[idx];
 
         self.assign_u8(decoder_data.rs1_index, &entry.rs1_index);
-        self.assign_u8(decoder_data.rs2_index, &entry.rs2_index);
+        self.assign_u16(decoder_data.rs2_index, &entry.rs2_index);
         self.assign_u8(decoder_data.rd_index, &entry.rd_index);
         self.assign_u32_from_u16_parts(decoder_data.imm, &entry.imm);
         if let Some(funct3) = decoder_data.funct3 {

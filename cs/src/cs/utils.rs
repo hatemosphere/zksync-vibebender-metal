@@ -1,8 +1,8 @@
 use super::*;
 use crate::constraint::{Constraint, Term};
-use crate::cs::circuit::*;
-use crate::cs::witness_placer::*;
+use crate::cs::circuit_trait::*;
 use crate::types::*;
+use crate::witness_placer::*;
 use field::PrimeField;
 
 #[track_caller]

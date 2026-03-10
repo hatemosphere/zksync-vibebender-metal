@@ -1,6 +1,9 @@
 // zero_entry table should have id = 0 (this is a strict requirement!)
 pub const ZERO_ENTRY_TABLE_ID: u32 = 0;
 
+// max table width including(!) table ID
+pub const MAX_TABLE_WIDTH: usize = 16;
+
 // and, or, xor table should have id to match corresponding funct3 for these opcodes
 pub const AND_TABLE_ID: u32 = 7;
 pub const XOR_TABLE_ID: u32 = 4;

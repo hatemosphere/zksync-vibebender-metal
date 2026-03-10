@@ -1,6 +1,6 @@
 use std::collections::HashSet;
 
-// use crate::cs::circuit::Circuit;
+use crate::cs::circuit_trait::Circuit;
 use crate::definitions::*;
 use crate::types::{Boolean, Num};
 use field::PrimeField;
@@ -686,6 +686,17 @@ impl<F: PrimeField> std::ops::Sub for Constraint<F> {
         //     ans.sub_assign(term);
         // });
         ans
+    }
+}
+
+impl<F: PrimeField> std::ops::SubAssign<Constraint<F>> for Constraint<F> {
+    fn sub_assign(&mut self, rhs: Self) {
+        self.terms.extend(rhs.terms.into_iter().map(|mut el| {
+            el.scale(&F::MINUS_ONE);
+
+            el
+        }));
+        self.normalize();
     }
 }
 

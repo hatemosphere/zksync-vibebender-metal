@@ -1,5 +1,5 @@
-use super::placeholder::Placeholder;
 use crate::definitions::*;
+use crate::oracle::Placeholder;
 use core::fmt::Debug;
 use field::{Field, PrimeField};
 use std::any::Any;

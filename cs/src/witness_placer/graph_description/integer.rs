@@ -1,12 +1,9 @@
 use super::boolean::BoolNodeExpression;
 use super::field::FieldNodeExpression;
 use super::*;
-use crate::cs::placeholder::Placeholder;
-use crate::cs::witness_placer::{
-    WitnessComputationCore, WitnessComputationalI32, WitnessComputationalInteger,
-    WitnessComputationalU16, WitnessComputationalU32, WitnessComputationalU8,
-};
-use crate::cs::Variable;
+use crate::definitions::Variable;
+use crate::oracle::Placeholder;
+use crate::witness_placer::*;
 use ::field::PrimeField;
 use core::fmt::Debug;
 

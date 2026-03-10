@@ -1,9 +1,9 @@
 use super::field::FieldNodeExpression;
 use super::integer::FixedWidthIntegerNodeExpression;
 use super::*;
-use crate::cs::placeholder::Placeholder;
-use crate::cs::witness_placer::WitnessMask;
-use crate::cs::Variable;
+use crate::definitions::Variable;
+use crate::oracle::Placeholder;
+use crate::witness_placer::WitnessMask;
 use ::field::PrimeField;
 
 #[derive(Clone, Debug, PartialEq, Eq, Hash, serde::Serialize, serde::Deserialize)]

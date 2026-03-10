@@ -2,6 +2,8 @@ use super::*;
 use crate::definitions::*;
 use riscv_transpiler::ir::simple_instruction_set::*;
 
+pub(crate) mod utils;
+
 pub mod add_sub_family;
 pub mod binary_shifts_family;
 pub mod decoder_trait;

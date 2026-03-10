@@ -155,36 +155,6 @@ impl quote::ToTokens for ColumnAddress {
     }
 }
 
-impl<F: PrimeField> LookupInput<F> {
-    pub fn empty() -> Self {
-        LookupInput::Expression {
-            linear_terms: vec![],
-            constant_coeff: F::ZERO,
-        }
-    }
-}
-
-impl<F: PrimeField> From<Variable> for LookupInput<F> {
-    fn from(value: Variable) -> Self {
-        Self::Variable(value)
-    }
-}
-
-impl<F: PrimeField> From<Constraint<F>> for LookupInput<F> {
-    #[track_caller]
-    fn from(value: Constraint<F>) -> Self {
-        // NOTE: we allow literal constants here
-        assert!(value.degree() <= 1);
-        let mut value = value;
-        value.normalize();
-        let (_, linear_terms, constant_coeff) = value.split_max_quadratic();
-        Self::Expression {
-            linear_terms,
-            constant_coeff,
-        }
-    }
-}
-
 impl CompiledDegree2Constraint<Mersenne31Field> {
     pub fn evaluate_at_row_on_main_domain(
         &self,

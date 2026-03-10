@@ -393,6 +393,9 @@ impl PrimeField for BabyBearField {
     const CHAR_BITS: usize = 31;
     const CHARACTERISTICS: u32 = Self::ORDER;
 
+    const IS_MONT_REPR: bool = true;
+    const MONT_K: u32 = BabyBearField::MONT_K;
+
     #[cfg_attr(not(feature = "no_inline"), inline(always))]
     fn as_u32(self) -> u32 {
         self.as_u32_reduced()
