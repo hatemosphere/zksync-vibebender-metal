@@ -425,6 +425,18 @@ impl PrimeField for BabyBearField {
     fn from_reduced_raw_repr(value: u32) -> Self {
         Self(value)
     }
+    #[cfg_attr(not(feature = "no_inline"), inline(always))]
+    fn from_raw_repr_with_reduction(value: u32) -> Self {
+        // at most two subtractions needed
+        let mut c = value;
+        if c >= Self::ORDER {
+            c -= Self::ORDER;
+        }
+        if c >= Self::ORDER {
+            c -= Self::ORDER;
+        }
+        Self(c)
+    }
     #[track_caller]
     #[cfg_attr(not(feature = "no_inline"), inline(always))]
     fn as_boolean(&self) -> bool {

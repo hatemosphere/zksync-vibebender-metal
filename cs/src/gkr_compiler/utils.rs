@@ -110,7 +110,6 @@ pub(crate) fn layout_machine_state_for_preprocessed_bytecode<F: PrimeField>(
         rs1_index,
         rs2_index,
         rd_index,
-        rd_is_zero,
         imm,
         funct3,
         funct7,
@@ -148,12 +147,12 @@ pub(crate) fn layout_machine_state_for_preprocessed_bytecode<F: PrimeField>(
     let rd_is_zero =
         graph.layout_witness_subtree_multiple_variables([rd_is_zero], all_variables_to_place);
     let imm = graph.layout_witness_subtree_multiple_variables(imm, all_variables_to_place);
-    let funct3 = if funct3.is_placeholder() {
-        None
-    } else {
+    let funct3 = if let Some(funct3) = funct3 {
         let funct3 =
             graph.layout_witness_subtree_multiple_variables([funct3], all_variables_to_place);
         Some(funct3[0])
+    } else {
+        None
     };
 
     assert!(funct7.is_none());

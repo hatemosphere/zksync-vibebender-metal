@@ -1576,14 +1576,11 @@ impl<F: PrimeField> WitnessPlacer<F> for WitnessGraphCreator<F> {
         self.variables_considered_assigned
             .insert(decoder_data.rd_index);
         self.variables_considered_assigned
-            .insert(decoder_data.rd_is_zero);
-        self.variables_considered_assigned
             .insert(decoder_data.imm[0]);
         self.variables_considered_assigned
             .insert(decoder_data.imm[1]);
-        if decoder_data.funct3.is_placeholder() == false {
-            self.variables_considered_assigned
-                .insert(decoder_data.funct3);
+        if let Some(funct3) = decoder_data.funct3 {
+            self.variables_considered_assigned.insert(funct3);
         }
         if let Some(funct7) = decoder_data.funct7 {
             self.variables_considered_assigned.insert(funct7);

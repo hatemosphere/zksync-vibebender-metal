@@ -110,6 +110,7 @@ pub trait PrimeField: Field {
     }
     fn from_u32(value: u32) -> Option<Self>;
     fn from_reduced_raw_repr(value: u32) -> Self;
+    fn from_raw_repr_with_reduction(value: u32) -> Self;
 
     fn as_boolean(&self) -> bool;
 

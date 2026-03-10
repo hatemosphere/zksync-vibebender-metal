@@ -1,9 +1,8 @@
-use crate::ir::DelegationType;
-use crate::ir::Instruction;
-use crate::ir::InstructionName;
+use crate::ir::simple_instruction_set::*;
 use crate::jit::{MachineState, MAX_NUM_COUNTERS};
 use common_constants::circuit_families::*;
 use common_constants::{TimestampScalar, INITIAL_TIMESTAMP, TIMESTAMP_STEP};
+use field::PrimeField;
 use std::fmt::Debug;
 
 #[cfg(feature = "flamegraph")]
@@ -12,6 +11,7 @@ mod instructions;
 mod ram_with_rom_region;
 mod replay_snapshotter;
 mod simple_tape;
+mod uart;
 
 pub(crate) mod delegations;
 
@@ -20,6 +20,7 @@ pub use self::flamegraph::*;
 pub use self::ram_with_rom_region::RamWithRomRegion;
 pub use self::replay_snapshotter::*;
 pub use self::simple_tape::SimpleTape;
+pub use self::uart::QuasiUARTSource;
 
 pub trait Counters: 'static + Clone + Copy + Debug + PartialEq + Eq + Send + Sync {
     fn bump_bigint(&mut self, by: usize);
@@ -186,7 +187,7 @@ impl NonDeterminismCSRSource for () {
     fn write_with_memory_access_dyn(&mut self, ram: &dyn RamPeek, value: u32) {}
 }
 
-impl NonDeterminismCSRSource for risc_v_simulator::abstractions::non_determinism::QuasiUARTSource {
+impl NonDeterminismCSRSource for QuasiUARTSource {
     fn read(&mut self) -> u32 {
         // self.oracle.pop_front().unwrap_or_default()
         self.oracle.pop_front().expect("must have an answer")
@@ -205,7 +206,12 @@ pub struct VM<C: Counters> {
 }
 
 impl<C: Counters> VM<C> {
-    pub fn run_basic_unrolled<S: Snapshotter<C>, R: RAM, ND: NonDeterminismCSRSource>(
+    pub fn run_basic_unrolled<
+        S: Snapshotter<C>,
+        R: RAM,
+        ND: NonDeterminismCSRSource,
+        F: PrimeField,
+    >(
         state: &mut State<C>,
         ram: &mut R,
         snapshotter: &mut S,
@@ -216,7 +222,7 @@ impl<C: Counters> VM<C> {
         for _cycle in 0..cycle_bound {
             let pc = state.pc;
 
-            Self::run_step(state, ram, snapshotter, instruction_tape, nd);
+            Self::run_step::<S, R, ND, F>(state, ram, snapshotter, instruction_tape, nd);
 
             state.timestamp += TIMESTAMP_STEP;
             if state.pc == pc {
@@ -231,7 +237,12 @@ impl<C: Counters> VM<C> {
 
         false
     }
-    pub fn run_by_timestamp_bound<S: Snapshotter<C>, R: RAM, ND: NonDeterminismCSRSource>(
+    pub fn run_by_timestamp_bound<
+        S: Snapshotter<C>,
+        R: RAM,
+        ND: NonDeterminismCSRSource,
+        F: PrimeField,
+    >(
         state: &mut State<C>,
         ram: &mut R,
         snapshotter: &mut S,
@@ -242,7 +253,7 @@ impl<C: Counters> VM<C> {
         while state.timestamp < timestamp_bound {
             let pc = state.pc;
 
-            Self::run_step(state, ram, snapshotter, instruction_tape, nd);
+            Self::run_step::<S, R, ND, F>(state, ram, snapshotter, instruction_tape, nd);
 
             state.timestamp += TIMESTAMP_STEP;
             if state.pc == pc {
@@ -263,6 +274,7 @@ impl<C: Counters> VM<C> {
         S: Snapshotter<C>,
         R: RAM + FlamegraphReadableRam,
         ND: NonDeterminismCSRSource,
+        F: PrimeField,
     >(
         state: &mut State<C>,
         ram: &mut R,
@@ -276,7 +288,7 @@ impl<C: Counters> VM<C> {
             let pc = state.pc;
 
             profiler.sample_cycle(state, &*ram, cycle);
-            Self::run_step(state, ram, snapshotter, instruction_tape, nd);
+            Self::run_step::<S, R, ND, F>(state, ram, snapshotter, instruction_tape, nd);
 
             state.timestamp += TIMESTAMP_STEP;
             if state.pc == pc {
@@ -300,6 +312,7 @@ impl<C: Counters> VM<C> {
         S: Snapshotter<C>,
         R: RAM + FlamegraphReadableRam,
         ND: NonDeterminismCSRSource,
+        F: PrimeField,
     >(
         state: &mut State<C>,
         ram: &mut R,
@@ -317,7 +330,7 @@ impl<C: Counters> VM<C> {
             profiler.sample_cycle(state, &*ram, cycle);
             cycle += 1;
 
-            Self::run_step(state, ram, snapshotter, instruction_tape, nd);
+            Self::run_step::<S, R, ND, F>(state, ram, snapshotter, instruction_tape, nd);
 
             state.timestamp += TIMESTAMP_STEP;
             if state.pc == pc {
@@ -337,7 +350,7 @@ impl<C: Counters> VM<C> {
     }
 
     #[inline(always)]
-    pub fn run_step<S: Snapshotter<C>, R: RAM, ND: NonDeterminismCSRSource>(
+    pub fn run_step<S: Snapshotter<C>, R: RAM, ND: NonDeterminismCSRSource, F: PrimeField>(
         state: &mut State<C>,
         ram: &mut R,
         snapshotter: &mut S,
@@ -351,26 +364,73 @@ impl<C: Counters> VM<C> {
             debug_assert_eq!(state.timestamp % TIMESTAMP_STEP, 0);
             match instr.name {
                 InstructionName::Illegal => illegal(state, ram, snapshotter, instr),
-                InstructionName::Lui => lui_auipc::lui::<C, S, R>(state, ram, snapshotter, instr),
+                InstructionName::Nop => {
+                    add_sub_family::nop_op::<C, S, R>(state, ram, snapshotter, instr)
+                }
+                InstructionName::Add => {
+                    add_sub_family::add_sub::add_op::<C, S, R>(state, ram, snapshotter, instr)
+                }
+                InstructionName::Sub => {
+                    add_sub_family::add_sub::sub_op(state, ram, snapshotter, instr)
+                }
                 InstructionName::Auipc => {
-                    lui_auipc::auipc::<C, S, R>(state, ram, snapshotter, instr)
+                    add_sub_family::auipc::auipc::<C, S, R>(state, ram, snapshotter, instr)
                 }
+                InstructionName::ZimopAdd => {
+                    add_sub_family::mop::mop_addmod::<C, S, R, F>(state, ram, snapshotter, instr)
+                }
+                InstructionName::ZimopSub => {
+                    add_sub_family::mop::mop_submod::<C, S, R, F>(state, ram, snapshotter, instr)
+                }
+                InstructionName::ZimopMul => {
+                    add_sub_family::mop::mop_mulmod::<C, S, R, F>(state, ram, snapshotter, instr)
+                }
+                InstructionName::ZicsrNonDeterminismRead => {
+                    add_sub_family::non_determinism::nd_read::<C, S, R, ND>(
+                        state,
+                        ram,
+                        snapshotter,
+                        instr,
+                        nd,
+                    )
+                }
+                InstructionName::ZicsrNonDeterminismWrite => {
+                    add_sub_family::non_determinism::nd_write::<C, S, R, ND>(
+                        state,
+                        ram,
+                        snapshotter,
+                        instr,
+                        nd,
+                    )
+                }
+                InstructionName::ZicsrDelegation => add_sub_family::delegation::call_delegation::<
+                    C,
+                    S,
+                    R,
+                >(
+                    state, ram, snapshotter, instr
+                ),
 
-                InstructionName::Jal => jal_jalr::jal::<C, S, R>(state, ram, snapshotter, instr),
-                InstructionName::Jalr => jal_jalr::jalr::<C, S, R>(state, ram, snapshotter, instr),
-
-                InstructionName::Slt => slt::slt::<C, S, R, false>(state, ram, snapshotter, instr),
-                InstructionName::Slti => slt::slt::<C, S, R, true>(state, ram, snapshotter, instr),
-
+                InstructionName::Jal => {
+                    jump_branch_slt_family::jal_jalr::jal::<C, S, R>(state, ram, snapshotter, instr)
+                }
+                InstructionName::Jalr => jump_branch_slt_family::jal_jalr::jalr::<C, S, R>(
+                    state,
+                    ram,
+                    snapshotter,
+                    instr,
+                ),
+                InstructionName::Branch => jump_branch_slt_family::branch::branch::<C, S, R>(
+                    state,
+                    ram,
+                    snapshotter,
+                    instr,
+                ),
+                InstructionName::Slt => {
+                    jump_branch_slt_family::slt::slt::<C, S, R>(state, ram, snapshotter, instr)
+                }
                 InstructionName::Sltu => {
-                    slt::sltu::<C, S, R, false>(state, ram, snapshotter, instr)
-                }
-                InstructionName::Sltiu => {
-                    slt::sltu::<C, S, R, true>(state, ram, snapshotter, instr)
-                }
-
-                InstructionName::Branch => {
-                    branch::branch::<C, S, R>(state, ram, snapshotter, instr)
+                    jump_branch_slt_family::slt::sltu::<C, S, R>(state, ram, snapshotter, instr)
                 }
 
                 InstructionName::Sw => memory::sw::<C, S, R>(state, ram, snapshotter, instr),
@@ -388,69 +448,30 @@ impl<C: Counters> VM<C> {
                 }
                 InstructionName::Lb => memory::lb::<C, S, R, true>(state, ram, snapshotter, instr),
 
-                InstructionName::Add => {
-                    add_sub::add_op::<C, S, R, false>(state, ram, snapshotter, instr)
-                }
-                InstructionName::Addi => {
-                    add_sub::add_op::<C, S, R, true>(state, ram, snapshotter, instr)
-                }
-                InstructionName::Sub => add_sub::sub_op::<C, S, R>(state, ram, snapshotter, instr),
                 InstructionName::Xor => {
-                    binary::xor::<C, S, R, false>(state, ram, snapshotter, instr)
-                }
-                InstructionName::Xori => {
-                    binary::xor::<C, S, R, true>(state, ram, snapshotter, instr)
+                    binary_shifts_family::binary_ops::xor::<C, S, R>(state, ram, snapshotter, instr)
                 }
                 InstructionName::And => {
-                    binary::and::<C, S, R, false>(state, ram, snapshotter, instr)
+                    binary_shifts_family::binary_ops::and::<C, S, R>(state, ram, snapshotter, instr)
                 }
-                InstructionName::Andi => {
-                    binary::and::<C, S, R, true>(state, ram, snapshotter, instr)
+                InstructionName::Or => {
+                    binary_shifts_family::binary_ops::or::<C, S, R>(state, ram, snapshotter, instr)
                 }
-                InstructionName::Or => binary::or::<C, S, R, false>(state, ram, snapshotter, instr),
-                InstructionName::Ori => binary::or::<C, S, R, true>(state, ram, snapshotter, instr),
                 InstructionName::Sll => {
-                    shifts::sll::<C, S, R, false>(state, ram, snapshotter, instr)
-                }
-                InstructionName::Slli => {
-                    shifts::sll::<C, S, R, true>(state, ram, snapshotter, instr)
+                    binary_shifts_family::shifts::sll::<C, S, R>(state, ram, snapshotter, instr)
                 }
                 InstructionName::Srl => {
-                    shifts::srl::<C, S, R, false>(state, ram, snapshotter, instr)
-                }
-                InstructionName::Srli => {
-                    shifts::srl::<C, S, R, true>(state, ram, snapshotter, instr)
+                    binary_shifts_family::shifts::srl::<C, S, R>(state, ram, snapshotter, instr)
                 }
                 InstructionName::Sra => {
-                    shifts::sra::<C, S, R, false>(state, ram, snapshotter, instr)
+                    binary_shifts_family::shifts::sra::<C, S, R>(state, ram, snapshotter, instr)
                 }
-                InstructionName::Srai => {
-                    shifts::sra::<C, S, R, true>(state, ram, snapshotter, instr)
-                }
+
                 InstructionName::Mul => mul_div::mul::<C, S, R>(state, ram, snapshotter, instr),
                 InstructionName::Mulhu => mul_div::mulhu::<C, S, R>(state, ram, snapshotter, instr),
                 InstructionName::Divu => mul_div::divu::<C, S, R>(state, ram, snapshotter, instr),
                 InstructionName::Remu => mul_div::remu::<C, S, R>(state, ram, snapshotter, instr),
 
-                InstructionName::ZimopAdd => {
-                    mop::mop_addmod::<C, S, R>(state, ram, snapshotter, instr)
-                }
-                InstructionName::ZimopSub => {
-                    mop::mop_submod::<C, S, R>(state, ram, snapshotter, instr)
-                }
-                InstructionName::ZimopMul => {
-                    mop::mop_mulmod::<C, S, R>(state, ram, snapshotter, instr)
-                }
-
-                InstructionName::ZicsrNonDeterminismRead => {
-                    zicsr::nd_read::<C, S, R, ND>(state, ram, snapshotter, instr, nd)
-                }
-                InstructionName::ZicsrNonDeterminismWrite => {
-                    zicsr::nd_write::<C, S, R, ND>(state, ram, snapshotter, instr, nd)
-                }
-                InstructionName::ZicsrDelegation => {
-                    zicsr::call_delegation::<C, S, R>(state, ram, snapshotter, instr)
-                }
                 a @ _ => {
                     panic!("Unknown instruction {:?}", a);
                 }
@@ -460,32 +481,11 @@ impl<C: Counters> VM<C> {
     }
 }
 
-// pub fn run_default(
-//     num_snapshots: usize,
-//     ram: &mut RamWithRomRegion<5>,
-//     snapshotter: &mut SimpleSnapshotter<DelegationsCounters, 5>,
-//     instruction_tape: &mut SimpleTape,
-//     snapshot_period: usize,
-// ) -> bool {
-//     let mut state = State::initial_with_counters(DelegationsCounters::default());
-//     VM::<DelegationsCounters>::run_basic_unrolled::<
-//         SimpleSnapshotter<DelegationsCounters, 5>,
-//         RamWithRomRegion<5>,
-//         _,
-//     >(
-//         &mut state,
-//         num_snapshots,
-//         ram,
-//         snapshotter,
-//         instruction_tape,
-//         snapshot_period,
-//         &mut (),
-//     )
-// }
-
 #[cfg(test)]
 pub(crate) mod test {
-    use crate::ir::{preprocess_bytecode, FullUnsignedMachineDecoderConfig};
+    use field::Mersenne31Field;
+
+    use crate::ir::FullUnsignedMachineDecoderConfig;
 
     use super::*;
     use std::path::Path;
@@ -525,7 +525,7 @@ pub(crate) mod test {
         >::new_with_cycle_limit(cycles_bound, state);
 
         let now = std::time::Instant::now();
-        VM::<DelegationsCounters>::run_basic_unrolled::<_, _, _>(
+        VM::<DelegationsCounters>::run_basic_unrolled::<_, _, _, Mersenne31Field>(
             &mut state,
             &mut ram,
             &mut snapshotter,
@@ -573,7 +573,7 @@ pub(crate) mod test {
         >::new_with_cycle_limit(cycles_bound, state);
 
         let now = std::time::Instant::now();
-        VM::<DelegationsCounters>::run_basic_unrolled::<_, _, _>(
+        VM::<DelegationsCounters>::run_basic_unrolled::<_, _, _, Mersenne31Field>(
             &mut state,
             &mut ram,
             &mut snapshotter,
@@ -614,7 +614,6 @@ pub(crate) mod test {
     #[serial_test::serial]
     fn test_reference_block_exec() {
         use crate::ir::*;
-        use risc_v_simulator::abstractions::non_determinism::QuasiUARTSource;
 
         let (_, binary) = read_binary(&Path::new("examples/zksync_os/app.bin"));
         let (_, text) = read_binary(&Path::new("examples/zksync_os/app.text"));
@@ -648,6 +647,7 @@ pub(crate) mod test {
             SimpleSnapshotter<DelegationsCounters, { common_constants::rom::ROM_SECOND_WORD_BITS }>,
             _,
             _,
+            Mersenne31Field,
         >(
             &mut state,
             &mut ram,

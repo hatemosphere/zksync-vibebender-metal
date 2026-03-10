@@ -814,9 +814,8 @@ impl<F: PrimeField, W: WitnessPlacer<F>> Circuit<F> for BasicAssembly<F, W> {
                 rs1_index: self.add_variable(),
                 rs2_index: self.add_variable(),
                 rd_index: self.add_variable(),
-                rd_is_zero: self.add_variable(), // boolean in nature, but constrained by prover directly
                 imm: std::array::from_fn(|_| self.add_variable()),
-                funct3: self.add_variable(),
+                funct3:  Some(self.add_variable()),
                 funct7: Some(self.add_variable()),
                 circuit_family_extra_mask: self.add_variable(),
                 circuit_family_mask_bits: Vec::new(),
@@ -889,9 +888,8 @@ impl<F: PrimeField, W: WitnessPlacer<F>> Circuit<F> for BasicAssembly<F, W> {
             rs1_index: self.add_variable(),
             rs2_index: self.add_variable(),
             rd_index: self.add_variable(),
-            rd_is_zero: self.add_variable(), // boolean in nature, but constrained by prover directly
             imm: std::array::from_fn(|_| self.add_variable()),
-            funct3: self.add_variable(),
+            funct3: Some(self.add_variable()),
             funct7: if ASSUME_PREPROCESSED_DECODER_TABLE {
                 None
             } else {
@@ -914,15 +912,11 @@ impl<F: PrimeField, W: WitnessPlacer<F>> Circuit<F> for BasicAssembly<F, W> {
             decoder_data.rd_index,
             Invariant::Substituted((Placeholder::RDIndex, 0)),
         );
-        self.require_invariant(
-            decoder_data.rd_is_zero,
-            Invariant::Substituted((Placeholder::RDIsZero, 0)),
-        );
         decoder_data.imm.iter().enumerate().for_each(|(i, el)| {
             self.require_invariant(*el, Invariant::Substituted((Placeholder::DecodedImm, i)))
         });
         self.require_invariant(
-            decoder_data.funct3,
+            decoder_data.funct3.unwrap(),
             Invariant::Substituted((Placeholder::DecodedFunct3, 0)),
         );
         if ASSUME_PREPROCESSED_DECODER_TABLE == false {
@@ -1053,14 +1047,13 @@ impl<F: PrimeField, W: WitnessPlacer<F>> Circuit<F> for BasicAssembly<F, W> {
             rs1_index: self.add_named_variable("rs1 index from decoder"),
             rs2_index: self.add_named_variable("rs2 index from decoder"),
             rd_index: self.add_named_variable("rd index from decoder"),
-            rd_is_zero: self.add_named_variable("rd is zero from decoder"), // boolean in nature
             imm: std::array::from_fn(|i| {
                 self.add_named_variable(&format!("imm[{}] from decoder", i))
             }),
             funct3: if need_funct3 {
-                self.add_named_variable("funct3 from decoder")
+                Some(self.add_named_variable("funct3 from decoder"))
             } else {
-                Variable::placeholder_variable()
+                None
             },
             funct7: None,
             circuit_family_extra_mask: Variable::placeholder_variable(),
@@ -1080,16 +1073,12 @@ impl<F: PrimeField, W: WitnessPlacer<F>> Circuit<F> for BasicAssembly<F, W> {
             decoder_data.rd_index,
             Invariant::Substituted((Placeholder::RDIndex, 0)),
         );
-        self.require_invariant(
-            decoder_data.rd_is_zero,
-            Invariant::Substituted((Placeholder::RDIsZero, 0)),
-        );
         decoder_data.imm.iter().enumerate().for_each(|(i, el)| {
             self.require_invariant(*el, Invariant::Substituted((Placeholder::DecodedImm, i)))
         });
         if need_funct3 {
             self.require_invariant(
-                decoder_data.funct3,
+                decoder_data.funct3.unwrap(),
                 Invariant::Substituted((Placeholder::DecodedFunct3, 0)),
             );
         }

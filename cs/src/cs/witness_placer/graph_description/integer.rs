@@ -6,7 +6,7 @@ use crate::cs::witness_placer::{
     WitnessComputationCore, WitnessComputationalI32, WitnessComputationalInteger,
     WitnessComputationalU16, WitnessComputationalU32, WitnessComputationalU8,
 };
-use crate::one_row_compiler::Variable;
+use crate::cs::Variable;
 use ::field::PrimeField;
 use core::fmt::Debug;
 

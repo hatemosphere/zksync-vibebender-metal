@@ -7,8 +7,8 @@ use crate::cs::utils::mask_linear_term_by_boolean_into_accumulator_constraint;
 use crate::cs::witness_placer::WitnessComputationalField;
 use crate::cs::witness_placer::WitnessPlacer;
 use crate::cs::witness_placer::WitnessTypeSet;
-use crate::one_row_compiler::Variable;
 use crate::types::*;
+use crate::cs::Variable;
 use ::field::PrimeField;
 
 #[track_caller]

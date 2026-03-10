@@ -1,7 +1,7 @@
 use super::*;
 use super::{boolean::BoolNodeExpression, integer::FixedWidthIntegerNodeExpression};
 use crate::cs::{placeholder::Placeholder, witness_placer::WitnessComputationalField};
-use crate::one_row_compiler::Variable;
+use crate::cs::Variable;
 use ::field::PrimeField;
 
 #[derive(Clone, Debug, PartialEq, Eq, Hash, serde::Serialize, serde::Deserialize)]

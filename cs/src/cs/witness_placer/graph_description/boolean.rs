@@ -3,7 +3,7 @@ use super::integer::FixedWidthIntegerNodeExpression;
 use super::*;
 use crate::cs::placeholder::Placeholder;
 use crate::cs::witness_placer::WitnessMask;
-use crate::one_row_compiler::Variable;
+use crate::cs::Variable;
 use ::field::PrimeField;
 
 #[derive(Clone, Debug, PartialEq, Eq, Hash, serde::Serialize, serde::Deserialize)]

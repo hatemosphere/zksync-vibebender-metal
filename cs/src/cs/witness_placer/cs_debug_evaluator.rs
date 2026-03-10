@@ -292,9 +292,10 @@ impl<F: PrimeField> WitnessPlacer<F> for CSDebugWitnessEvaluator<F> {
         self.assign_u8(decoder_data.rs1_index, &entry.rs1_index);
         self.assign_u8(decoder_data.rs2_index, &entry.rs2_index);
         self.assign_u8(decoder_data.rd_index, &entry.rd_index);
-        self.assign_mask(decoder_data.rd_is_zero, &entry.rd_is_zero);
         self.assign_u32_from_u16_parts(decoder_data.imm, &entry.imm);
-        self.assign_u8(decoder_data.funct3, &entry.funct3);
+        if let Some(funct3) = decoder_data.funct3 {
+            self.assign_u8(funct3, &entry.funct3.unwrap());
+        }
         if let Some(funct7) = decoder_data.funct7 {
             self.assign_u8(funct7, &entry.funct7.unwrap());
         }

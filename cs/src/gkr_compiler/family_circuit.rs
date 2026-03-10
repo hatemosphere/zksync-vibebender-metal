@@ -128,15 +128,13 @@ impl<F: PrimeField> GKRCompiler<F> {
                 decoder_lookup_trivial_vars.extend([executor_machine_state.decoder_data.rs1_index]);
                 decoder_lookup_trivial_vars.extend([executor_machine_state.decoder_data.rs2_index]);
                 decoder_lookup_trivial_vars.extend([executor_machine_state.decoder_data.rd_index]);
-                decoder_lookup_trivial_vars
-                    .extend([executor_machine_state.decoder_data.rd_is_zero]);
                 decoder_lookup_trivial_vars.extend(executor_machine_state.decoder_data.imm);
-                decoder_table_width = 2 + 1 + 1 + 1 + 1 + REGISTER_SIZE;
+                decoder_table_width = 2 + 1 + 1 + 1 + REGISTER_SIZE;
                 decode_table_columns_mask.resize(decoder_table_width, true);
 
-                if executor_machine_state.decoder_data.funct3.is_placeholder() == false {
+                if let Some(funct3) = executor_machine_state.decoder_data.funct3 {
                     decoder_lookup_trivial_vars
-                        .extend([executor_machine_state.decoder_data.funct3]);
+                        .extend([funct3]);
                     decoder_table_width += 1;
                     decode_table_columns_mask.push(true);
                 } else {
@@ -804,14 +802,12 @@ impl<F: PrimeField> GKRCompiler<F> {
             let rd_index =
                 graph.get_address_for_variable(executor_machine_state.decoder_data.rd_index);
 
-            let rd_is_zero =
-                graph.get_address_for_variable(executor_machine_state.decoder_data.rd_is_zero);
             let [imm_low, imm_high] = executor_machine_state
                 .decoder_data
                 .imm
                 .map(|el| graph.get_address_for_variable(el));
-            let funct3 = if executor_machine_state.decoder_data.funct3.is_placeholder() == false {
-                Some(graph.get_address_for_variable(executor_machine_state.decoder_data.funct3))
+            let funct3 = if let Some(funct3) = executor_machine_state.decoder_data.funct3 {
+                Some(graph.get_address_for_variable(funct3))
             } else {
                 None
             };

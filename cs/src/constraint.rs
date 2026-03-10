@@ -1,6 +1,6 @@
 use std::collections::HashSet;
 
-use crate::cs::circuit::Circuit;
+// use crate::cs::circuit::Circuit;
 use crate::definitions::*;
 use crate::types::{Boolean, Num};
 use field::PrimeField;

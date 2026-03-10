@@ -473,6 +473,10 @@ impl PrimeField for Mersenne31Field {
     fn from_reduced_raw_repr(value: u32) -> Self {
         Self(value)
     }
+    #[cfg_attr(not(feature = "no_inline"), inline(always))]
+    fn from_raw_repr_with_reduction(value: u32) -> Self {
+        Self::from_nonreduced_u32(value)
+    }
     #[track_caller]
     #[cfg_attr(not(feature = "no_inline"), inline(always))]
     fn as_boolean(&self) -> bool {

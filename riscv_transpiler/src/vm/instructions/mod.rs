@@ -1,16 +1,10 @@
 use super::*;
 
-pub mod add_sub;
-pub mod binary;
-pub mod branch;
-pub mod jal_jalr;
-pub mod lui_auipc;
+pub mod add_sub_family;
+pub mod binary_shifts_family;
+pub mod jump_branch_slt_family;
 pub mod memory;
-pub mod mop;
 pub mod mul_div;
-pub mod shifts;
-pub mod slt;
-pub mod zicsr;
 
 #[inline(always)]
 pub(crate) fn touch_x0<C: Counters, const TIMESTAMP_OFFSET: TimestampScalar>(state: &mut State<C>) {
@@ -31,6 +25,26 @@ pub(crate) fn read_register<C: Counters, const TIMESTAMP_OFFSET: TimestampScalar
         debug_assert!(reg.timestamp < (state.timestamp | TIMESTAMP_OFFSET));
         reg.timestamp = state.timestamp | TIMESTAMP_OFFSET;
         reg.value
+    }
+}
+
+#[inline(always)]
+pub(crate) fn write_register_for_pure_opcode<
+    C: Counters,
+    const TIMESTAMP_OFFSET: TimestampScalar,
+>(
+    state: &mut State<C>,
+    reg_idx: u8,
+    value: u32,
+) {
+    unsafe {
+        if reg_idx == 0 {
+            debug_assert_eq!(value, 0);
+        }
+        let reg = state.registers.get_unchecked_mut(reg_idx as usize);
+        debug_assert!(reg.timestamp < (state.timestamp | TIMESTAMP_OFFSET));
+        reg.timestamp = state.timestamp | TIMESTAMP_OFFSET;
+        reg.value = value;
     }
 }
 
