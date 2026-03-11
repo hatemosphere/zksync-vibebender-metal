@@ -80,14 +80,6 @@ fn apply_add_sub_lui_auipc_mop_inner<F: PrimeField, CS: Circuit<F>>(
         unreachable!()
     };
 
-    // we will also need to pay 2 more range checks
-    let intermediate_tmp = Register::new_named(cs, "Modular ops intermediate comparison reg");
-    let modulus_low = F::from_u32_unchecked((F::CHARACTERISTICS as u16) as u32);
-    let modulus_high = F::from_u32_unchecked(((F::CHARACTERISTICS >> 16) as u16) as u32);
-
-    let carry_shift = F::from_u32_with_reduction(1 << 16);
-    let shift_term = Term::from_field(carry_shift);
-
     let WordRepresentation::U16Limbs(rs1_limbs) = rs1_access.read_value else {
         unreachable!()
     };
@@ -97,6 +89,15 @@ fn apply_add_sub_lui_auipc_mop_inner<F: PrimeField, CS: Circuit<F>>(
     let WordRepresentation::U16Limbs(rd_write_limbs) = rd_access.write_value else {
         unreachable!()
     };
+
+    // we will also need to pay 2 more range checks
+    let intermediate_tmp = Register::new_named(cs, "Modular ops intermediate comparison reg");
+    let modulus_low = F::from_u32_unchecked((F::CHARACTERISTICS as u16) as u32);
+    let modulus_high = F::from_u32_unchecked(((F::CHARACTERISTICS >> 16) as u16) as u32);
+
+    let carry_shift = F::from_u32_with_reduction(1 << 16);
+    let shift_term = Term::from_field(carry_shift);
+
     // we need range checks on the output to ensure proper addition
     let [out_low, out_high] = rd_write_limbs;
     cs.require_invariant(out_low, Invariant::RangeChecked { width: 16 });

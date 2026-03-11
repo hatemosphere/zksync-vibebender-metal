@@ -2,7 +2,7 @@ pub const ADD_SUB_LUI_AUIPC_MOP_FAMILY_NUM_FLAGS: usize = 8;
 
 pub const JUMP_SLT_BRANCH_FAMILY_NUM_BITS: usize = 5;
 
-pub const SHIFT_BINARY_CSRRW_FAMILY_NUM_FLAGS: usize = 4;
+pub const SHIFT_BINARY_FAMILY_NUM_FLAGS: usize = 2;
 
 pub const MUL_DIV_FAMILY_NUM_FLAGS: usize = 5;
 

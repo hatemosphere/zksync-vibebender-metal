@@ -648,6 +648,10 @@ impl TableType {
         *self as u32
     }
 
+    pub fn to_num<F: PrimeField>(&self) -> crate::types::Num<F> {
+        crate::types::Num::Constant(F::from_u32(*self as u32).expect("must fit"))
+    }
+
     // pub fn generate_table<F: PrimeField>(self) -> LookupWrapper<F> {
     //     let id = self.to_table_id();
     //     match self {

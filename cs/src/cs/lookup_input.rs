@@ -32,6 +32,15 @@ impl<F: PrimeField> LookupInput<F> {
     }
 }
 
+impl<F: PrimeField> From<F> for LookupInput<F> {
+    fn from(value: F) -> Self {
+        Self::Expression {
+            linear_terms: vec![],
+            constant_coeff: value,
+        }
+    }
+}
+
 impl<F: PrimeField> From<Variable> for LookupInput<F> {
     fn from(value: Variable) -> Self {
         Self::Variable(value)
