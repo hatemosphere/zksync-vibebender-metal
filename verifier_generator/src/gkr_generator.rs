@@ -510,7 +510,7 @@ where
         let desc_name = quote::format_ident!("LAYER_{}_DESC", layer_idx);
         layer_metas_stream.extend(quote! {
             GKRLayerMeta {
-                is_dim_reducing: false,
+                is_dim_reducing: 0usize,
                 num_sumcheck_rounds: #num_sumcheck_rounds,
                 output_groups: &[],
                 layer_desc: Some(&#desc_name),
@@ -527,7 +527,7 @@ where
         let num_sumcheck_rounds = proof_values.sumcheck_num_rounds;
         layer_metas_stream.extend(quote! {
             GKRLayerMeta {
-                is_dim_reducing: true,
+                is_dim_reducing: 1usize,
                 num_sumcheck_rounds: #num_sumcheck_rounds,
                 output_groups: OUTPUT_GROUPS,
                 layer_desc: None,
@@ -636,7 +636,7 @@ where
         extra_type_imports.extend(quote! { StaticNoFieldVectorLookupRelation, });
     }
 
-    let has_inits_teardowns = proof.inits_and_teardowns_top_bits.is_some();
+    let has_inits_teardowns: usize = if proof.inits_and_teardowns_top_bits.is_some() { 1 } else { 0 };
 
     let initial_transcript_num_u32_words = {
         let mut tmp = Vec::<u32>::new();

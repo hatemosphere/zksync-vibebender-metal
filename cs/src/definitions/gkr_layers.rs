@@ -1,6 +1,7 @@
 #[derive(
     Clone, Copy, Debug, PartialEq, Eq, PartialOrd, Ord, Hash, serde::Serialize, serde::Deserialize,
 )]
+#[repr(u32)]
 pub enum GKRAddress {
     BaseLayerWitness(usize),
     BaseLayerMemory(usize),

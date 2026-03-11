@@ -4,6 +4,7 @@ use super::GKRAddress;
 #[derive(
     Clone, Copy, Debug, Hash, PartialEq, Eq, PartialOrd, Ord, serde::Serialize, serde::Deserialize,
 )]
+#[repr(u32)]
 pub enum OutputType {
     PermutationProduct = 0,
     Lookup16Bits,
@@ -40,6 +41,7 @@ pub struct StaticNoFieldMaxQuadraticConstraintsGKRRelation<'a> {
 }
 
 #[derive(Clone, Debug)]
+#[repr(C, u32)]
 pub enum StaticNoFieldGKRRelation<'a> {
     EnforceConstraintsMaxQuadratic {
         input: StaticNoFieldMaxQuadraticConstraintsGKRRelation<'a>,

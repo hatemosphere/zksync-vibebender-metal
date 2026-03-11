@@ -21,7 +21,7 @@ pub struct GKROutputGroup {
 
 #[derive(Clone, Debug)]
 pub struct GKRLayerMeta<'a> {
-    pub is_dim_reducing: bool, // false = standard (N=2), true = dim-reducing (N=4)
+    pub is_dim_reducing: usize, // 0 = standard (N=2), nonzero = dim-reducing (N=4)
     pub num_sumcheck_rounds: usize,
     pub output_groups: &'a [GKROutputGroup],
     pub layer_desc: Option<&'a StaticGKRLayerDescription<'a>>,
@@ -30,7 +30,7 @@ pub struct GKRLayerMeta<'a> {
 #[derive(Clone, Debug)]
 pub struct GKRVerifierConfig<'a> {
     pub layers: &'a [GKRLayerMeta<'a>],
-    pub has_inits_teardowns: bool,
+    pub has_inits_teardowns: usize, // 0 = false, nonzero = true
     pub initial_transcript_num_u32_words: usize,
     pub final_trace_size_log_2: usize,
     pub num_standard_layers: usize,
@@ -992,7 +992,7 @@ where
 
     for config_idx in (num_standard..total_layers).rev() {
         let layer_meta = &config.layers[config_idx];
-        assert!(layer_meta.is_dim_reducing);
+        assert!(layer_meta.is_dim_reducing != 0);
 
         let circuit_layer_idx = config_idx;
         let output_layer_idx = circuit_layer_idx + 1;
@@ -1157,7 +1157,7 @@ where
 
     for config_idx in (0..num_standard).rev() {
         let layer_meta = &config.layers[config_idx];
-        assert!(!layer_meta.is_dim_reducing);
+        assert!(layer_meta.is_dim_reducing == 0);
         let layer_desc = layer_meta
             .layer_desc
             .expect("standard layer must have layer_desc");
