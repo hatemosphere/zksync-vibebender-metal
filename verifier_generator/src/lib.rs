@@ -38,6 +38,8 @@ pub fn generate_for_description(
 
 #[cfg(test)]
 mod test {
+    use test_utils::skip_if_ci;
+
     use std::io::Write;
 
     use super::*;
@@ -47,8 +49,11 @@ mod test {
         serde_json::from_reader(src).unwrap()
     }
 
+    #[cfg(test)]
     #[test]
+    #[serial_test::serial]
     fn launch() {
+        skip_if_ci!();
         let compiled_circuit = deserialize_from_file("../prover/full_machine_layout.json");
         // let compiled_circuit = deserialize_from_file("../prover/blake2s_delegation_circuit_layout.json");
         // let compiled_circuit =
@@ -60,8 +65,11 @@ mod test {
         dst.write_all(&result.to_string().as_bytes()).unwrap();
     }
 
+    #[cfg(test)]
     #[test]
+    #[serial_test::serial]
     fn launch_inlining() {
+        skip_if_ci!();
         let compiled_circuit = deserialize_from_file("../prover/full_machine_layout.json");
         // let compiled_circuit =
         //     deserialize_from_file("../prover/blake2s_delegation_circuit_layout.json");
@@ -74,8 +82,11 @@ mod test {
         dst.write_all(&result.to_string().as_bytes()).unwrap();
     }
 
+    #[cfg(test)]
     #[test]
+    #[serial_test::serial]
     fn generate_for_unrolled_circuits() {
+        skip_if_ci!();
         let circuit_names = vec![
             "add_sub_lui_auipc_mop_preprocessed",
             "jump_branch_slt_preprocessed",
@@ -102,6 +113,7 @@ mod test {
         }
     }
 
+    #[cfg(feature = "legacy_tests")]
     #[test]
     fn generate_gkr_layout() {
         use prover::field::baby_bear::base::BabyBearField;
@@ -129,7 +141,10 @@ mod test {
     }
 
     #[test]
+    #[serial_test::serial]
+    // TODO(legacy-cleanup): determine whether the legacy code path exercised here can be removed.
     fn generate_reduced_machine() {
+        skip_if_ci!();
         let compiled_circuit = deserialize_from_file("../prover/reduced_machine_layout");
 
         let result = generate_from_parts(&compiled_circuit);

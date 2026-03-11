@@ -1,13 +1,13 @@
 #![cfg_attr(not(feature = "prover"), no_std)]
-#![cfg_attr(feature = "prover", allow(incomplete_features))]
-#![cfg_attr(feature = "prover", feature(generic_const_exprs))]
-#![cfg_attr(feature = "prover", feature(allocator_api))]
-#![cfg_attr(feature = "prover", feature(iter_array_chunks))]
-#![cfg_attr(feature = "prover", feature(raw_slice_split))]
-#![cfg_attr(feature = "prover", feature(slice_from_ptr_range))]
-#![cfg_attr(feature = "prover", feature(vec_push_within_capacity))]
-#![cfg_attr(feature = "prover", feature(maybe_uninit_fill))]
-#![cfg_attr(feature = "prover", feature(lazy_type_alias))] // NECESSARY TO AVOID UGLY LIFETIME BOUND ISSUE
+#![allow(incomplete_features)]
+#![feature(generic_const_exprs)]
+#![feature(allocator_api)]
+#![feature(iter_array_chunks)]
+#![feature(raw_slice_split)]
+#![feature(slice_from_ptr_range)]
+#![feature(vec_push_within_capacity)]
+#![feature(maybe_uninit_fill)]
+#![feature(lazy_type_alias)] // NECESSARY TO AVOID UGLY LIFETIME BOUND ISSUE
 
 #[cfg(feature = "debug_satisfiable")]
 pub const DEBUG_QUOTIENT: bool = true;
