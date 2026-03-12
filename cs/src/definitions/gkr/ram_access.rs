@@ -31,7 +31,13 @@ pub struct RamReadQuery {
     pub in_cycle_write_index: u32,
     pub address: RamAddress,
     pub read_timestamp: [usize; NUM_TIMESTAMP_COLUMNS_FOR_RAM],
-    pub read_value: [usize; REGISTER_SIZE],
+    pub read_value: RamWordRepresentation,
+}
+
+#[derive(Clone, Copy, Hash, Debug, PartialEq, Eq, serde::Serialize, serde::Deserialize)]
+pub enum RamWordRepresentation {
+    U16Limbs([usize; REGISTER_SIZE]),
+    U8Limbs([usize; REGISTER_SIZE * 2]),
 }
 
 #[derive(Clone, Copy, Hash, Debug, serde::Serialize, serde::Deserialize)]
@@ -39,8 +45,8 @@ pub struct RamWriteQuery {
     pub in_cycle_write_index: u32,
     pub address: RamAddress,
     pub read_timestamp: [usize; NUM_TIMESTAMP_COLUMNS_FOR_RAM],
-    pub read_value: [usize; REGISTER_SIZE],
-    pub write_value: [usize; REGISTER_SIZE],
+    pub read_value: RamWordRepresentation,
+    pub write_value: RamWordRepresentation,
 }
 
 #[derive(Clone, Copy, Hash, Debug, serde::Serialize, serde::Deserialize)]
@@ -64,7 +70,7 @@ impl RamQuery {
         }
     }
 
-    pub const fn get_read_value_columns(&self) -> [usize; REGISTER_SIZE] {
+    pub const fn get_read_value_columns(&self) -> RamWordRepresentation {
         match self {
             Self::Readonly(el) => el.read_value,
             Self::Write(el) => el.read_value,

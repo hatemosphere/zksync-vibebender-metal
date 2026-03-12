@@ -38,13 +38,13 @@ pub enum MemoryAccessRequest {
     },
 }
 
-#[derive(Clone, Debug, Hash, PartialEq, Eq, serde::Serialize, serde::Deserialize)]
+#[derive(Clone, Copy, Debug, Hash, PartialEq, Eq, serde::Serialize, serde::Deserialize)]
 pub enum WordRepresentation {
     U16Limbs([Variable; REGISTER_SIZE]),
     U8Limbs([Variable; REGISTER_SIZE * 2]),
 }
 
-#[derive(Clone, Debug, Hash, PartialEq, Eq, serde::Serialize, serde::Deserialize)]
+#[derive(Clone, Copy, Debug, Hash, PartialEq, Eq, serde::Serialize, serde::Deserialize)]
 pub struct RegisterAccess {
     pub reg_idx: Variable,
     pub read_timestamp: [Variable; NUM_TIMESTAMP_COLUMNS_FOR_RAM],
@@ -124,6 +124,11 @@ pub trait Circuit<F: PrimeField>: Sized {
         &mut self,
         constraint: Constraint<F>,
     );
+    fn add_constraint_into_intermediate_variable(
+        &mut self,
+        constraint: Constraint<F>,
+        intermediate_var: Variable,
+    );
 
     fn allocate_machine_state(
         &mut self,
@@ -147,7 +152,7 @@ pub trait Circuit<F: PrimeField>: Sized {
     fn require_invariant(&mut self, variable: Variable, invariant: Invariant);
     fn finalize(self) -> (CircuitOutput<F>, Option<Self::WitnessPlacer>);
 
-    fn materialize_table(&mut self, table_type: TableType);
+    fn materialize_table<const TOTAL_WIDTH: usize>(&mut self, table_type: TableType);
     // fn add_table_with_content(&mut self, table_type: TableType, table: LookupWrapper<F>);
 
     #[track_caller]

@@ -22,6 +22,7 @@ pub struct CircuitOutput<F: PrimeField> {
     pub substitutions: HashMap<(Placeholder, usize), Variable>,
     pub variable_names: HashMap<Variable, String>,
     pub variables_from_constraints: HashMap<Variable, Constraint<F>>,
+    pub layers_mapping: HashMap<Variable, usize>,
     pub circuit_family_bitmask: Vec<Variable>,
 }
 

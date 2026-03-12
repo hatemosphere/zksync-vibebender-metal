@@ -1,9 +1,9 @@
-use field::PrimeField;
-
 use crate::definitions::{GKRAddress, Variable};
 use crate::gkr_compiler::{
     GKRGate, GKRRelation, LookupType, NoFieldGKRCacheRelation, NoFieldGKRRelation,
 };
+use field::PrimeField;
+use std::collections::HashMap;
 use std::collections::{BTreeSet, HashSet};
 use std::{collections::BTreeMap, hash::Hash};
 
@@ -135,9 +135,11 @@ impl GKRGraph {
         &mut self,
         variables: [Variable; N],
         all_variables_to_place: &mut BTreeSet<Variable>,
+        layers_mapping: &HashMap<Variable, usize>,
     ) -> [GKRAddress; N] {
         let mut columns = [GKRAddress::placeholder(); N];
         for (i, variable) in variables.into_iter().enumerate() {
+            assert_eq!(*layers_mapping.get(&variable).expect("is known"), 0);
             let offset = self.base_layer_memory.len();
             let place = GKRAddress::BaseLayerMemory(offset);
             columns[i] = place;
@@ -161,9 +163,11 @@ impl GKRGraph {
         &mut self,
         variables: [Variable; N],
         all_variables_to_place: &mut BTreeSet<Variable>,
+        layers_mapping: &HashMap<Variable, usize>,
     ) -> [GKRAddress; N] {
         let mut columns = [GKRAddress::placeholder(); N];
         for (i, variable) in variables.into_iter().enumerate() {
+            assert_eq!(*layers_mapping.get(&variable).expect("is known"), 0);
             let offset = self.base_layer_witness.len();
             let place = GKRAddress::BaseLayerWitness(offset);
             columns[i] = place;

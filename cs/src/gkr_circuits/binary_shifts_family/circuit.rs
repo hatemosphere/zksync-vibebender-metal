@@ -8,34 +8,30 @@ use crate::tables::TableDriver;
 use crate::types::*;
 use field::PrimeField;
 
+const TABLES_TOTAL_WIDTH: usize = 7;
+
 // NOTE: this circuit should specify non-dummy CSR table in proving/setup. while compilation in tests
 // takes case of properly computing offsets by using dummy table
 
 pub fn shift_binop_tables() -> Vec<TableType> {
     vec![
         TableType::ZeroEntry, // we need it, as we use conditional lookup enforcements
-        TableType::TruncateShiftAmount,
-        TableType::SllWith16BitInputLow,
-        TableType::SllWith16BitInputHigh,
-        TableType::SrlWith16BitInputLow,
-        TableType::SrlWith16BitInputHigh,
-        TableType::Sra16BitInputSignFill,
+        // TableType::TruncateShiftAmount,
         TableType::Xor,
         TableType::And,
         TableType::Or,
-        TableType::RangeCheck16WithZeroPads,
     ]
 }
 
 pub fn shift_binop_table_addition_fn<F: PrimeField, CS: Circuit<F>>(cs: &mut CS) {
     for el in shift_binop_tables() {
-        cs.materialize_table(el);
+        cs.materialize_table::<TABLES_TOTAL_WIDTH>(el);
     }
 }
 
 pub fn shift_binop_table_driver_fn<F: PrimeField>(table_driver: &mut TableDriver<F>) {
     for el in shift_binop_tables() {
-        table_driver.materialize_table(el);
+        table_driver.materialize_table::<TABLES_TOTAL_WIDTH>(el);
     }
 }
 
@@ -286,10 +282,8 @@ fn apply_shift_binop_inner<F: PrimeField, CS: Circuit<F>>(
     }
     // and value-related lookups
     {
-        const TOTAL_NUM_IN_OUTS: usize = 7;
-
         for i in 0..4 {
-            let mut constraints: [Constraint<F>; TOTAL_NUM_IN_OUTS] =
+            let mut constraints: [Constraint<F>; TABLES_TOTAL_WIDTH] =
                 std::array::from_fn(|_| Constraint::empty());
 
             constraints[0] += Term::from(is_binary_op) * Term::from(rs1_limbs[i]);
@@ -308,7 +302,7 @@ fn apply_shift_binop_inner<F: PrimeField, CS: Circuit<F>>(
                 constraints[3 + j] += Term::from(is_shift) * Term::from(shift_outputs[j]);
             }
 
-            let input_vars: [Variable; TOTAL_NUM_IN_OUTS] = constraints
+            let input_vars: [Variable; TABLES_TOTAL_WIDTH] = constraints
                 .into_iter()
                 .enumerate()
                 .map(|(idx, el)| {
@@ -388,7 +382,7 @@ fn apply_shift_binop_inner<F: PrimeField, CS: Circuit<F>>(
 pub fn shift_binop_circuit_with_preprocessed_bytecode_for_gkr<F: PrimeField, CS: Circuit<F>>(
     cs: &mut CS,
 ) {
-    let (input, bitmask) = cs.allocate_machine_state(false, false, SHIFT_BINARY_FAMILY_NUM_FLAGS);
+    let (input, bitmask) = cs.allocate_machine_state(true, false, SHIFT_BINARY_FAMILY_NUM_FLAGS);
     let bitmask: [_; SHIFT_BINARY_FAMILY_NUM_FLAGS] = bitmask.try_into().unwrap();
     let bitmask = bitmask.map(|el| Boolean::Is(el));
     let decoder = ShiftBinaryFamilyCircuitMask::from_mask(bitmask);
@@ -404,7 +398,7 @@ mod test {
     use crate::utils::serialize_to_file;
 
     #[test]
-    fn compile_add_sub_lui_auipc_mop_into_gkr() {
+    fn compile_shift_binop_into_gkr() {
         skip_if_ci!();
         use ::field::baby_bear::base::BabyBearField;
 

@@ -20,10 +20,10 @@ mod binops;
 // mod range_checks_and_decompositions;
 // mod rom_related;
 // mod shift_opcode_related;
-// mod zero_entry;
 mod quote;
+mod zero_entry;
 
-// pub use self::binops::*;
+pub use self::binops::*;
 // pub use self::branch_opcode_related::*;
 // pub use self::jump_opcode_related::*;
 // pub use self::keccak_precompile_related::*;
@@ -31,7 +31,7 @@ mod quote;
 // pub use self::range_checks_and_decompositions::*;
 // pub use self::rom_related::*;
 // pub use self::shift_opcode_related::*;
-// pub use self::zero_entry::*;
+pub use self::zero_entry::*;
 
 pub use super::definitions::TableType;
 
@@ -652,173 +652,175 @@ impl TableType {
         crate::types::Num::Constant(F::from_u32(*self as u32).expect("must fit"))
     }
 
-    // pub fn generate_table<F: PrimeField>(self) -> LookupWrapper<F> {
-    //     let id = self.to_table_id();
-    //     match self {
-    //         TableType::And => LookupWrapper::Dimensional3(create_and_table(id)),
-    //         TableType::Xor => LookupWrapper::Dimensional3(create_xor_table::<F, 8>(id)),
-    //         TableType::Or => LookupWrapper::Dimensional3(create_or_table(id)),
-    //         TableType::RangeCheck8x8 => LookupWrapper::Dimensional3(
-    //             create_formal_width_3_range_check_table_for_two_tuple::<F, 8>(id),
-    //         ),
-    //         // TableType::RangeCheckLarge => {
-    //         //     LookupWrapper::Dimensional1(create_range_check_table::<F, 16>(id))
-    //         // }
-    //         // TableType::PowersOf2 => LookupWrapper::Dimensional3(create_pow2_table::<F, 5>(id)),
-    //         TableType::OpTypeBitmask => {
-    //             panic!("Machine must defined it's own way to create supporting decoder table")
-    //         }
-    //         TableType::InsnEncodingChecker => {
-    //             panic!("deprecated")
-    //         }
-    //         TableType::CsrBitmask => {
-    //             panic!("Machine must defined it's own way to define CSR support")
-    //             // LookupWrapper::Dimensional3(create_csr_bitmask_table(id))
-    //         }
-    //         TableType::ZeroEntry => LookupWrapper::Dimensional3(create_zero_entry_table(id)),
-    //         TableType::AndNot => LookupWrapper::Dimensional3(create_and_not_table(id)),
-    //         TableType::QuickDecodeDecompositionCheck4x4x4 => {
-    //             LookupWrapper::Dimensional3(create_quick_decoder_decomposition_table_4x4x4(id))
-    //         }
-    //         TableType::QuickDecodeDecompositionCheck7x3x6 => {
-    //             LookupWrapper::Dimensional3(create_quick_decoder_decomposition_table_7x3x6(id))
-    //         }
-    //         TableType::MRetProcessLow => {
-    //             unimplemented!()
-    //             // LookupWrapper::Dimensional3(create_mret_process_low_table(id))
-    //         }
-    //         TableType::MRetClearHigh => {
-    //             unimplemented!()
-    //             // LookupWrapper::Dimensional3(create_mret_clear_high_table(id))
-    //         }
-    //         TableType::TrapProcessLow => {
-    //             unimplemented!()
-    //             // LookupWrapper::Dimensional3(create_trap_process_low_table(id))
-    //         }
-    //         TableType::U16GetSignAndHighByte => {
-    //             LookupWrapper::Dimensional3(create_u16_get_sign_and_high_byte_table(id))
-    //         }
-    //         TableType::JumpCleanupOffset => {
-    //             LookupWrapper::Dimensional3(create_jump_cleanup_offset_table(id))
-    //         }
-    //         TableType::MemoryOffsetGetBits => {
-    //             LookupWrapper::Dimensional3(create_memory_offset_lowest_bits_table(id))
-    //         }
-    //         TableType::MemoryLoadGetSigns => {
-    //             LookupWrapper::Dimensional3(create_memory_load_signs_table(id))
-    //         }
-    //         TableType::SRASignFiller => {
-    //             LookupWrapper::Dimensional3(create_sra_sign_filler_table(id))
-    //         }
-    //         TableType::ConditionalOpAllConditionsResolver => {
-    //             LookupWrapper::Dimensional3(create_conditional_op_resolution_table(id))
-    //         }
-    //         TableType::RomAddressSpaceSeparator => {
-    //             unimplemented!("must manually generate a table to customize number of bits");
-    //             // LookupWrapper::Dimensional3(create_rom_separator_table::<
-    //             //     F,
-    //             //     ROM_ADDRESS_SPACE_SECOND_WORD_BITS,
-    //             // >(id))
-    //         }
-    //         TableType::SpecialCSRProperties => {
-    //             unimplemented!("must be created in a special manner");
-    //         }
-    //         TableType::Xor3 => LookupWrapper::Dimensional3(create_xor_table::<F, 3>(id)),
-    //         TableType::Xor4 => LookupWrapper::Dimensional3(create_xor_table::<F, 4>(id)),
-    //         TableType::Xor7 => LookupWrapper::Dimensional3(create_xor_table::<F, 7>(id)),
-    //         TableType::Xor9 => LookupWrapper::Dimensional3(create_xor_table::<F, 9>(id)),
-    //         TableType::Xor12 => LookupWrapper::Dimensional3(create_xor_table::<F, 12>(id)),
-    //         TableType::U16SplitAsBytes => {
-    //             LookupWrapper::Dimensional3(create_u16_split_into_bytes_table(id))
-    //         }
-    //         TableType::RangeCheck9x9 => LookupWrapper::Dimensional3(
-    //             create_formal_width_3_range_check_table_for_two_tuple::<F, 9>(id),
-    //         ),
-    //         TableType::RangeCheck10x10 => LookupWrapper::Dimensional3(
-    //             create_formal_width_3_range_check_table_for_two_tuple::<F, 10>(id),
-    //         ),
-    //         TableType::RangeCheck11 => LookupWrapper::Dimensional3(
-    //             create_formal_width_3_range_check_table_for_single_entry::<F, 11>(id),
-    //         ),
-    //         TableType::RangeCheck12 => LookupWrapper::Dimensional3(
-    //             create_formal_width_3_range_check_table_for_single_entry::<F, 12>(id),
-    //         ),
-    //         TableType::RangeCheck13 => LookupWrapper::Dimensional3(
-    //             create_formal_width_3_range_check_table_for_single_entry::<F, 13>(id),
-    //         ),
-    //         TableType::ShiftImplementation => {
-    //             LookupWrapper::Dimensional3(create_shift_implementation_table::<F>(id))
-    //         }
-    //         TableType::U16SelectByteAndGetByteSign => {
-    //             LookupWrapper::Dimensional3(create_select_byte_and_get_sign_table::<F>(id))
-    //         }
-    //         TableType::ExtendLoadedValue => {
-    //             LookupWrapper::Dimensional3(create_mem_load_extend_table::<F>(id))
-    //         }
-    //         TableType::StoreByteSourceContribution => {
-    //             LookupWrapper::Dimensional3(create_store_byte_source_contribution_table::<F>(id))
-    //         }
-    //         TableType::StoreByteExistingContribution => {
-    //             LookupWrapper::Dimensional3(create_store_byte_existing_contribution_table::<F>(id))
-    //         }
-    //         TableType::TruncateShift => {
-    //             LookupWrapper::Dimensional3(create_truncate_shift_amount_table::<F>(id))
-    //         }
-    //         TableType::ConditionalJmpBranchSlt => LookupWrapper::Dimensional3(
-    //             create_conditional_jmp_branch_slt_family_resolution_table(id),
-    //         ),
-    //         TableType::MemoryGetOffsetAndMaskWithTrap => {
-    //             LookupWrapper::Dimensional3(create_memory_offset_mask_with_trap_table(id))
-    //         }
-    //         TableType::MemoryLoadHalfwordOrByte => {
-    //             LookupWrapper::Dimensional3(create_memory_load_halfword_or_byte_table(id))
-    //         }
-    //         TableType::MemStoreClearOriginalRamValueLimb => LookupWrapper::Dimensional3(
-    //             create_memory_store_halfword_or_byte_clear_source_limb_table::<F>(id),
-    //         ),
-    //         TableType::MemStoreClearWrittenValueLimb => LookupWrapper::Dimensional3(
-    //             create_memory_store_halfword_or_byte_clear_written_limb_table::<F>(id),
-    //         ),
-    //         TableType::TruncateShiftAmount => {
-    //             LookupWrapper::Dimensional3(create_shift_amount_truncation_table::<F>(id))
-    //         }
-    //         TableType::SllWith16BitInputLow => LookupWrapper::Dimensional3(
-    //             create_logical_shift_16_bit_table::<F, false, false>(id),
-    //         ),
-    //         TableType::SllWith16BitInputHigh => {
-    //             LookupWrapper::Dimensional3(create_logical_shift_16_bit_table::<F, true, false>(id))
-    //         }
-    //         TableType::SrlWith16BitInputLow => {
-    //             LookupWrapper::Dimensional3(create_logical_shift_16_bit_table::<F, false, true>(id))
-    //         }
-    //         TableType::SrlWith16BitInputHigh => {
-    //             LookupWrapper::Dimensional3(create_logical_shift_16_bit_table::<F, true, true>(id))
-    //         }
-    //         TableType::Sra16BitInputSignFill => {
-    //             LookupWrapper::Dimensional3(create_sra_16_filler_mask_table::<F>(id))
-    //         }
-    //         TableType::RangeCheck16WithZeroPads => LookupWrapper::Dimensional3(
-    //             create_formal_width_3_range_check_table_for_single_entry::<F, 16>(id),
-    //         ),
-    //         TableType::KeccakPermutationIndices12 => {
-    //             LookupWrapper::Dimensional3(create_keccak_permutation_indices_table::<F, 0, 1>(id))
-    //         }
-    //         TableType::KeccakPermutationIndices34 => {
-    //             LookupWrapper::Dimensional3(create_keccak_permutation_indices_table::<F, 2, 3>(id))
-    //         }
-    //         TableType::KeccakPermutationIndices56 => {
-    //             LookupWrapper::Dimensional3(create_keccak_permutation_indices_table::<F, 4, 5>(id))
-    //         }
-    //         TableType::XorSpecialIota => {
-    //             LookupWrapper::Dimensional3(create_xor_special_keccak_iota_table::<F>(id))
-    //         }
-    //         TableType::AndN => LookupWrapper::Dimensional3(create_andn_table::<F>(id)),
-    //         TableType::RotL => LookupWrapper::Dimensional3(create_rotl_table::<F>(id)),
-    //         a @ _ => {
-    //             todo!("Support {:?}", a);
-    //         }
-    //     }
-    // }
+    pub fn generate_table<F: PrimeField, const TOTAL_WIDTH: usize>(self) -> LookupWrapper<F> {
+        let id = self.to_table_id();
+        match self {
+            TableType::ZeroEntry => {
+                LookupWrapper::Initialized(create_zero_entry_table::<F, TOTAL_WIDTH>(id))
+            }
+            TableType::And => LookupWrapper::Initialized(create_and_table::<F>(id)),
+            TableType::Xor => LookupWrapper::Initialized(create_xor_table::<F, 8>(id)),
+            TableType::Or => LookupWrapper::Initialized(create_or_table::<F>(id)),
+            // TableType::RangeCheck8x8 => LookupWrapper::Dimensional3(
+            //     create_formal_width_3_range_check_table_for_two_tuple::<F, 8>(id),
+            // ),
+            // // TableType::RangeCheckLarge => {
+            // //     LookupWrapper::Dimensional1(create_range_check_table::<F, 16>(id))
+            // // }
+            // // TableType::PowersOf2 => LookupWrapper::Dimensional3(create_pow2_table::<F, 5>(id)),
+            // TableType::OpTypeBitmask => {
+            //     panic!("Machine must defined it's own way to create supporting decoder table")
+            // }
+            // TableType::InsnEncodingChecker => {
+            //     panic!("deprecated")
+            // }
+            // TableType::CsrBitmask => {
+            //     panic!("Machine must defined it's own way to define CSR support")
+            //     // LookupWrapper::Dimensional3(create_csr_bitmask_table(id))
+            // }
+            // TableType::AndNot => LookupWrapper::Dimensional3(create_and_not_table(id)),
+            // TableType::QuickDecodeDecompositionCheck4x4x4 => {
+            //     LookupWrapper::Dimensional3(create_quick_decoder_decomposition_table_4x4x4(id))
+            // }
+            // TableType::QuickDecodeDecompositionCheck7x3x6 => {
+            //     LookupWrapper::Dimensional3(create_quick_decoder_decomposition_table_7x3x6(id))
+            // }
+            // TableType::MRetProcessLow => {
+            //     unimplemented!()
+            //     // LookupWrapper::Dimensional3(create_mret_process_low_table(id))
+            // }
+            // TableType::MRetClearHigh => {
+            //     unimplemented!()
+            //     // LookupWrapper::Dimensional3(create_mret_clear_high_table(id))
+            // }
+            // TableType::TrapProcessLow => {
+            //     unimplemented!()
+            //     // LookupWrapper::Dimensional3(create_trap_process_low_table(id))
+            // }
+            // TableType::U16GetSignAndHighByte => {
+            //     LookupWrapper::Dimensional3(create_u16_get_sign_and_high_byte_table(id))
+            // }
+            // TableType::JumpCleanupOffset => {
+            //     LookupWrapper::Dimensional3(create_jump_cleanup_offset_table(id))
+            // }
+            // TableType::MemoryOffsetGetBits => {
+            //     LookupWrapper::Dimensional3(create_memory_offset_lowest_bits_table(id))
+            // }
+            // TableType::MemoryLoadGetSigns => {
+            //     LookupWrapper::Dimensional3(create_memory_load_signs_table(id))
+            // }
+            // TableType::SRASignFiller => {
+            //     LookupWrapper::Dimensional3(create_sra_sign_filler_table(id))
+            // }
+            // TableType::ConditionalOpAllConditionsResolver => {
+            //     LookupWrapper::Dimensional3(create_conditional_op_resolution_table(id))
+            // }
+            // TableType::RomAddressSpaceSeparator => {
+            //     unimplemented!("must manually generate a table to customize number of bits");
+            //     // LookupWrapper::Dimensional3(create_rom_separator_table::<
+            //     //     F,
+            //     //     ROM_ADDRESS_SPACE_SECOND_WORD_BITS,
+            //     // >(id))
+            // }
+            // TableType::SpecialCSRProperties => {
+            //     unimplemented!("must be created in a special manner");
+            // }
+            // TableType::Xor3 => LookupWrapper::Dimensional3(create_xor_table::<F, 3>(id)),
+            // TableType::Xor4 => LookupWrapper::Dimensional3(create_xor_table::<F, 4>(id)),
+            // TableType::Xor7 => LookupWrapper::Dimensional3(create_xor_table::<F, 7>(id)),
+            // TableType::Xor9 => LookupWrapper::Dimensional3(create_xor_table::<F, 9>(id)),
+            // TableType::Xor12 => LookupWrapper::Dimensional3(create_xor_table::<F, 12>(id)),
+            // TableType::U16SplitAsBytes => {
+            //     LookupWrapper::Dimensional3(create_u16_split_into_bytes_table(id))
+            // }
+            // TableType::RangeCheck9x9 => LookupWrapper::Dimensional3(
+            //     create_formal_width_3_range_check_table_for_two_tuple::<F, 9>(id),
+            // ),
+            // TableType::RangeCheck10x10 => LookupWrapper::Dimensional3(
+            //     create_formal_width_3_range_check_table_for_two_tuple::<F, 10>(id),
+            // ),
+            // TableType::RangeCheck11 => LookupWrapper::Dimensional3(
+            //     create_formal_width_3_range_check_table_for_single_entry::<F, 11>(id),
+            // ),
+            // TableType::RangeCheck12 => LookupWrapper::Dimensional3(
+            //     create_formal_width_3_range_check_table_for_single_entry::<F, 12>(id),
+            // ),
+            // TableType::RangeCheck13 => LookupWrapper::Dimensional3(
+            //     create_formal_width_3_range_check_table_for_single_entry::<F, 13>(id),
+            // ),
+            // TableType::ShiftImplementation => {
+            //     LookupWrapper::Dimensional3(create_shift_implementation_table::<F>(id))
+            // }
+            // TableType::U16SelectByteAndGetByteSign => {
+            //     LookupWrapper::Dimensional3(create_select_byte_and_get_sign_table::<F>(id))
+            // }
+            // TableType::ExtendLoadedValue => {
+            //     LookupWrapper::Dimensional3(create_mem_load_extend_table::<F>(id))
+            // }
+            // TableType::StoreByteSourceContribution => {
+            //     LookupWrapper::Dimensional3(create_store_byte_source_contribution_table::<F>(id))
+            // }
+            // TableType::StoreByteExistingContribution => {
+            //     LookupWrapper::Dimensional3(create_store_byte_existing_contribution_table::<F>(id))
+            // }
+            // TableType::TruncateShift => {
+            //     LookupWrapper::Dimensional3(create_truncate_shift_amount_table::<F>(id))
+            // }
+            // TableType::ConditionalJmpBranchSlt => LookupWrapper::Dimensional3(
+            //     create_conditional_jmp_branch_slt_family_resolution_table(id),
+            // ),
+            // TableType::MemoryGetOffsetAndMaskWithTrap => {
+            //     LookupWrapper::Dimensional3(create_memory_offset_mask_with_trap_table(id))
+            // }
+            // TableType::MemoryLoadHalfwordOrByte => {
+            //     LookupWrapper::Dimensional3(create_memory_load_halfword_or_byte_table(id))
+            // }
+            // TableType::MemStoreClearOriginalRamValueLimb => LookupWrapper::Dimensional3(
+            //     create_memory_store_halfword_or_byte_clear_source_limb_table::<F>(id),
+            // ),
+            // TableType::MemStoreClearWrittenValueLimb => LookupWrapper::Dimensional3(
+            //     create_memory_store_halfword_or_byte_clear_written_limb_table::<F>(id),
+            // ),
+            // TableType::TruncateShiftAmount => {
+            //     LookupWrapper::Dimensional3(create_shift_amount_truncation_table::<F>(id))
+            // }
+            // TableType::SllWith16BitInputLow => LookupWrapper::Dimensional3(
+            //     create_logical_shift_16_bit_table::<F, false, false>(id),
+            // ),
+            // TableType::SllWith16BitInputHigh => {
+            //     LookupWrapper::Dimensional3(create_logical_shift_16_bit_table::<F, true, false>(id))
+            // }
+            // TableType::SrlWith16BitInputLow => {
+            //     LookupWrapper::Dimensional3(create_logical_shift_16_bit_table::<F, false, true>(id))
+            // }
+            // TableType::SrlWith16BitInputHigh => {
+            //     LookupWrapper::Dimensional3(create_logical_shift_16_bit_table::<F, true, true>(id))
+            // }
+            // TableType::Sra16BitInputSignFill => {
+            //     LookupWrapper::Dimensional3(create_sra_16_filler_mask_table::<F>(id))
+            // }
+            // TableType::RangeCheck16WithZeroPads => LookupWrapper::Dimensional3(
+            //     create_formal_width_3_range_check_table_for_single_entry::<F, 16>(id),
+            // ),
+            // TableType::KeccakPermutationIndices12 => {
+            //     LookupWrapper::Dimensional3(create_keccak_permutation_indices_table::<F, 0, 1>(id))
+            // }
+            // TableType::KeccakPermutationIndices34 => {
+            //     LookupWrapper::Dimensional3(create_keccak_permutation_indices_table::<F, 2, 3>(id))
+            // }
+            // TableType::KeccakPermutationIndices56 => {
+            //     LookupWrapper::Dimensional3(create_keccak_permutation_indices_table::<F, 4, 5>(id))
+            // }
+            // TableType::XorSpecialIota => {
+            //     LookupWrapper::Dimensional3(create_xor_special_keccak_iota_table::<F>(id))
+            // }
+            // TableType::AndN => LookupWrapper::Dimensional3(create_andn_table::<F>(id)),
+            // TableType::RotL => LookupWrapper::Dimensional3(create_rotl_table::<F>(id)),
+            a @ _ => {
+                todo!("Support {:?}", a);
+            }
+        }
+    }
 
     pub fn get_table_from_id(id: u32) -> Self {
         if id as usize >= TOTAL_NUM_OF_TABLES {
@@ -1026,19 +1028,17 @@ impl<F: PrimeField> TableDriver<F> {
         self.update_table_offsets();
     }
 
-    pub fn materialize_table(&mut self, table_type: TableType) {
+    pub fn materialize_table<const TOTAL_WIDTH: usize>(&mut self, table_type: TableType) {
         static CACHE: LazyLock<Mutex<TypeMap>> = LazyLock::new(|| Mutex::new(TypeMap::default()));
-        todo!();
-
-        // let mut guard = CACHE.lock().unwrap();
-        // let map = guard
-        //     .entry()
-        //     .or_insert_with(HashMap::<TableType, LookupWrapper<F>>::new);
-        // let wrapper = map
-        //     .entry(table_type)
-        //     .or_insert_with(|| table_type.generate_table::<F>());
-        // let table = wrapper.clone();
-        // self.add_table_with_content(table_type, table);
+        let mut guard = CACHE.lock().unwrap();
+        let map = guard
+            .entry()
+            .or_insert_with(HashMap::<TableType, LookupWrapper<F>>::new);
+        let wrapper = map
+            .entry(table_type)
+            .or_insert_with(|| table_type.generate_table::<F, TOTAL_WIDTH>());
+        let table = wrapper.clone();
+        self.add_table_with_content(table_type, table);
     }
 
     // #[track_caller]

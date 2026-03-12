@@ -7,6 +7,7 @@ use crate::definitions::gkr::GKRWitnessLayout;
 use crate::definitions::gkr::NoFieldLinearRelation;
 use crate::definitions::gkr::NoFieldSingleColumnLookupRelation;
 use crate::definitions::gkr::NoFieldVectorLookupRelation;
+use crate::definitions::gkr::RamWordRepresentation;
 use crate::definitions::Degree1Constraint;
 use crate::definitions::Degree2Constraint;
 use crate::definitions::GKRAddress;
@@ -226,7 +227,7 @@ pub struct NoFieldSpecialMemoryContributionRelation {
     pub address_space: CompiledAddressSpaceRelationStrict,
     pub address: CompiledAddressStrict,
     pub timestamp: [usize; NUM_TIMESTAMP_COLUMNS_FOR_RAM],
-    pub value: [usize; REGISTER_SIZE],
+    pub value: RamWordRepresentation,
     pub timestamp_offset: u32,
 }
 
@@ -238,7 +239,14 @@ impl NoFieldSpecialMemoryContributionRelation {
         }
         result.extend(self.address.dependencies());
         result.extend(self.timestamp.map(|el| GKRAddress::BaseLayerMemory(el)));
-        result.extend(self.value.map(|el| GKRAddress::BaseLayerMemory(el)));
+        match self.value {
+            RamWordRepresentation::U16Limbs(els) => {
+                result.extend(els.map(|el| GKRAddress::BaseLayerMemory(el)));
+            }
+            RamWordRepresentation::U8Limbs(els) => {
+                result.extend(els.map(|el| GKRAddress::BaseLayerMemory(el)));
+            }
+        }
 
         result
     }

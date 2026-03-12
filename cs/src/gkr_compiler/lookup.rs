@@ -16,6 +16,7 @@ pub(crate) fn layout_width_1_lookup_expressions<F: PrimeField>(
     num_variables: &mut u64,
     all_variables_to_place: &mut BTreeSet<Variable>,
     variable_names: &mut HashMap<Variable, String>,
+    layers_mapping: &mut HashMap<Variable, usize>,
     lookup_type: &str,
     lookup: LookupType,
 ) -> (
@@ -38,6 +39,7 @@ pub(crate) fn layout_width_1_lookup_expressions<F: PrimeField>(
         num_variables,
         all_variables_to_place,
         variable_names,
+        layers_mapping,
         lookup_type,
         None,
         lookup,
@@ -154,6 +156,7 @@ pub(crate) fn layout_lookup_expressions<F: PrimeField, const SINGLE_COLUMN: bool
     num_variables: &mut u64,
     all_variables_to_place: &mut BTreeSet<Variable>,
     variable_names: &mut HashMap<Variable, String>,
+    layers_mapping: &mut HashMap<Variable, usize>,
     lookup_type: &str,
     decoder_lookup: Option<(Variable, Vec<LookupInput<F>>)>,
     lookup: LookupType,
@@ -205,15 +208,20 @@ pub(crate) fn layout_lookup_expressions<F: PrimeField, const SINGLE_COLUMN: bool
     };
 
     // create multiplicity
-    let multiplicity_var = Variable(*num_variables);
+    let multiplicity_var = add_compiler_defined_base_layer_variable(
+        num_variables,
+        all_variables_to_place,
+        layers_mapping,
+    );
     variable_names.insert(
         multiplicity_var,
         format!("Multiplicity for {}", lookup_type),
     );
-    *num_variables += 1;
-    all_variables_to_place.insert(multiplicity_var);
-    let [multiplicity_pos] =
-        graph.layout_witness_subtree_multiple_variables([multiplicity_var], all_variables_to_place);
+    let [multiplicity_pos] = graph.layout_witness_subtree_multiple_variables(
+        [multiplicity_var],
+        all_variables_to_place,
+        &*layers_mapping,
+    );
 
     for (expr, table_type) in expressions.iter() {
         if SINGLE_COLUMN {

@@ -3,6 +3,7 @@ use std::fmt::Debug;
 use super::*;
 
 use crate::constraint::Constraint;
+use crate::cs::circuit_trait::WordRepresentation;
 use crate::definitions::DecoderData;
 use crate::definitions::GKRAddress;
 use crate::definitions::OpcodeFamilyCircuitState;
@@ -13,13 +14,15 @@ use crate::gkr_compiler::graph::GraphHolder;
 use crate::gkr_compiler::lookup_nodes::LookupDenominator;
 use crate::gkr_compiler::lookup_nodes::LookupInputRelation;
 
-pub fn add_compiler_defined_variable(
+pub fn add_compiler_defined_base_layer_variable(
     num_variables: &mut u64,
     all_variables_to_place: &mut BTreeSet<Variable>,
+    layers_mapping: &mut HashMap<Variable, usize>,
 ) -> Variable {
     let var = Variable(*num_variables);
     *num_variables += 1;
     all_variables_to_place.insert(var);
+    layers_mapping.insert(var, 0);
 
     var
 }
@@ -39,24 +42,24 @@ pub fn add_multiple_compiler_defined_variables<const N: usize>(
     output
 }
 
-#[track_caller]
-pub(crate) fn layout_witness_subtree_variable_at_column(
-    offset: usize,
-    variable: Variable,
-    all_variables_to_place: &mut BTreeSet<Variable>,
-    layout: &mut BTreeMap<Variable, GKRAddress>,
-) -> GKRAddress {
-    assert!(
-        all_variables_to_place.remove(&variable),
-        "variable {:?} was already placed",
-        variable
-    );
-    let address = GKRAddress::BaseLayerWitness(offset);
-    let existing = layout.insert(variable, address);
-    assert!(existing.is_none());
+// #[track_caller]
+// pub(crate) fn layout_witness_subtree_variable_at_column(
+//     offset: usize,
+//     variable: Variable,
+//     all_variables_to_place: &mut BTreeSet<Variable>,
+//     layout: &mut BTreeMap<Variable, GKRAddress>,
+// ) -> GKRAddress {
+//     assert!(
+//         all_variables_to_place.remove(&variable),
+//         "variable {:?} was already placed",
+//         variable
+//     );
+//     let address = GKRAddress::BaseLayerWitness(offset);
+//     let existing = layout.insert(variable, address);
+//     assert!(existing.is_none());
 
-    address
-}
+//     address
+// }
 
 #[derive(Clone, Hash, Debug, serde::Serialize, serde::Deserialize)]
 pub struct MachineStateWithDecoderData {
@@ -79,15 +82,20 @@ pub(crate) fn layout_machine_state_for_preprocessed_bytecode<F: PrimeField>(
     all_variables_to_place: &mut BTreeSet<Variable>,
     state: &OpcodeFamilyCircuitState<F>,
     family_bitmask: Vec<Variable>,
+    layers_mapping: &HashMap<Variable, usize>,
 ) -> MachineStateWithDecoderData {
-    let [execute] =
-        graph.layout_memory_subtree_multiple_variables([state.execute], all_variables_to_place);
+    let [execute] = graph.layout_memory_subtree_multiple_variables(
+        [state.execute],
+        all_variables_to_place,
+        layers_mapping,
+    );
     let GKRAddress::BaseLayerMemory(execute) = execute else {
         unreachable!()
     };
     let initial_pc = graph.layout_memory_subtree_multiple_variables(
         state.cycle_start_state.pc,
         all_variables_to_place,
+        layers_mapping,
     );
     let initial_pc = initial_pc.map(|el| {
         let GKRAddress::BaseLayerMemory(el) = el else {
@@ -99,6 +107,7 @@ pub(crate) fn layout_machine_state_for_preprocessed_bytecode<F: PrimeField>(
     let initial_timestamp = graph.layout_memory_subtree_multiple_variables(
         state.cycle_start_state.timestamp,
         all_variables_to_place,
+        layers_mapping,
     );
     let initial_timestamp = initial_timestamp.map(|el| {
         let GKRAddress::BaseLayerMemory(el) = el else {
@@ -108,8 +117,11 @@ pub(crate) fn layout_machine_state_for_preprocessed_bytecode<F: PrimeField>(
         el
     });
 
-    let final_pc = graph
-        .layout_memory_subtree_multiple_variables(state.cycle_end_state.pc, all_variables_to_place);
+    let final_pc = graph.layout_memory_subtree_multiple_variables(
+        state.cycle_end_state.pc,
+        all_variables_to_place,
+        layers_mapping,
+    );
     let final_pc = final_pc.map(|el| {
         let GKRAddress::BaseLayerMemory(el) = el else {
             unreachable!()
@@ -120,6 +132,7 @@ pub(crate) fn layout_machine_state_for_preprocessed_bytecode<F: PrimeField>(
     let final_timestamp = graph.layout_memory_subtree_multiple_variables(
         state.cycle_end_state.timestamp,
         all_variables_to_place,
+        layers_mapping,
     );
     let final_timestamp = final_timestamp.map(|el| {
         let GKRAddress::BaseLayerMemory(el) = el else {
@@ -153,26 +166,39 @@ pub(crate) fn layout_machine_state_for_preprocessed_bytecode<F: PrimeField>(
         if let Some(GKRAddress::BaseLayerMemory(offset)) = graph.get_fixed_layout_pos(&rs2_index) {
             GKRAddress::BaseLayerMemory(offset)
         } else {
-            let t = graph
-                .layout_witness_subtree_multiple_variables([rs2_index], all_variables_to_place);
+            let t = graph.layout_witness_subtree_multiple_variables(
+                [rs2_index],
+                all_variables_to_place,
+                layers_mapping,
+            );
 
             t[0]
         };
 
-    let rd_index = if let Some(GKRAddress::BaseLayerMemory(offset)) =
-        graph.get_fixed_layout_pos(&rd_index)
-    {
-        GKRAddress::BaseLayerMemory(offset)
-    } else {
-        let t = graph.layout_witness_subtree_multiple_variables([rd_index], all_variables_to_place);
+    let rd_index =
+        if let Some(GKRAddress::BaseLayerMemory(offset)) = graph.get_fixed_layout_pos(&rd_index) {
+            GKRAddress::BaseLayerMemory(offset)
+        } else {
+            let t = graph.layout_witness_subtree_multiple_variables(
+                [rd_index],
+                all_variables_to_place,
+                layers_mapping,
+            );
 
-        t[0]
-    };
+            t[0]
+        };
 
-    let imm = graph.layout_witness_subtree_multiple_variables(imm, all_variables_to_place);
+    let imm = graph.layout_witness_subtree_multiple_variables(
+        imm,
+        all_variables_to_place,
+        layers_mapping,
+    );
     let funct3 = if let Some(funct3) = funct3 {
-        let funct3 =
-            graph.layout_witness_subtree_multiple_variables([funct3], all_variables_to_place);
+        let funct3 = graph.layout_witness_subtree_multiple_variables(
+            [funct3],
+            all_variables_to_place,
+            layers_mapping,
+        );
         Some(funct3[0])
     } else {
         None
@@ -187,7 +213,11 @@ pub(crate) fn layout_machine_state_for_preprocessed_bytecode<F: PrimeField>(
         {
             GKRAddress::BaseLayerMemory(offset)
         } else {
-            let t = graph.layout_witness_subtree_multiple_variables([el], all_variables_to_place);
+            let t = graph.layout_witness_subtree_multiple_variables(
+                [el],
+                all_variables_to_place,
+                layers_mapping,
+            );
 
             t[0]
         };
@@ -319,7 +349,7 @@ pub struct MemoryPermutationExpression {
     pub address_space: AddressSpace,
     pub address: AddressSpaceAddress,
     pub timestamp: [Variable; NUM_TIMESTAMP_COLUMNS_FOR_RAM],
-    pub value: [Variable; REGISTER_SIZE],
+    pub value: WordRepresentation,
     pub timestamp_offset: u32,
 }
 
@@ -440,9 +470,14 @@ pub(crate) fn mem_permutation_expr_into_cached_expr(
             }
         }
     };
-    let value = mem
-        .value
-        .map(|el| graph.get_address_for_variable(el).as_memory());
+    let value = match mem.value {
+        WordRepresentation::U16Limbs(value) => RamWordRepresentation::U16Limbs(
+            value.map(|el| graph.get_address_for_variable(el).as_memory()),
+        ),
+        WordRepresentation::U8Limbs(value) => RamWordRepresentation::U8Limbs(
+            value.map(|el| graph.get_address_for_variable(el).as_memory()),
+        ),
+    };
     let timestamp = mem
         .timestamp
         .map(|el| graph.get_address_for_variable(el).as_memory());

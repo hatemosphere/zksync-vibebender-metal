@@ -154,14 +154,11 @@ pub(crate) fn layout_initial_grand_product_accumulation(
         for (query, aux) in [a, b] {
             let read_set_el = match query {
                 MemoryAccess::RegisterOnly(RegisterAccess { reg_idx, .. }) => {
-                    let WordRepresentation::U16Limbs(read_value) = query.read_value() else {
-                        todo!();
-                    };
                     MemoryPermutationExpression {
                         address: AddressSpaceAddress::SingleLimb(*reg_idx),
                         address_space: AddressSpace::Constant(AddressSpaceType::Register),
                         timestamp: aux.read_timestamp,
-                        value: read_value,
+                        value: query.read_value(),
                         timestamp_offset: 0,
                     }
                 }
@@ -191,14 +188,11 @@ pub(crate) fn layout_initial_grand_product_accumulation(
 
             let write_set_el = match query {
                 MemoryAccess::RegisterOnly(RegisterAccess { reg_idx, .. }) => {
-                    let WordRepresentation::U16Limbs(write_value) = query.write_value() else {
-                        todo!();
-                    };
                     MemoryPermutationExpression {
                         address: AddressSpaceAddress::SingleLimb(*reg_idx),
                         address_space: AddressSpace::Constant(AddressSpaceType::Register),
                         timestamp: cycle_start_timestamp,
-                        value: write_value,
+                        value: query.write_value(),
                         timestamp_offset: query.local_timestamp_in_cycle(),
                     }
                 }
@@ -256,14 +250,11 @@ pub(crate) fn layout_initial_grand_product_accumulation(
             let (query, aux) = last_el;
             let read_set_el = match query {
                 MemoryAccess::RegisterOnly(RegisterAccess { reg_idx, .. }) => {
-                    let WordRepresentation::U16Limbs(read_value) = query.read_value() else {
-                        todo!();
-                    };
                     MemoryPermutationExpression {
                         address: AddressSpaceAddress::SingleLimb(reg_idx),
                         address_space: AddressSpace::Constant(AddressSpaceType::Register),
                         timestamp: aux.read_timestamp,
-                        value: read_value,
+                        value: query.read_value(),
                         timestamp_offset: 0,
                     }
                 }
@@ -275,14 +266,11 @@ pub(crate) fn layout_initial_grand_product_accumulation(
 
             let write_set_el = match query {
                 MemoryAccess::RegisterOnly(RegisterAccess { reg_idx, .. }) => {
-                    let WordRepresentation::U16Limbs(write_value) = query.write_value() else {
-                        todo!();
-                    };
                     MemoryPermutationExpression {
                         address: AddressSpaceAddress::SingleLimb(reg_idx),
                         address_space: AddressSpace::Constant(AddressSpaceType::Register),
                         timestamp: cycle_start_timestamp,
-                        value: write_value,
+                        value: query.write_value(),
                         timestamp_offset: query.local_timestamp_in_cycle(),
                     }
                 }
@@ -299,7 +287,7 @@ pub(crate) fn layout_initial_grand_product_accumulation(
                 address: AddressSpaceAddress::Empty,
                 address_space: AddressSpace::Constant(AddressSpaceType::PC),
                 timestamp: cycle_start_timestamp,
-                value: cycle_start_pc,
+                value: WordRepresentation::U16Limbs(cycle_start_pc),
                 timestamp_offset: 0,
             };
             read_set.push(read_set_el);
@@ -308,7 +296,7 @@ pub(crate) fn layout_initial_grand_product_accumulation(
                 address: AddressSpaceAddress::Empty,
                 address_space: AddressSpace::Constant(AddressSpaceType::PC),
                 timestamp: cycle_end_timestamp,
-                value: cycle_end_pc,
+                value: WordRepresentation::U16Limbs(cycle_end_pc),
                 timestamp_offset: 0,
             };
             write_set.push(write_set_el);

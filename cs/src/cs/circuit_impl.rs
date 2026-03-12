@@ -138,8 +138,8 @@ impl<F: PrimeField, W: WitnessPlacer<F>, const ASSUME_MEMORY_VALUES_ASSIGNED: bo
         assert!(constraint.terms.iter().all(|x| x.is_constant()) == false);
         constraint.normalize();
         let new_var = self.add_named_variable(name);
-        self.variables_from_constraints
-            .insert(new_var, constraint.clone());
+        // self.variables_from_constraints
+        //     .insert(new_var, constraint.clone());
 
         use crate::cs::utils::collapse_max_quadratic_constraint_into;
         collapse_max_quadratic_constraint_into(self, constraint.clone(), new_var);
@@ -181,11 +181,16 @@ impl<F: PrimeField, W: WitnessPlacer<F>, const ASSUME_MEMORY_VALUES_ASSIGNED: bo
         self.variables_from_constraints
             .insert(new_var, constraint.clone());
 
-        use crate::cs::utils::collapse_max_quadratic_constraint_into;
-        collapse_max_quadratic_constraint_into(self, constraint.clone(), new_var);
+        // use crate::cs::utils::collapse_max_quadratic_constraint_into;
+        // collapse_max_quadratic_constraint_into(self, constraint.clone(), new_var);
 
-        constraint -= Term::from(new_var);
-        self.add_constraint(constraint);
+        // constraint -= Term::from(new_var);
+        // if constraint.degree() == 2 {
+        //     self.add_constraint(constraint);
+        // } else {
+        //     assert_eq!(constraint.degree(), 1);
+        //     self.add_constraint_allow_explicit_linear_prevent_optimizations(constraint);
+        // }
 
         new_var
     }
@@ -199,8 +204,8 @@ impl<F: PrimeField, W: WitnessPlacer<F>, const ASSUME_MEMORY_VALUES_ASSIGNED: bo
         assert!(constraint.terms.iter().all(|x| x.is_constant()) == false);
         constraint.normalize();
         let new_var = self.add_variable();
-        self.variables_from_constraints
-            .insert(new_var, constraint.clone());
+        // self.variables_from_constraints
+        //     .insert(new_var, constraint.clone());
 
         constraint -= Term::from(new_var);
         self.add_constraint(constraint);
@@ -217,8 +222,8 @@ impl<F: PrimeField, W: WitnessPlacer<F>, const ASSUME_MEMORY_VALUES_ASSIGNED: bo
         assert!(constraint.terms.iter().all(|x| x.is_constant()) == false);
         constraint.normalize();
         let new_var = self.add_variable();
-        self.variables_from_constraints
-            .insert(new_var, constraint.clone());
+        // self.variables_from_constraints
+        //     .insert(new_var, constraint.clone());
 
         use crate::cs::utils::collapse_max_quadratic_constraint_into;
         collapse_max_quadratic_constraint_into(self, constraint.clone(), new_var);
@@ -238,8 +243,8 @@ impl<F: PrimeField, W: WitnessPlacer<F>, const ASSUME_MEMORY_VALUES_ASSIGNED: bo
         assert!(constraint.terms.iter().all(|x| x.is_constant()) == false);
         constraint.normalize();
         let new_var = self.add_variable();
-        self.variables_from_constraints
-            .insert(new_var, constraint.clone());
+        // self.variables_from_constraints
+        //     .insert(new_var, constraint.clone());
 
         constraint -= Term::from(new_var);
         self.add_constraint_allow_explicit_linear(constraint);
@@ -255,20 +260,19 @@ impl<F: PrimeField, W: WitnessPlacer<F>, const ASSUME_MEMORY_VALUES_ASSIGNED: bo
         self.witness_graph.append_inplace(node);
     }
 
-    fn materialize_table(&mut self, table_type: TableType) {
-        todo!();
-
-        // self.table_driver.materialize_table(table_type);
-        // if let Some(witness_placer) = self.witness_placer.as_mut() {
-        //     if std::any::TypeId::of::<W>() == std::any::TypeId::of::<CSDebugWitnessEvaluator<F>>() {
-        //         unsafe {
-        //             let t = (witness_placer as *mut W)
-        //                 .cast::<CSDebugWitnessEvaluator<F>>()
-        //                 .as_mut_unchecked();
-        //             t.table_driver.materialize_table(table_type);
-        //         }
-        //     }
-        // }
+    fn materialize_table<const TOTAL_WIDTH: usize>(&mut self, table_type: TableType) {
+        self.table_driver
+            .materialize_table::<TOTAL_WIDTH>(table_type);
+        if let Some(witness_placer) = self.witness_placer.as_mut() {
+            if std::any::TypeId::of::<W>() == std::any::TypeId::of::<CSDebugWitnessEvaluator<F>>() {
+                unsafe {
+                    let t = (witness_placer as *mut W)
+                        .cast::<CSDebugWitnessEvaluator<F>>()
+                        .as_mut_unchecked();
+                    t.table_driver.materialize_table::<TOTAL_WIDTH>(table_type);
+                }
+            }
+        }
     }
 
     // fn add_table_with_content(&mut self, table_type: TableType, table: LookupWrapper<F>) {
@@ -335,6 +339,14 @@ impl<F: PrimeField, W: WitnessPlacer<F>, const ASSUME_MEMORY_VALUES_ASSIGNED: bo
         self.constraint_storage.push((constraint, true));
     }
 
+    fn add_constraint_into_intermediate_variable(
+        &mut self,
+        constraint: Constraint<F>,
+        intermediate_var: Variable,
+    ) {
+        todo!();
+    }
+
     fn request_mem_access(
         &mut self,
         request: MemoryAccessRequest,
@@ -347,7 +359,32 @@ impl<F: PrimeField, W: WitnessPlacer<F>, const ASSUME_MEMORY_VALUES_ASSIGNED: bo
                 read_value_placeholder,
                 split_as_u8,
             } => {
-                // allocate read value
+                let read_timestamp = {
+                    let vars = std::array::from_fn(|i| {
+                        self.add_named_variable(&format!("{}[{}]", name, i))
+                    });
+
+                    if Self::ASSUME_MEMORY_VALUES_ASSIGNED {
+                        let value_fn = move |placer: &mut Self::WitnessPlacer| {
+                            for el in vars.iter() {
+                                placer.assume_assigned(*el);
+                            }
+                        };
+                        self.set_values(value_fn);
+                    } else {
+                        let value_fn = move |placer: &mut Self::WitnessPlacer| {
+                            let value =
+                                placer.get_oracle_u32(Placeholder::ShuffleRamReadTimestamp(
+                                    local_timestamp_in_cycle as usize,
+                                ));
+
+                            placer.assign_u32_from_u16_parts(vars, &value);
+                        };
+                        self.set_values(value_fn);
+                    }
+
+                    vars
+                };
 
                 // no range check is needed here, as our RAM is consistent by itself - our writes(!) are range-checked,
                 // so any reads will have to be range-checked
@@ -359,33 +396,6 @@ impl<F: PrimeField, W: WitnessPlacer<F>, const ASSUME_MEMORY_VALUES_ASSIGNED: bo
                     );
                     let read_value = read_value.0.map(|el| el.get_variable());
                     let read_value = WordRepresentation::U16Limbs(read_value);
-
-                    let read_timestamp = {
-                        let vars = std::array::from_fn(|i| {
-                            self.add_named_variable(&format!("{}[{}]", name, i))
-                        });
-
-                        if Self::ASSUME_MEMORY_VALUES_ASSIGNED {
-                            let value_fn = move |placer: &mut Self::WitnessPlacer| {
-                                for el in vars.iter() {
-                                    placer.assume_assigned(*el);
-                                }
-                            };
-                            self.set_values(value_fn);
-                        } else {
-                            let value_fn = move |placer: &mut Self::WitnessPlacer| {
-                                let value =
-                                    placer.get_oracle_u32(Placeholder::ShuffleRamReadTimestamp(
-                                        local_timestamp_in_cycle as usize,
-                                    ));
-
-                                placer.assign_u32_from_u16_parts(vars, &value);
-                            };
-                            self.set_values(value_fn);
-                        }
-
-                        vars
-                    };
 
                     let access = MemoryAccess::RegisterOnly(RegisterAccess {
                         reg_idx,
@@ -399,7 +409,34 @@ impl<F: PrimeField, W: WitnessPlacer<F>, const ASSUME_MEMORY_VALUES_ASSIGNED: bo
 
                     access
                 } else {
-                    todo!()
+                    let read_value: [Variable; 4] = std::array::from_fn(|i| {
+                        self.add_named_variable(&format!("{}[{}]", name, i))
+                    });
+                    if Self::ASSUME_MEMORY_VALUES_ASSIGNED == false {
+                        let value_fn = move |placer: &mut Self::WitnessPlacer| {
+                            let value = placer.get_oracle_u32(read_value_placeholder);
+                            let low = value.truncate();
+                            let high = value.shr(16).truncate();
+
+                            placer.assign_u16_from_u8_parts([read_value[0], read_value[1]], &low);
+                            placer.assign_u16_from_u8_parts([read_value[2], read_value[3]], &high);
+                        };
+
+                        self.set_values(value_fn);
+                    }
+
+                    let read_value = WordRepresentation::U8Limbs(read_value);
+                    let access = MemoryAccess::RegisterOnly(RegisterAccess {
+                        reg_idx,
+                        read_timestamp,
+                        read_value: read_value.clone(),
+                        write_value: read_value,
+                        local_timestamp_in_cycle,
+                    });
+
+                    self.memory_queries.push(access.clone());
+
+                    access
                 }
             }
             MemoryAccessRequest::RegisterReadWrite {
@@ -1262,6 +1299,7 @@ impl<F: PrimeField, W: WitnessPlacer<F>, const ASSUME_MEMORY_VALUES_ASSIGNED: bo
             variable_names,
             circuit_family_bitmask,
             variables_from_constraints,
+            layers_mapping,
             ..
         } = self;
 
@@ -1272,6 +1310,7 @@ impl<F: PrimeField, W: WitnessPlacer<F>, const ASSUME_MEMORY_VALUES_ASSIGNED: bo
             table_driver,
             num_of_variables: no_index_assigned as usize,
             constraints: constraint_storage,
+            layers_mapping,
             lookups: lookup_storage,
             range_check_expressions: rangechecked_expressions,
             boolean_vars: boolean_variables,

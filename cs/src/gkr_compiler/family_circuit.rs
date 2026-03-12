@@ -3,8 +3,6 @@ use super::*;
 use crate::constraint::Constraint;
 use crate::constraint::Term;
 use crate::cs::circuit::LookupQuery;
-use crate::cs::circuit::LookupQueryTableType;
-use crate::cs::circuit::ShuffleRamQueryType;
 use crate::cs::circuit_trait::MemoryAccess;
 use crate::cs::circuit_trait::RegisterAccess;
 use crate::cs::circuit_trait::WordRepresentation;
@@ -45,6 +43,7 @@ impl<F: PrimeField> GKRCompiler<F> {
             circuit_family_bitmask,
             variable_names,
             variables_from_constraints,
+            layers_mapping,
             ..
         } = circuit_output;
 
@@ -68,6 +67,7 @@ impl<F: PrimeField> GKRCompiler<F> {
 
         let mut constraints = constraints;
         let mut variables_from_constraints = variables_from_constraints;
+        let mut layers_mapping = layers_mapping;
 
         let executor_machine_state =
             executor_machine_state.expect("must be present in executor circuit");
@@ -241,12 +241,16 @@ impl<F: PrimeField> GKRCompiler<F> {
             let read_timestamp = graph.layout_memory_subtree_multiple_variables(
                 [read_timestamp_low, read_timestamp_high],
                 &mut all_variables_to_place,
+                &layers_mapping,
             );
 
             let borrow_var = {
                 // now that we have declared timestamps, we can produce comparison expressions for range checks
-                let borrow_var =
-                    add_compiler_defined_variable(&mut num_variables, &mut all_variables_to_place);
+                let borrow_var = add_compiler_defined_base_layer_variable(
+                    &mut num_variables,
+                    &mut all_variables_to_place,
+                    &mut layers_mapping,
+                );
                 boolean_vars.push(borrow_var);
                 variable_names.insert(borrow_var, format!("query {}, interm ts borrow", query_idx));
 
@@ -261,12 +265,6 @@ impl<F: PrimeField> GKRCompiler<F> {
 
             ram_augmented_sets.push((memory_query.clone(), partial_data));
 
-            let WordRepresentation::U16Limbs(read_value) = memory_query.read_value() else {
-                unreachable!()
-            };
-            let read_value = graph
-                .layout_memory_subtree_multiple_variables(read_value, &mut all_variables_to_place);
-
             let read_timestamp = read_timestamp.map(|el| {
                 let GKRAddress::BaseLayerMemory(el) = el else {
                     unreachable!()
@@ -275,13 +273,41 @@ impl<F: PrimeField> GKRCompiler<F> {
                 el
             });
 
-            let read_value = read_value.map(|el| {
-                let GKRAddress::BaseLayerMemory(el) = el else {
-                    unreachable!()
-                };
+            let read_value = match memory_query.read_value() {
+                WordRepresentation::U16Limbs(read_value) => {
+                    let read_value = graph.layout_memory_subtree_multiple_variables(
+                        read_value,
+                        &mut all_variables_to_place,
+                        &layers_mapping,
+                    );
+                    let read_value = read_value.map(|el| {
+                        let GKRAddress::BaseLayerMemory(el) = el else {
+                            unreachable!()
+                        };
 
-                el
-            });
+                        el
+                    });
+
+                    RamWordRepresentation::U16Limbs(read_value)
+                }
+
+                WordRepresentation::U8Limbs(read_value) => {
+                    let read_value = graph.layout_memory_subtree_multiple_variables(
+                        read_value,
+                        &mut all_variables_to_place,
+                        &layers_mapping,
+                    );
+                    let read_value = read_value.map(|el| {
+                        let GKRAddress::BaseLayerMemory(el) = el else {
+                            unreachable!()
+                        };
+
+                        el
+                    });
+
+                    RamWordRepresentation::U8Limbs(read_value)
+                }
+            };
 
             let address = match memory_query.clone() {
                 MemoryAccess::RegisterOnly(RegisterAccess {
@@ -294,6 +320,7 @@ impl<F: PrimeField> GKRCompiler<F> {
                     let [register_index] = graph.layout_memory_subtree_multiple_variables(
                         [reg_idx],
                         &mut all_variables_to_place,
+                        &layers_mapping,
                     );
                     let GKRAddress::BaseLayerMemory(register_index) = register_index else {
                         unreachable!()
@@ -360,22 +387,42 @@ impl<F: PrimeField> GKRCompiler<F> {
 
                 RamQuery::Readonly(query_columns)
             } else {
-                let WordRepresentation::U16Limbs(write_value) = memory_query.write_value() else {
-                    unreachable!()
+                let write_value = match memory_query.write_value() {
+                    WordRepresentation::U16Limbs(write_value) => {
+                        let write_value = graph.layout_memory_subtree_multiple_variables(
+                            write_value,
+                            &mut all_variables_to_place,
+                            &layers_mapping,
+                        );
+                        let write_value = write_value.map(|el| {
+                            let GKRAddress::BaseLayerMemory(el) = el else {
+                                unreachable!()
+                            };
+
+                            el
+                        });
+
+                        RamWordRepresentation::U16Limbs(write_value)
+                    }
+
+                    WordRepresentation::U8Limbs(write_value) => {
+                        unreachable!();
+                        let write_value = graph.layout_memory_subtree_multiple_variables(
+                            write_value,
+                            &mut all_variables_to_place,
+                            &layers_mapping,
+                        );
+                        let write_value = write_value.map(|el| {
+                            let GKRAddress::BaseLayerMemory(el) = el else {
+                                unreachable!()
+                            };
+
+                            el
+                        });
+
+                        RamWordRepresentation::U8Limbs(write_value)
+                    }
                 };
-                let write_value = graph.layout_memory_subtree_multiple_variables(
-                    write_value,
-                    &mut all_variables_to_place,
-                );
-
-                let write_value = write_value.map(|el| {
-                    let GKRAddress::BaseLayerMemory(el) = el else {
-                        unreachable!()
-                    };
-
-                    el
-                });
-
                 let query_columns = RamWriteQuery {
                     in_cycle_write_index: memory_query.local_timestamp_in_cycle(),
                     address,
@@ -435,6 +482,7 @@ impl<F: PrimeField> GKRCompiler<F> {
             &mut all_variables_to_place,
             &executor_machine_state,
             circuit_family_bitmask.clone(),
+            &layers_mapping,
         );
 
         use crate::gkr_compiler::memory_like_grand_product::layout_initial_grand_product_accumulation;
@@ -565,45 +613,36 @@ impl<F: PrimeField> GKRCompiler<F> {
             variables_via_constraints_are_disjoint
         );
 
-        // now we will make small heuristic decision to verifier tradeoff - if we have too little of constraint defined vars,
-        // or if adding them to witness cost nothing for prover - we will instead push them to witness
+        if variables_from_constraints.len() > 0 {
+            assert!(all_variables_to_place.len() > 0);
 
-        const MIN_VARS_VIA_CONSTRAINTS: usize = 8;
-        const HASHING_ROUND_SIZE: usize = 16;
-
-        let vars_to_place = all_variables_to_place.len();
-        let vars_to_place_if_using_constraints = vars_to_place - variables_from_constraints.len();
-        let rounds = vars_to_place.div_ceil(HASHING_ROUND_SIZE);
-        let rounds_if_using_constraints =
-            vars_to_place_if_using_constraints.div_ceil(HASHING_ROUND_SIZE);
-
-        let push_via_constraints_into_witness = if variables_from_constraints.len()
-            < MIN_VARS_VIA_CONSTRAINTS
-            || rounds == rounds_if_using_constraints
-        {
-            true
-        } else {
-            false
-        };
-
-        if push_via_constraints_into_witness {
-            // place all variables to place into witness, and push constraints back
-            for (v, c) in variables_from_constraints.into_iter() {
-                // NOTE: defining constraint doesn't have a variable in itself
-                let mut c = c;
-                c -= Term::from(v);
-                assert!(all_variables_to_place.contains(&v));
-                constraints.push((c, true));
+            // put all variables into base layer that are not defined via constraints
+            for var in all_variables_to_place.clone().iter() {
+                if variables_from_constraints.contains_key(var) {
+                    continue;
+                }
+                let _ = graph.layout_witness_subtree_multiple_variables(
+                    [*var],
+                    &mut all_variables_to_place,
+                    &layers_mapping,
+                );
             }
+            assert_eq!(
+                all_variables_to_place.len(),
+                variables_from_constraints.len()
+            );
 
+            todo!();
+        } else {
             // put all variables into base layer
             for var in all_variables_to_place.clone().iter() {
-                let _ = graph
-                    .layout_witness_subtree_multiple_variables([*var], &mut all_variables_to_place);
+                let _ = graph.layout_witness_subtree_multiple_variables(
+                    [*var],
+                    &mut all_variables_to_place,
+                    &layers_mapping,
+                );
             }
             assert!(all_variables_to_place.is_empty());
-        } else {
-            todo!();
         }
 
         // Accumulate grand product - pairwise as much as we can
@@ -636,6 +675,7 @@ impl<F: PrimeField> GKRCompiler<F> {
                         &mut num_variables,
                         &mut all_variables_to_place,
                         &mut variable_names,
+                        &mut layers_mapping,
                         "range check 16",
                         LookupType::RangeCheck16,
                     );
@@ -659,6 +699,7 @@ impl<F: PrimeField> GKRCompiler<F> {
                         &mut num_variables,
                         &mut all_variables_to_place,
                         &mut variable_names,
+                        &mut layers_mapping,
                         "timestamp range check",
                         LookupType::TimestampRangeCheck,
                     );
@@ -682,6 +723,7 @@ impl<F: PrimeField> GKRCompiler<F> {
                         &mut num_variables,
                         &mut all_variables_to_place,
                         &mut variable_names,
+                        &mut layers_mapping,
                         "generic lookup",
                         decoder_lookup_pair,
                         LookupType::Generic,

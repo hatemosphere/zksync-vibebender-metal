@@ -975,13 +975,15 @@ impl<F: PrimeField> Register<F> {
 
         // set value
         let vars = new.0.map(|el| el.get_variable());
-        let value_fn = move |placer: &mut CS::WitnessPlacer| {
-            let value = placer.get_oracle_u32(placeholder);
+        if CS::ASSUME_MEMORY_VALUES_ASSIGNED == false {
+            let value_fn = move |placer: &mut CS::WitnessPlacer| {
+                let value = placer.get_oracle_u32(placeholder);
 
-            placer.assign_u32_from_u16_parts(vars, &value);
-        };
+                placer.assign_u32_from_u16_parts(vars, &value);
+            };
 
-        cs.set_values(value_fn);
+            cs.set_values(value_fn);
+        }
 
         new
     }
