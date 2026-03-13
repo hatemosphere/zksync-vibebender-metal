@@ -59,54 +59,162 @@ fn main() {
     let max_lde_size_log2 = max_trace_len_log2 + max_fri_factor_log2;
 
     let num_range_16_lookups = *[
-        blake2_with_compression_verifier::concrete::layout_import::VERIFIER_COMPILED_LAYOUT.witness_layout.range_check_16_lookup_expressions.len(),
-        bigint_with_control_verifier::concrete::layout_import::VERIFIER_COMPILED_LAYOUT.witness_layout.range_check_16_lookup_expressions.len(),
-        keccak_special5_verifier::concrete::layout_import::VERIFIER_COMPILED_LAYOUT.witness_layout.range_check_16_lookup_expressions.len(),
-        add_sub_lui_auipc_mop_verifier::concrete::layout_import::VERIFIER_COMPILED_LAYOUT.witness_layout.range_check_16_lookup_expressions.len(),
-        jump_branch_slt_verifier::concrete::layout_import::VERIFIER_COMPILED_LAYOUT.witness_layout.range_check_16_lookup_expressions.len(),
-        load_store_subword_only_verifier::concrete::layout_import::VERIFIER_COMPILED_LAYOUT.witness_layout.range_check_16_lookup_expressions.len(),
-        load_store_word_only_verifier::concrete::layout_import::VERIFIER_COMPILED_LAYOUT.witness_layout.range_check_16_lookup_expressions.len(),
-        mul_div_verifier::concrete::layout_import::VERIFIER_COMPILED_LAYOUT.witness_layout.range_check_16_lookup_expressions.len(),
-        mul_div_unsigned_verifier::concrete::layout_import::VERIFIER_COMPILED_LAYOUT.witness_layout.range_check_16_lookup_expressions.len(),
-        shift_binary_csr_verifier::concrete::layout_import::VERIFIER_COMPILED_LAYOUT.witness_layout.range_check_16_lookup_expressions.len(),
-        inits_and_teardowns_verifier::concrete::layout_import::VERIFIER_COMPILED_LAYOUT.witness_layout.range_check_16_lookup_expressions.len(),
-        unified_reduced_machine_verifier::concrete::layout_import::VERIFIER_COMPILED_LAYOUT.witness_layout.range_check_16_lookup_expressions.len(),
+        blake2_with_compression_verifier::concrete::layout_import::VERIFIER_COMPILED_LAYOUT
+            .witness_layout
+            .range_check_16_lookup_expressions
+            .len(),
+        bigint_with_control_verifier::concrete::layout_import::VERIFIER_COMPILED_LAYOUT
+            .witness_layout
+            .range_check_16_lookup_expressions
+            .len(),
+        keccak_special5_verifier::concrete::layout_import::VERIFIER_COMPILED_LAYOUT
+            .witness_layout
+            .range_check_16_lookup_expressions
+            .len(),
+        add_sub_lui_auipc_mop_verifier::concrete::layout_import::VERIFIER_COMPILED_LAYOUT
+            .witness_layout
+            .range_check_16_lookup_expressions
+            .len(),
+        jump_branch_slt_verifier::concrete::layout_import::VERIFIER_COMPILED_LAYOUT
+            .witness_layout
+            .range_check_16_lookup_expressions
+            .len(),
+        load_store_subword_only_verifier::concrete::layout_import::VERIFIER_COMPILED_LAYOUT
+            .witness_layout
+            .range_check_16_lookup_expressions
+            .len(),
+        load_store_word_only_verifier::concrete::layout_import::VERIFIER_COMPILED_LAYOUT
+            .witness_layout
+            .range_check_16_lookup_expressions
+            .len(),
+        mul_div_verifier::concrete::layout_import::VERIFIER_COMPILED_LAYOUT
+            .witness_layout
+            .range_check_16_lookup_expressions
+            .len(),
+        mul_div_unsigned_verifier::concrete::layout_import::VERIFIER_COMPILED_LAYOUT
+            .witness_layout
+            .range_check_16_lookup_expressions
+            .len(),
+        shift_binary_csr_verifier::concrete::layout_import::VERIFIER_COMPILED_LAYOUT
+            .witness_layout
+            .range_check_16_lookup_expressions
+            .len(),
+        inits_and_teardowns_verifier::concrete::layout_import::VERIFIER_COMPILED_LAYOUT
+            .witness_layout
+            .range_check_16_lookup_expressions
+            .len(),
+        unified_reduced_machine_verifier::concrete::layout_import::VERIFIER_COMPILED_LAYOUT
+            .witness_layout
+            .range_check_16_lookup_expressions
+            .len(),
     ]
     .iter()
     .max()
     .unwrap();
 
     let num_range_19_lookups = *[
-        blake2_with_compression_verifier::concrete::layout_import::VERIFIER_COMPILED_LAYOUT.witness_layout.timestamp_range_check_lookup_expressions.len(),
-        bigint_with_control_verifier::concrete::layout_import::VERIFIER_COMPILED_LAYOUT.witness_layout.timestamp_range_check_lookup_expressions.len(),
-        keccak_special5_verifier::concrete::layout_import::VERIFIER_COMPILED_LAYOUT.witness_layout.timestamp_range_check_lookup_expressions.len(),
-        add_sub_lui_auipc_mop_verifier::concrete::layout_import::VERIFIER_COMPILED_LAYOUT.witness_layout.timestamp_range_check_lookup_expressions.len(),
-        jump_branch_slt_verifier::concrete::layout_import::VERIFIER_COMPILED_LAYOUT.witness_layout.timestamp_range_check_lookup_expressions.len(),
-        load_store_subword_only_verifier::concrete::layout_import::VERIFIER_COMPILED_LAYOUT.witness_layout.timestamp_range_check_lookup_expressions.len(),
-        load_store_word_only_verifier::concrete::layout_import::VERIFIER_COMPILED_LAYOUT.witness_layout.timestamp_range_check_lookup_expressions.len(),
-        mul_div_verifier::concrete::layout_import::VERIFIER_COMPILED_LAYOUT.witness_layout.timestamp_range_check_lookup_expressions.len(),
-        mul_div_unsigned_verifier::concrete::layout_import::VERIFIER_COMPILED_LAYOUT.witness_layout.timestamp_range_check_lookup_expressions.len(),
-        shift_binary_csr_verifier::concrete::layout_import::VERIFIER_COMPILED_LAYOUT.witness_layout.timestamp_range_check_lookup_expressions.len(),
-        inits_and_teardowns_verifier::concrete::layout_import::VERIFIER_COMPILED_LAYOUT.witness_layout.timestamp_range_check_lookup_expressions.len(),
-        unified_reduced_machine_verifier::concrete::layout_import::VERIFIER_COMPILED_LAYOUT.witness_layout.timestamp_range_check_lookup_expressions.len(),
+        blake2_with_compression_verifier::concrete::layout_import::VERIFIER_COMPILED_LAYOUT
+            .witness_layout
+            .timestamp_range_check_lookup_expressions
+            .len(),
+        bigint_with_control_verifier::concrete::layout_import::VERIFIER_COMPILED_LAYOUT
+            .witness_layout
+            .timestamp_range_check_lookup_expressions
+            .len(),
+        keccak_special5_verifier::concrete::layout_import::VERIFIER_COMPILED_LAYOUT
+            .witness_layout
+            .timestamp_range_check_lookup_expressions
+            .len(),
+        add_sub_lui_auipc_mop_verifier::concrete::layout_import::VERIFIER_COMPILED_LAYOUT
+            .witness_layout
+            .timestamp_range_check_lookup_expressions
+            .len(),
+        jump_branch_slt_verifier::concrete::layout_import::VERIFIER_COMPILED_LAYOUT
+            .witness_layout
+            .timestamp_range_check_lookup_expressions
+            .len(),
+        load_store_subword_only_verifier::concrete::layout_import::VERIFIER_COMPILED_LAYOUT
+            .witness_layout
+            .timestamp_range_check_lookup_expressions
+            .len(),
+        load_store_word_only_verifier::concrete::layout_import::VERIFIER_COMPILED_LAYOUT
+            .witness_layout
+            .timestamp_range_check_lookup_expressions
+            .len(),
+        mul_div_verifier::concrete::layout_import::VERIFIER_COMPILED_LAYOUT
+            .witness_layout
+            .timestamp_range_check_lookup_expressions
+            .len(),
+        mul_div_unsigned_verifier::concrete::layout_import::VERIFIER_COMPILED_LAYOUT
+            .witness_layout
+            .timestamp_range_check_lookup_expressions
+            .len(),
+        shift_binary_csr_verifier::concrete::layout_import::VERIFIER_COMPILED_LAYOUT
+            .witness_layout
+            .timestamp_range_check_lookup_expressions
+            .len(),
+        inits_and_teardowns_verifier::concrete::layout_import::VERIFIER_COMPILED_LAYOUT
+            .witness_layout
+            .timestamp_range_check_lookup_expressions
+            .len(),
+        unified_reduced_machine_verifier::concrete::layout_import::VERIFIER_COMPILED_LAYOUT
+            .witness_layout
+            .timestamp_range_check_lookup_expressions
+            .len(),
     ]
     .iter()
     .max()
     .unwrap();
 
     let num_width_3_lookups = *[
-        blake2_with_compression_verifier::concrete::layout_import::VERIFIER_COMPILED_LAYOUT.witness_layout.width_3_lookups.len(),
-        bigint_with_control_verifier::concrete::layout_import::VERIFIER_COMPILED_LAYOUT.witness_layout.width_3_lookups.len(),
-        keccak_special5_verifier::concrete::layout_import::VERIFIER_COMPILED_LAYOUT.witness_layout.width_3_lookups.len(),
-        add_sub_lui_auipc_mop_verifier::concrete::layout_import::VERIFIER_COMPILED_LAYOUT.witness_layout.width_3_lookups.len(),
-        jump_branch_slt_verifier::concrete::layout_import::VERIFIER_COMPILED_LAYOUT.witness_layout.width_3_lookups.len(),
-        load_store_subword_only_verifier::concrete::layout_import::VERIFIER_COMPILED_LAYOUT.witness_layout.width_3_lookups.len(),
-        load_store_word_only_verifier::concrete::layout_import::VERIFIER_COMPILED_LAYOUT.witness_layout.width_3_lookups.len(),
-        mul_div_verifier::concrete::layout_import::VERIFIER_COMPILED_LAYOUT.witness_layout.width_3_lookups.len(),
-        mul_div_unsigned_verifier::concrete::layout_import::VERIFIER_COMPILED_LAYOUT.witness_layout.width_3_lookups.len(),
-        shift_binary_csr_verifier::concrete::layout_import::VERIFIER_COMPILED_LAYOUT.witness_layout.width_3_lookups.len(),
-        inits_and_teardowns_verifier::concrete::layout_import::VERIFIER_COMPILED_LAYOUT.witness_layout.width_3_lookups.len(),
-        unified_reduced_machine_verifier::concrete::layout_import::VERIFIER_COMPILED_LAYOUT.witness_layout.width_3_lookups.len(),
+        blake2_with_compression_verifier::concrete::layout_import::VERIFIER_COMPILED_LAYOUT
+            .witness_layout
+            .width_3_lookups
+            .len(),
+        bigint_with_control_verifier::concrete::layout_import::VERIFIER_COMPILED_LAYOUT
+            .witness_layout
+            .width_3_lookups
+            .len(),
+        keccak_special5_verifier::concrete::layout_import::VERIFIER_COMPILED_LAYOUT
+            .witness_layout
+            .width_3_lookups
+            .len(),
+        add_sub_lui_auipc_mop_verifier::concrete::layout_import::VERIFIER_COMPILED_LAYOUT
+            .witness_layout
+            .width_3_lookups
+            .len(),
+        jump_branch_slt_verifier::concrete::layout_import::VERIFIER_COMPILED_LAYOUT
+            .witness_layout
+            .width_3_lookups
+            .len(),
+        load_store_subword_only_verifier::concrete::layout_import::VERIFIER_COMPILED_LAYOUT
+            .witness_layout
+            .width_3_lookups
+            .len(),
+        load_store_word_only_verifier::concrete::layout_import::VERIFIER_COMPILED_LAYOUT
+            .witness_layout
+            .width_3_lookups
+            .len(),
+        mul_div_verifier::concrete::layout_import::VERIFIER_COMPILED_LAYOUT
+            .witness_layout
+            .width_3_lookups
+            .len(),
+        mul_div_unsigned_verifier::concrete::layout_import::VERIFIER_COMPILED_LAYOUT
+            .witness_layout
+            .width_3_lookups
+            .len(),
+        shift_binary_csr_verifier::concrete::layout_import::VERIFIER_COMPILED_LAYOUT
+            .witness_layout
+            .width_3_lookups
+            .len(),
+        inits_and_teardowns_verifier::concrete::layout_import::VERIFIER_COMPILED_LAYOUT
+            .witness_layout
+            .width_3_lookups
+            .len(),
+        unified_reduced_machine_verifier::concrete::layout_import::VERIFIER_COMPILED_LAYOUT
+            .witness_layout
+            .width_3_lookups
+            .len(),
     ]
     .iter()
     .max()
@@ -303,11 +411,7 @@ fn main() {
 
     let [quotient_z_pow_bits_for_80, quotient_z_pow_bits_for_100] =
         [80, 100].map(|security_bits| {
-            pow_bits_for_deep_z(
-                security_bits,
-                challenge_field_size,
-                max_lde_size_log2,
-            )
+            pow_bits_for_deep_z(security_bits, challenge_field_size, max_lde_size_log2)
         });
 
     let [
@@ -495,8 +599,7 @@ fn generate_airbender_toml_file(
     num_range_16_lookups: usize,
     num_range_19_lookups: usize,
 ) {
-    let folding_props =
-        prover::definitions::OPTIMAL_FOLDING_PROPERTIES[max_trace_len_log2];
+    let folding_props = prover::definitions::OPTIMAL_FOLDING_PROPERTIES[max_trace_len_log2];
 
     let trace_length = 1 << max_trace_len_log2;
 

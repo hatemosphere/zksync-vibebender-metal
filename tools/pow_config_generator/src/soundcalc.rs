@@ -73,7 +73,12 @@ fn header_comment(created_date: &str, commit_hash: &str) -> String {
 pub fn generate_airbender_toml(params: &AirbenderTomlParams) -> String {
     let mut out = String::new();
 
-    writeln!(out, "{}", header_comment(&params.created_date, &params.commit_hash)).unwrap();
+    writeln!(
+        out,
+        "{}",
+        header_comment(&params.created_date, &params.commit_hash)
+    )
+    .unwrap();
 
     writeln!(out, "[zkevm]").unwrap();
     writeln!(out, "name = \"Airbender\"").unwrap();
@@ -98,12 +103,7 @@ pub fn generate_airbender_toml(params: &AirbenderTomlParams) -> String {
     writeln!(out, "grinding_deep = {}", params.grinding_deep).unwrap();
     writeln!(out).unwrap();
     writeln!(out, "opening_points = {}", params.opening_points).unwrap();
-    writeln!(
-        out,
-        "power_batching = {}",
-        params.power_batching
-    )
-    .unwrap();
+    writeln!(out, "power_batching = {}", params.power_batching).unwrap();
     writeln!(out).unwrap();
 
     let factors_str: Vec<String> = params
@@ -111,12 +111,7 @@ pub fn generate_airbender_toml(params: &AirbenderTomlParams) -> String {
         .iter()
         .map(|f| f.to_string())
         .collect();
-    writeln!(
-        out,
-        "fri_folding_factors = [{}]",
-        factors_str.join(", ")
-    )
-    .unwrap();
+    writeln!(out, "fri_folding_factors = [{}]", factors_str.join(", ")).unwrap();
     writeln!(
         out,
         "fri_early_stop_degree = {}",
