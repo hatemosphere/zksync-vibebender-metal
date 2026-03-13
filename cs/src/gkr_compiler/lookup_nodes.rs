@@ -361,3 +361,108 @@ impl GKRGate for LookupExplicitPairWithSingleColumnMaterializedInputAggregationN
         (output, relation)
     }
 }
+
+#[derive(Clone, Hash, Debug, PartialEq, Eq, serde::Serialize, serde::Deserialize)]
+pub struct VectorLookupWitnessPairAggregationFromCachesNode {
+    pub lhs: NoFieldVectorLookupRelation,
+    pub rhs: NoFieldVectorLookupRelation,
+}
+
+impl GKRGate for VectorLookupWitnessPairAggregationFromCachesNode {
+    type Output = [GKRAddress; 2];
+
+    fn short_name(&self) -> String {
+        "1/vector_input + 1/vector_input".to_string()
+    }
+
+    fn add_at_layer(
+        &self,
+        graph: &mut impl GraphHolder,
+        output_layer: usize,
+    ) -> (Self::Output, NoFieldGKRRelation) {
+        let output = [(); 2].map(|_| graph.add_intermediate_variable_at_layer(output_layer));
+
+        let input = [&self.lhs, &self.rhs].map(|input| {
+            // cache
+            let cached_input = NoFieldGKRCacheRelation::VectorizedLookup(input.clone());
+            assert!(output_layer > 0);
+            let layer_for_caches = output_layer - 1;
+            let cached_input = graph.add_cached_relation(cached_input, layer_for_caches);
+
+            cached_input
+        });
+
+        let relation = NoFieldGKRRelation::LookupPairFromMaterializedBaseInputs { input, output };
+
+        graph.add_enforced_relation(relation.clone(), output_layer);
+
+        (output, relation)
+    }
+}
+
+#[derive(Clone, Hash, Debug, PartialEq, Eq, serde::Serialize, serde::Deserialize)]
+pub struct VectorLookupExplicitPairWithInputAggregationNode {
+    pub lhs_num: GKRAddress,
+    pub lhs_den: GKRAddress,
+    pub vector_input: NoFieldVectorLookupRelation,
+}
+
+impl GKRGate for VectorLookupExplicitPairWithInputAggregationNode {
+    type Output = [GKRAddress; 2];
+
+    fn short_name(&self) -> String {
+        "a/b + 1/single_input".to_string()
+    }
+
+    fn add_at_layer(
+        &self,
+        graph: &mut impl GraphHolder,
+        output_layer: usize,
+    ) -> (Self::Output, NoFieldGKRRelation) {
+        // cache the explicit value
+        let cached_input = NoFieldGKRCacheRelation::VectorizedLookup(self.vector_input.clone());
+        assert!(output_layer > 0);
+        let layer_for_caches = output_layer - 1;
+        let cached_input = graph.add_cached_relation(cached_input, layer_for_caches);
+
+        let node = VectorLookupExplicitPairWithMaterializedInputAggregationNode {
+            lhs_num: self.lhs_num,
+            lhs_den: self.lhs_den,
+            vector_input: cached_input,
+        };
+        node.add_at_layer(graph, output_layer)
+    }
+}
+
+#[derive(Clone, Hash, Debug, PartialEq, Eq, serde::Serialize, serde::Deserialize)]
+pub struct VectorLookupExplicitPairWithMaterializedInputAggregationNode {
+    pub lhs_num: GKRAddress,
+    pub lhs_den: GKRAddress,
+    pub vector_input: GKRAddress,
+}
+
+impl GKRGate for VectorLookupExplicitPairWithMaterializedInputAggregationNode {
+    type Output = [GKRAddress; 2];
+
+    fn short_name(&self) -> String {
+        "a/b + 1/vector_input".to_string()
+    }
+
+    fn add_at_layer(
+        &self,
+        graph: &mut impl GraphHolder,
+        output_layer: usize,
+    ) -> (Self::Output, NoFieldGKRRelation) {
+        let output = [(); 2].map(|_| graph.add_intermediate_variable_at_layer(output_layer));
+
+        let relation = NoFieldGKRRelation::LookupUnbalancedPairWithMaterializedVectorInputs {
+            input: [self.lhs_num, self.lhs_den],
+            remainder: self.vector_input,
+            output,
+        };
+
+        graph.add_enforced_relation(relation.clone(), output_layer);
+
+        (output, relation)
+    }
+}

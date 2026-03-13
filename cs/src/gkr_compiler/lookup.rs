@@ -266,7 +266,8 @@ pub(crate) fn layout_lookup_expressions<F: PrimeField, const SINGLE_COLUMN: bool
         );
         let input =
             lookup_input_node_from_expr::<F, SINGLE_COLUMN>(&rel, total_width, expect_table_id);
-        let input = lookup_input_into_relation::<F, SINGLE_COLUMN>(&input, idx, &*graph);
+        let input =
+            lookup_input_into_relation::<F, SINGLE_COLUMN>(&input, idx, total_width, &*graph);
         all_relations_stable_set.insert(idx, (rel.clone(), input.clone()));
         let ent = inputs_at_layers
             .entry(input_layer)
@@ -418,6 +419,7 @@ fn drive_lookup_placement<F: PrimeField, const SINGLE_COLUMN: bool>(
             let input = lookup_input_into_relation::<F, SINGLE_COLUMN>(
                 &input,
                 DECODER_LOOKUP_FORMAL_SET_INDEX,
+                total_width,
                 &*graph,
             );
             assert_eq!(input.columns.len(), graph.setup_addresses(lookup).len());
@@ -561,14 +563,51 @@ fn drive_lookup_placement<F: PrimeField, const SINGLE_COLUMN: bool>(
             .len()
             == 1
     {
-        todo!();
+        // merge once between them
+        let key = *inputs.keys().next().unwrap();
+        let (_, input_rel) = inputs.remove(&key).unwrap();
 
-        // // merge once between them
-        // let key = *inputs.keys().next().unwrap();
-        // let (_, _, input_rel) = inputs.remove(&key).unwrap();
+        let intermediate_inputs = intermediate_values.entry(input_layer).or_insert(vec![]);
+        let (num, den) = intermediate_inputs.pop().unwrap();
 
-        // let intermediate_inputs = intermediate_values.entry(input_layer).or_insert(vec![]);
-        // let (num, den) = intermediate_inputs.pop().unwrap();
+        if SINGLE_COLUMN {
+            assert_eq!(input_rel.columns.len(), 1);
+            let rel = NoFieldSingleColumnLookupRelation {
+                input: input_rel.columns[0].clone(),
+                lookup_set_index: input_rel.lookup_set_index,
+            };
+            if rel.input.is_trivial_single_input() {
+                todo!();
+            } else {
+                todo!();
+            }
+        } else {
+            match (num, den) {
+                (
+                    LookupNumerator::ExtensionValueWithAllConstantsMixed(num),
+                    LookupDenominator::ExtensionValueWithAllConstantsMixed(den),
+                ) => {
+                    use crate::gkr_compiler::lookup_nodes::VectorLookupExplicitPairWithInputAggregationNode;
+                    let node = VectorLookupExplicitPairWithInputAggregationNode {
+                        lhs_num: num,
+                        lhs_den: den,
+                        vector_input: input_rel,
+                    };
+                    let ([num, den], rel) = node.add_at_layer(graph, input_layer + 1);
+                    intermediate_values
+                        .entry(input_layer + 1)
+                        .or_insert(vec![])
+                        .push((
+                            LookupNumerator::ExtensionValueWithAllConstantsMixed(num),
+                            LookupDenominator::ExtensionValueWithAllConstantsMixed(den),
+                        ));
+                    relations_map.insert([num, den], rel);
+                }
+                (num, den) => {
+                    panic!("combination of {:?}/{:?} is not yet supported", num, den);
+                }
+            }
+        }
     }
 
     // copy to the next layer
@@ -730,7 +769,20 @@ fn merge_lookup_inputs_pair<F: PrimeField, const SINGLE_COLUMN: bool>(
                 LookupDenominator::ExtensionValueWithAllConstantsMixed(den),
             ));
     } else {
-        todo!();
+        use crate::gkr_compiler::lookup_nodes::VectorLookupWitnessPairAggregationFromCachesNode;
+
+        let node = VectorLookupWitnessPairAggregationFromCachesNode {
+            lhs: rel_0,
+            rhs: rel_1,
+        };
+        let ([num, den], _) = node.add_at_layer(graph, input_layer + 1);
+        intermediate_values
+            .entry(input_layer + 1)
+            .or_insert(vec![])
+            .push((
+                LookupNumerator::ExtensionValueWithAllConstantsMixed(num),
+                LookupDenominator::ExtensionValueWithAllConstantsMixed(den),
+            ));
     }
 }
 

@@ -366,27 +366,28 @@ pub enum NoFieldGKRRelation {
         output: [GKRAddress; 2],
     },
 
-    // a/b + 1/(c + gamma) where `c`` is in the base field
-    LookupUnbalancedPairWithBaseInputs {
-        input: [GKRAddress; 2],
-        remainder: NoFieldSingleColumnLookupRelation,
-        output: [GKRAddress; 2],
-    },
-    // 1/(a+gamma) + multiplicity/(setup + gamma) where a is in base field
-    LookupFromBaseInputsWithSetup {
-        input: NoFieldSingleColumnLookupRelation,
-        setup: [GKRAddress; 2],
-        output: [GKRAddress; 2],
-    },
+    // // a/b + 1/(c + gamma) where `c`` is in the base field and not cached
+    // LookupUnbalancedPairWithBaseInputs {
+    //     input: [GKRAddress; 2],
+    //     remainder: NoFieldSingleColumnLookupRelation,
+    //     output: [GKRAddress; 2],
+    // },
 
-    // 1/(a+gamma) + multiplicity/(setup + gamma) where a is in base field and materialized
+    // // 1/(a+gamma) + multiplicity/(setup + gamma) where a is in base field and not cached
+    // LookupFromBaseInputsWithSetup {
+    //     input: NoFieldSingleColumnLookupRelation,
+    //     setup: [GKRAddress; 2],
+    //     output: [GKRAddress; 2],
+    // },
+
+    // 1/(a+gamma) + multiplicity/(setup + gamma) where a is in base field and materialized or cached
     LookupFromMaterializedBaseInputWithSetup {
         input: GKRAddress,
         setup: [GKRAddress; 2],
         output: [GKRAddress; 2],
     },
 
-    // a/b + 1/(c + gamma) where `c`` is in the base field and is materialized
+    // a/b + 1/(c + gamma) where `c`` is in the base field and is materialized or cached
     LookupUnbalancedPairWithMaterializedBaseInputs {
         input: [GKRAddress; 2],
         remainder: GKRAddress,
@@ -402,16 +403,24 @@ pub enum NoFieldGKRRelation {
         output: [GKRAddress; 2],
     },
 
-    // LookupNumeratorFromVectorInputs([NoFieldVectorLookupRelation; 2]),
-    // LookupDenominatorFromVectorInputs([NoFieldVectorLookupRelation; 2]),
+    // 1/(a+gamma) + 1/(b + gamma) where a, b are in in extension already due to vector nature (no caching)
+    LookupPairFromCachedVectorInputs {
+        input: [GKRAddress; 2],
+        output: [GKRAddress; 2],
+    },
+
+    // a/b + 1/(c + gamma) where `c`` is in the extension field and is materialized or cached
+    LookupUnbalancedPairWithMaterializedVectorInputs {
+        input: [GKRAddress; 2],
+        remainder: GKRAddress,
+        output: [GKRAddress; 2],
+    },
 
     // a/b + c/d -> (num, den)
     LookupPair {
         input: [[GKRAddress; 2]; 2],
         output: [GKRAddress; 2],
     },
-    // LookupNumeratorContinueAggregation([GKRAddress; 2]),
-    // LookupDenominatorContinueAggregation([GKRAddress; 2]),
 }
 
 impl NoFieldGKRRelation {
@@ -493,27 +502,31 @@ impl NoFieldGKRRelation {
 
                 all_cached
             }
-            Self::LookupUnbalancedPairWithBaseInputs {
-                input,
-                remainder,
-                output,
-            } => {
-                vec![]
-            }
+            // Self::LookupUnbalancedPairWithBaseInputs {
+            //     input,
+            //     remainder,
+            //     output,
+            // } => {
+            //     vec![]
+            // }
             Self::LookupUnbalancedPairWithMaterializedBaseInputs {
                 input,
                 remainder,
                 output,
             } => {
-                vec![]
+                if remainder.is_cache() {
+                    vec![*remainder]
+                } else {
+                    vec![]
+                }
             }
-            Self::LookupFromBaseInputsWithSetup {
-                input,
-                setup,
-                output,
-            } => {
-                vec![]
-            }
+            // Self::LookupFromBaseInputsWithSetup {
+            //     input,
+            //     setup,
+            //     output,
+            // } => {
+            //     vec![]
+            // }
             Self::LookupFromMaterializedBaseInputWithSetup {
                 input,
                 setup,
@@ -527,6 +540,26 @@ impl NoFieldGKRRelation {
             }
             Self::LookupPairFromVectorInputs { input, output } => {
                 vec![]
+            }
+            Self::LookupPairFromCachedVectorInputs { input, output } => {
+                assert!(input[0].is_cache());
+                assert!(input[1].is_cache());
+
+                input.to_vec()
+            }
+            Self::LookupUnbalancedPairWithMaterializedVectorInputs {
+                input,
+                remainder,
+                output,
+            } => {
+                assert!(input[0].is_cache() == false);
+                assert!(input[1].is_cache() == false);
+
+                if remainder.is_cache() {
+                    vec![*remainder]
+                } else {
+                    vec![]
+                }
             }
             Self::LookupPair { input, output } => {
                 vec![]
@@ -618,19 +651,19 @@ impl NoFieldGKRRelation {
             Self::LookupPairFromMaterializedBaseInputs { input, output } => {
                 vec![]
             }
-            Self::LookupUnbalancedPairWithBaseInputs {
-                input,
-                remainder,
-                output,
-            } => {
-                let mut result = BTreeSet::new();
-                for (_, el) in remainder.input.linear_terms.iter() {
-                    result.insert(*el);
-                }
-                let mut result: Vec<GKRAddress> = result.into_iter().collect();
-                result.extend_from_slice(input);
-                result
-            }
+            // Self::LookupUnbalancedPairWithBaseInputs {
+            //     input,
+            //     remainder,
+            //     output,
+            // } => {
+            //     let mut result = BTreeSet::new();
+            //     for (_, el) in remainder.input.linear_terms.iter() {
+            //         result.insert(*el);
+            //     }
+            //     let mut result: Vec<GKRAddress> = result.into_iter().collect();
+            //     result.extend_from_slice(input);
+            //     result
+            // }
             Self::LookupUnbalancedPairWithMaterializedBaseInputs {
                 input,
                 remainder,
@@ -641,19 +674,19 @@ impl NoFieldGKRRelation {
                 result.push(*remainder);
                 result
             }
-            Self::LookupFromBaseInputsWithSetup {
-                input,
-                setup,
-                output,
-            } => {
-                let mut result = BTreeSet::new();
-                for (_, el) in input.input.linear_terms.iter() {
-                    result.insert(*el);
-                }
-                let mut result: Vec<GKRAddress> = result.into_iter().collect();
-                result.extend_from_slice(setup);
-                result
-            }
+            // Self::LookupFromBaseInputsWithSetup {
+            //     input,
+            //     setup,
+            //     output,
+            // } => {
+            //     let mut result = BTreeSet::new();
+            //     for (_, el) in input.input.linear_terms.iter() {
+            //         result.insert(*el);
+            //     }
+            //     let mut result: Vec<GKRAddress> = result.into_iter().collect();
+            //     result.extend_from_slice(setup);
+            //     result
+            // }
             Self::LookupFromMaterializedBaseInputWithSetup {
                 input,
                 setup,
@@ -672,7 +705,11 @@ impl NoFieldGKRRelation {
                 }
                 result.into_iter().collect()
             }
+            Self::LookupPairFromCachedVectorInputs { input, output } => input.to_vec(),
             Self::LookupPair { input, output } => input.iter().flatten().copied().collect(),
+            _ => {
+                todo!();
+            }
         }
     }
 }

@@ -559,10 +559,12 @@ pub(crate) fn mem_permutation_expr_into_cached_expr(
 pub(crate) fn lookup_input_into_relation<F: PrimeField, const SINGLE_COLUMN: bool>(
     lookup: &LookupInputRelation<F>,
     lookup_set_index: usize,
+    total_width: usize,
     graph: &dyn GraphHolder,
 ) -> NoFieldVectorLookupRelation {
     if SINGLE_COLUMN {
         assert_eq!(lookup.inputs.len(), 1);
+        assert!(lookup.table_id.is_none());
     }
     let mut dst = vec![];
     for relation in lookup.inputs.iter() {
@@ -577,6 +579,34 @@ pub(crate) fn lookup_input_into_relation<F: PrimeField, const SINGLE_COLUMN: boo
         };
         dst.push(rel);
     }
+    let padded_len = if lookup.table_id.is_some() {
+        total_width - 1
+    } else {
+        total_width
+    };
+    assert!(dst.len() <= padded_len);
+
+    for _ in dst.len()..padded_len {
+        let rel = NoFieldLinearRelation {
+            linear_terms: vec![].into_boxed_slice(),
+            constant: 0,
+        };
+        dst.push(rel);
+    }
+
+    if let Some(table_id) = lookup.table_id.as_ref() {
+        let mut t = vec![];
+        for (c, v) in table_id.linear_terms.iter() {
+            let v = graph.get_address_for_variable(*v);
+            t.push((c.as_u32_reduced(), v));
+        }
+        let rel = NoFieldLinearRelation {
+            linear_terms: t.into_boxed_slice(),
+            constant: table_id.constant_term.as_u32_reduced(),
+        };
+        dst.push(rel);
+    }
+
     NoFieldVectorLookupRelation {
         columns: dst.into_boxed_slice(),
         lookup_set_index,
@@ -586,11 +616,13 @@ pub(crate) fn lookup_input_into_relation<F: PrimeField, const SINGLE_COLUMN: boo
 pub(crate) fn lookup_input_into_cached_expr<F: PrimeField, const SINGLE_COLUMN: bool>(
     lookup: &LookupInputRelation<F>,
     lookup_set_index: usize,
+    total_width: usize,
     graph: &dyn GraphHolder,
 ) -> NoFieldGKRCacheRelation {
     NoFieldGKRCacheRelation::VectorizedLookup(lookup_input_into_relation::<F, SINGLE_COLUMN>(
         lookup,
         lookup_set_index,
+        total_width,
         graph,
     ))
 }
