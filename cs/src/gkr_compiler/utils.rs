@@ -27,20 +27,83 @@ pub fn add_compiler_defined_base_layer_variable(
     var
 }
 
-pub fn add_multiple_compiler_defined_variables<const N: usize>(
-    num_variables: &mut u64,
-    all_variables_to_place: &mut BTreeSet<Variable>,
-) -> [Variable; N] {
-    let output = std::array::from_fn(|_| {
-        let var = Variable(*num_variables);
-        *num_variables += 1;
-        all_variables_to_place.insert(var);
+pub fn get_input_layer_ensure_same(
+    variables: &BTreeSet<Variable>,
+    layers_mapping: &HashMap<Variable, usize>,
+) -> usize {
+    let mut layer = None;
+    for el in variables.iter() {
+        let el_layer = *layers_mapping.get(el).expect("must be known");
+        if let Some(layer) = layer {
+            assert_eq!(layer, el_layer);
+        } else {
+            layer = Some(el_layer)
+        }
+    }
 
-        var
-    });
-
-    output
+    layer.expect("at least one input")
 }
+
+pub fn no_field_gkr_max_quadratic_from_constraint<F: PrimeField>(
+    graph: &dyn GraphHolder,
+    mut constraint: Constraint<F>,
+    output: GKRAddress,
+) -> NoFieldGKRRelation {
+    let mut quadratic_sorted = BTreeMap::new();
+    let mut linear_sorted = BTreeMap::new();
+
+    constraint.normalize();
+    let (quadratic_part, linear_part, constant) = constraint.split_max_quadratic();
+
+    for (coeff, a, b) in quadratic_part.iter() {
+        let a = graph.get_address_for_variable(*a);
+        let b = graph.get_address_for_variable(*b);
+        let exising = quadratic_sorted
+            .entry(a)
+            .or_insert(BTreeMap::new())
+            .insert(coeff.as_u32_reduced() as u64, b);
+        assert!(exising.is_none());
+    }
+    for (coeff, a) in linear_part.into_iter() {
+        let a = graph.get_address_for_variable(a);
+        let exising = linear_sorted.insert(a, coeff.as_u32_reduced());
+        assert!(exising.is_none());
+    }
+
+    let quadratic_terms = quadratic_sorted
+        .into_iter()
+        .map(|(k, v)| (k, v.into_iter().collect::<Vec<_>>().into_boxed_slice()))
+        .collect::<Vec<_>>()
+        .into_boxed_slice();
+
+    let linear_terms = linear_sorted
+        .into_iter()
+        .map(|(k, v)| (v as u64, k))
+        .collect::<Vec<_>>()
+        .into_boxed_slice();
+
+    let input = NoFieldMaxQuadraticGKRRelation {
+        quadratic_terms,
+        linear_terms,
+        constant: constant.as_u32_reduced() as u64,
+    };
+    NoFieldGKRRelation::MaxQuadratic { input, output }
+}
+
+// pub fn add_multiple_compiler_defined_variables<const N: usize>(
+//     num_variables: &mut u64,
+//     all_variables_to_place: &mut BTreeSet<Variable>,
+// ) -> [Variable; N] {
+//     let output = std::array::from_fn(|_| {
+//         let var = Variable(*num_variables);
+//         *num_variables += 1;
+//         all_variables_to_place.insert(var);
+
+//         var
+//     });
+
+//     output
+// }
 
 // #[track_caller]
 // pub(crate) fn layout_witness_subtree_variable_at_column(
@@ -532,61 +595,61 @@ pub(crate) fn lookup_input_into_cached_expr<F: PrimeField, const SINGLE_COLUMN: 
     ))
 }
 
-pub(crate) fn vector_or_single_input<const SINGLE_COLUMN: bool>(
-    input: NoFieldVectorLookupRelation,
-) -> LookupDenominator {
-    if SINGLE_COLUMN {
-        assert_eq!(input.columns.len(), 1);
-        let input = NoFieldSingleColumnLookupRelation {
-            input: input.columns[0].clone(),
-            lookup_set_index: input.lookup_set_index,
-        };
-        lookup_nodes::LookupDenominator::UseInput(input)
-    } else {
-        lookup_nodes::LookupDenominator::UseVectorInput(input)
-    }
-}
+// pub(crate) fn vector_or_single_input<const SINGLE_COLUMN: bool>(
+//     input: NoFieldVectorLookupRelation,
+// ) -> LookupDenominator {
+//     if SINGLE_COLUMN {
+//         assert_eq!(input.columns.len(), 1);
+//         let input = NoFieldSingleColumnLookupRelation {
+//             input: input.columns[0].clone(),
+//             lookup_set_index: input.lookup_set_index,
+//         };
+//         lookup_nodes::LookupDenominator::UseInput(input)
+//     } else {
+//         lookup_nodes::LookupDenominator::UseVectorInput(input)
+//     }
+// }
 
-pub(crate) fn vector_or_single_setup<const SINGLE_COLUMN: bool>(
-    graph: &dyn GraphHolder,
-    lookup_type: LookupType,
-) -> LookupDenominator {
-    if SINGLE_COLUMN {
-        assert!(
-            lookup_type == LookupType::RangeCheck16
-                || lookup_type == LookupType::TimestampRangeCheck
-        );
-        let setup = graph.setup_addresses(lookup_type);
-        assert_eq!(setup.len(), 1);
-        lookup_nodes::LookupDenominator::Setup(setup[0])
-    } else {
-        lookup_nodes::LookupDenominator::VectorSetup(
-            graph
-                .setup_addresses(lookup_type)
-                .to_vec()
-                .into_boxed_slice(),
-        )
-    }
-}
+// pub(crate) fn vector_or_single_setup<const SINGLE_COLUMN: bool>(
+//     graph: &dyn GraphHolder,
+//     lookup_type: LookupType,
+// ) -> LookupDenominator {
+//     if SINGLE_COLUMN {
+//         assert!(
+//             lookup_type == LookupType::RangeCheck16
+//                 || lookup_type == LookupType::TimestampRangeCheck
+//         );
+//         let setup = graph.setup_addresses(lookup_type);
+//         assert_eq!(setup.len(), 1);
+//         lookup_nodes::LookupDenominator::Setup(setup[0])
+//     } else {
+//         lookup_nodes::LookupDenominator::VectorSetup(
+//             graph
+//                 .setup_addresses(lookup_type)
+//                 .to_vec()
+//                 .into_boxed_slice(),
+//         )
+//     }
+// }
 
-pub(crate) fn copy_single_base_input_or_materialize_vector<const SINGLE_COLUMN: bool>(
-    input: NoFieldVectorLookupRelation,
-) -> LookupDenominator {
-    if SINGLE_COLUMN {
-        assert_eq!(input.columns.len(), 1);
-        if input.columns[0].constant == 0
-            && input.columns[0].linear_terms.len() == 1
-            && input.columns[0].linear_terms[0].0 == 1
-        {
-            lookup_nodes::LookupDenominator::UseInputViaCopy(input.columns[0].linear_terms[0].1)
-        } else {
-            let input = NoFieldSingleColumnLookupRelation {
-                input: input.columns[0].clone(),
-                lookup_set_index: input.lookup_set_index,
-            };
-            lookup_nodes::LookupDenominator::MaterializeBaseInput(input)
-        }
-    } else {
-        lookup_nodes::LookupDenominator::MaterializeVectorInput(input)
-    }
-}
+// pub(crate) fn copy_single_base_input_or_materialize_vector<const SINGLE_COLUMN: bool>(
+//     input: NoFieldVectorLookupRelation,
+// ) -> LookupDenominator {
+//     if SINGLE_COLUMN {
+//         assert_eq!(input.columns.len(), 1);
+//         if input.columns[0].constant == 0
+//             && input.columns[0].linear_terms.len() == 1
+//             && input.columns[0].linear_terms[0].0 == 1
+//         {
+//             lookup_nodes::LookupDenominator::UseInputViaCopy(input.columns[0].linear_terms[0].1)
+//         } else {
+//             let input = NoFieldSingleColumnLookupRelation {
+//                 input: input.columns[0].clone(),
+//                 lookup_set_index: input.lookup_set_index,
+//             };
+//             lookup_nodes::LookupDenominator::MaterializeBaseInput(input)
+//         }
+//     } else {
+//         lookup_nodes::LookupDenominator::MaterializeVectorInput(input)
+//     }
+// }

@@ -377,8 +377,9 @@ pub struct OneStepConstraintsEvaluationNode<F: PrimeField> {
 pub(crate) fn layout_constraints_on_single_layer<F: PrimeField>(
     graph: &mut GKRGraph,
     constraints: Vec<(Constraint<F>, bool)>,
+    output_layer: usize,
 ) -> (Vec<Degree2Constraint<F>>, Vec<Degree1Constraint<F>>) {
-    const PLACEMENT_LAYER: usize = 1;
+    assert!(output_layer > 0);
 
     let mut quadratic_parts = vec![];
     let mut linear_parts = vec![];
@@ -420,7 +421,7 @@ pub(crate) fn layout_constraints_on_single_layer<F: PrimeField>(
         constant_parts,
     };
 
-    node.add_at_layer(graph, PLACEMENT_LAYER);
+    node.add_at_layer(graph, output_layer);
 
     (compiled_quadratic, compiled_linear)
 }
@@ -459,6 +460,8 @@ impl<F: PrimeField> GKRGate for OneStepConstraintsEvaluationNode<F> {
             for (coeff, a, b) in q.iter() {
                 let a = graph.get_address_for_variable(*a);
                 let b = graph.get_address_for_variable(*b);
+                a.assert_as_layer(output_layer - 1);
+                b.assert_as_layer(output_layer - 1);
                 quadratic_sorted
                     .entry((a, b))
                     .or_insert(vec![])
@@ -466,6 +469,7 @@ impl<F: PrimeField> GKRGate for OneStepConstraintsEvaluationNode<F> {
             }
             for (coeff, a) in l.iter() {
                 let a = graph.get_address_for_variable(*a);
+                a.assert_as_layer(output_layer - 1);
                 linear_sorted
                     .entry(a)
                     .or_insert(vec![])

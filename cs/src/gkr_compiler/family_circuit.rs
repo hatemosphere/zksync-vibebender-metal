@@ -592,7 +592,7 @@ impl<F: PrimeField> GKRCompiler<F> {
         );
         for (var, _c) in variables_from_constraints.iter() {
             if let Some(name) = variable_names.get(var) {
-                println!("Variable `{}` defined via constraint", name);
+                println!("Variable {:?}: `{}` is defined via constraint", var, name);
             }
         }
 
@@ -632,7 +632,41 @@ impl<F: PrimeField> GKRCompiler<F> {
                 variables_from_constraints.len()
             );
 
-            todo!();
+            // now we should walk over constraints that define variables
+            let mut intermediate_layer = 1;
+            loop {
+                let initial_len = variables_from_constraints.len();
+                for (var, constraint) in variables_from_constraints.clone().into_iter() {
+                    let all_vars = constraint.stable_variable_set();
+                    let expected_layer = *layers_mapping.get(&var).expect("must be known");
+                    let inputs_layer = get_input_layer_ensure_same(&all_vars, &layers_mapping);
+                    assert_eq!(expected_layer, inputs_layer + 1);
+                    if intermediate_layer != inputs_layer + 1 {
+                        continue;
+                    }
+                    let _ = graph.place_intermediate_variable_from_constraint_at_layer(
+                        intermediate_layer,
+                        var,
+                        &mut all_variables_to_place,
+                        &layers_mapping,
+                        constraint,
+                    );
+                    variables_from_constraints.remove(&var);
+                }
+
+                assert_ne!(
+                    initial_len,
+                    variables_from_constraints.len(),
+                    "intermediate layers places is stuck"
+                );
+                intermediate_layer += 1;
+
+                if variables_from_constraints.is_empty() {
+                    break;
+                }
+            }
+
+            assert!(all_variables_to_place.is_empty());
         } else {
             // put all variables into base layer
             for var in all_variables_to_place.clone().iter() {
@@ -661,91 +695,63 @@ impl<F: PrimeField> GKRCompiler<F> {
         let mut timestamp_multiplicity = None;
         let mut generic_lookup_multiplicity = None;
 
-        let mut range_check_16_lookups_compiled = vec![];
-        let mut timestamp_range_check_lookups_compiled = vec![];
-        let mut generic_lookups_compiled = vec![];
-
         // placing lookup is move involved
         {
             if range_check_16_expressions.len() > 0 {
-                let (multiplicity, final_pair, final_rel, initial_rels) =
-                    layout_width_1_lookup_expressions(
-                        &mut graph,
-                        range_check_16_expressions,
-                        &mut num_variables,
-                        &mut all_variables_to_place,
-                        &mut variable_names,
-                        &mut layers_mapping,
-                        "range check 16",
-                        LookupType::RangeCheck16,
-                    );
-                range_check_16_multiplicity = Some(multiplicity);
-                range_check_16_lookups_compiled = initial_rels;
-
-                lookup_outputs.insert(
+                let (multiplicity, final_pair, final_rel) = layout_width_1_lookup_expressions(
+                    &mut graph,
+                    range_check_16_expressions,
+                    &mut num_variables,
+                    &mut all_variables_to_place,
+                    &mut variable_names,
+                    &mut layers_mapping,
+                    "range check 16",
                     LookupType::RangeCheck16,
-                    (
-                        [final_pair.num_node.unwrap(), final_pair.den_node.unwrap()],
-                        final_rel,
-                    ),
                 );
+                range_check_16_multiplicity = Some(multiplicity);
+
+                lookup_outputs.insert(LookupType::RangeCheck16, (final_pair, final_rel));
             }
 
             if timestamp_range_check_expressions_to_compile.len() > 0 {
-                let (multiplicity, final_pair, final_rel, initial_rels) =
-                    layout_width_1_lookup_expressions(
-                        &mut graph,
-                        timestamp_range_check_expressions_to_compile,
-                        &mut num_variables,
-                        &mut all_variables_to_place,
-                        &mut variable_names,
-                        &mut layers_mapping,
-                        "timestamp range check",
-                        LookupType::TimestampRangeCheck,
-                    );
-                timestamp_multiplicity = Some(multiplicity);
-                timestamp_range_check_lookups_compiled = initial_rels;
-
-                lookup_outputs.insert(
+                let (multiplicity, final_pair, final_rel) = layout_width_1_lookup_expressions(
+                    &mut graph,
+                    timestamp_range_check_expressions_to_compile,
+                    &mut num_variables,
+                    &mut all_variables_to_place,
+                    &mut variable_names,
+                    &mut layers_mapping,
+                    "timestamp range check",
                     LookupType::TimestampRangeCheck,
-                    (
-                        [final_pair.num_node.unwrap(), final_pair.den_node.unwrap()],
-                        final_rel,
-                    ),
                 );
+                timestamp_multiplicity = Some(multiplicity);
+
+                lookup_outputs.insert(LookupType::TimestampRangeCheck, (final_pair, final_rel));
             }
 
             if generic_lookups.len() > 0 || decoder_lookup_pair.is_some() {
-                let (multiplicity, final_pair, final_rel, initial_rels) =
-                    layout_lookup_expressions::<F, false>(
-                        &mut graph,
-                        generic_lookups,
-                        &mut num_variables,
-                        &mut all_variables_to_place,
-                        &mut variable_names,
-                        &mut layers_mapping,
-                        "generic lookup",
-                        decoder_lookup_pair,
-                        LookupType::Generic,
-                        generic_lookup_width,
-                        expect_table_id_for_generic_lookup,
-                    );
-                generic_lookup_multiplicity = Some(multiplicity);
-                generic_lookups_compiled = initial_rels;
-
-                lookup_outputs.insert(
+                let (multiplicity, final_pair, final_rel) = layout_lookup_expressions::<F, false>(
+                    &mut graph,
+                    generic_lookups,
+                    &mut num_variables,
+                    &mut all_variables_to_place,
+                    &mut variable_names,
+                    &mut layers_mapping,
+                    "generic lookup",
+                    decoder_lookup_pair,
                     LookupType::Generic,
-                    (
-                        [final_pair.num_node.unwrap(), final_pair.den_node.unwrap()],
-                        final_rel,
-                    ),
+                    generic_lookup_width,
+                    expect_table_id_for_generic_lookup,
                 );
+                generic_lookup_multiplicity = Some(multiplicity);
+
+                lookup_outputs.insert(LookupType::Generic, (final_pair, final_rel));
             }
         }
 
         // Place a gate for constraints batch eval
         let (degree_2_constraints, degree_1_constraints) =
-            layout_constraints_on_single_layer(&mut graph, constraints);
+            layout_constraints_on_single_layer(&mut graph, constraints, 1);
 
         // work out the outputs
         let lookup_outputs = BTreeMap::from_iter(
@@ -911,9 +917,9 @@ impl<F: PrimeField> GKRCompiler<F> {
             multiplicities_columns_for_timestamp_range_check,
             multiplicities_columns_for_generic_lookup: multiplicities_columns_for_generic_lookup
                 ..multiplicities_columns_for_generic_lookup + 1,
-            generic_lookups: generic_lookups_compiled,
-            range_check_16_lookup_expressions: range_check_16_lookups_compiled,
-            timestamp_range_check_lookup_expressions: timestamp_range_check_lookups_compiled,
+            // generic_lookups: generic_lookups_compiled,
+            // range_check_16_lookup_expressions: range_check_16_lookups_compiled,
+            // timestamp_range_check_lookup_expressions: timestamp_range_check_lookups_compiled,
             total_width: graph.base_layer_witness.len(),
         };
 

@@ -129,8 +129,8 @@ pub struct NoFieldPureQuadraticGKRRelation {
 #[derive(Clone, Debug, Hash, PartialEq, Eq, serde::Serialize, serde::Deserialize)]
 pub struct NoFieldMaxQuadraticGKRRelation {
     pub quadratic_terms: Box<[(GKRAddress, Box<[(u64, GKRAddress)]>)]>,
-    pub linear_terms: Box<[Box<[(u64, GKRAddress)]>]>,
-    pub constants: Box<[u64]>,
+    pub linear_terms: Box<[(u64, GKRAddress)]>,
+    pub constant: u64,
 }
 
 #[derive(Clone, Debug, Hash, PartialEq, Eq, serde::Serialize, serde::Deserialize)]
@@ -279,10 +279,14 @@ pub enum NoFieldGKRRelation {
     //     input: NoFieldPureQuadraticGKRRelation,
     //     output: GKRAddress,
     // },
-    // MaxQuadratic {
-    //     input: NoFieldMaxQuadraticGKRRelation,
-    //     output: GKRAddress,
-    // },
+    LinearBaseFieldRelation {
+        input: NoFieldLinearRelation,
+        output: GKRAddress,
+    },
+    MaxQuadratic {
+        input: NoFieldMaxQuadraticGKRRelation,
+        output: GKRAddress,
+    },
 
     // Enforces a randomized set of constraints in a form of c1 + alpha * c2 + ...
     // Sorted as: each quadratic term is recorded once (they are in base field), and powers of alpha are recorded
@@ -414,6 +418,8 @@ impl NoFieldGKRRelation {
     pub fn cached_addresses(&self) -> Vec<GKRAddress> {
         match self {
             // Self::FormalBaseLayerInput(..) => vec![],
+            Self::LinearBaseFieldRelation { .. } => vec![],
+            Self::MaxQuadratic { input, output } => vec![],
             Self::EnforceConstraintsMaxQuadratic { input } => vec![],
             Self::Copy { input, output } => {
                 assert!(output.is_cache() == false);
@@ -537,6 +543,14 @@ impl NoFieldGKRRelation {
     pub fn created_claims(&self) -> Vec<GKRAddress> {
         match self {
             // Self::FormalBaseLayerInput(..) => vec![],
+            Self::LinearBaseFieldRelation { input, output } => {
+                let mut result = BTreeSet::new();
+                for (_, el) in input.linear_terms.iter() {
+                    result.insert(*el);
+                }
+                result.into_iter().collect()
+            }
+            Self::MaxQuadratic { input, output } => vec![],
             Self::EnforceConstraintsMaxQuadratic { input } => {
                 let mut result = BTreeSet::new();
                 for ((a, b), _) in input.quadratic_terms.iter() {

@@ -8,6 +8,7 @@ use crate::cs::circuit_trait::*;
 use crate::oracle::*;
 use crate::witness_placer::cs_debug_evaluator::CSDebugWitnessEvaluator;
 use crate::witness_placer::*;
+use std::collections::BTreeMap;
 // use crate::devices::optimization_context::OptCtxIndexers;
 // use crate::devices::optimization_context::OptimizationContext;
 // use crate::tables::LookupWrapper;
@@ -47,7 +48,7 @@ pub struct BasicAssembly<
     witness_graph: WitnessResolutionGraph<F, W>,
 
     pub variable_names: HashMap<Variable, String>,
-    variables_from_constraints: HashMap<Variable, Constraint<F>>,
+    variables_from_constraints: BTreeMap<Variable, Constraint<F>>,
     circuit_family_bitmask: Vec<Variable>,
     // logger: Vec<(&'static str, u64, OptCtxIndexers)>,
 }
@@ -79,7 +80,7 @@ impl<F: PrimeField, W: WitnessPlacer<F>, const ASSUME_MEMORY_VALUES_ASSIGNED: bo
             witness_placer: None,
 
             variable_names: HashMap::new(),
-            variables_from_constraints: HashMap::new(),
+            variables_from_constraints: BTreeMap::new(),
             circuit_family_bitmask: vec![],
             // logger: vec![],
         }
