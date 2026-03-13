@@ -12,7 +12,7 @@ use crate::types::Num;
 use blake2s_u32::state_with_extended_control_flags::*;
 use blake2s_u32::BLAKE2S_BLOCK_SIZE_U32_WORDS;
 use blake2s_u32::CONFIGURED_IV;
-use blake2s_u32::EXNTENDED_CONFIGURED_IV;
+use blake2s_u32::EXTENDED_CONFIGURED_IV;
 use blake2s_u32::SIGMAS;
 use common_constants::delegation_types::blake2s_with_control::*;
 
@@ -292,7 +292,7 @@ pub fn define_blake2_with_extended_control_delegation_circuit<F: PrimeField, CS:
 
     for word_idx in [8, 9, 10, 11, 13, 15] {
         let existing = &mut input_extended_state[word_idx];
-        let initialization_word = EXNTENDED_CONFIGURED_IV[word_idx];
+        let initialization_word = EXTENDED_CONFIGURED_IV[word_idx];
         for i in 0..2 {
             let mut constraint = Constraint::empty();
             // if it's not the first round - keep existing
@@ -934,6 +934,8 @@ pub(crate) fn split_top_bit<F: PrimeField, CS: Circuit<F>, const LOW_CHUNK_BITS:
 
 #[cfg(test)]
 mod test {
+    use test_utils::skip_if_ci;
+
     use super::*;
     use crate::cs::cs_reference::BasicAssembly;
     use crate::one_row_compiler::OneRowCompiler;
@@ -942,6 +944,7 @@ mod test {
 
     #[test]
     fn compile_blake2_with_extended_control() {
+        skip_if_ci!();
         let mut cs = BasicAssembly::<Mersenne31Field>::new();
         define_blake2_with_extended_control_delegation_circuit(&mut cs);
         let (circuit_output, _) = cs.finalize();
@@ -952,7 +955,9 @@ mod test {
     }
 
     #[test]
+    #[serial_test::serial(cs_codegen)]
     fn blake_delegation_get_witness_graph() {
+        skip_if_ci!();
         let ssa_forms = dump_ssa_witness_eval_form_for_delegation::<Mersenne31Field, _>(
             define_blake2_with_extended_control_delegation_circuit,
         );

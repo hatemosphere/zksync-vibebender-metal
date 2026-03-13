@@ -21,6 +21,17 @@ The most recent documentation can be found here:
 - [CLI tool](./tools/cli/README.md)
 - [Examples](./examples/)
 
+## Test Modes
+
+- Default local tests:
+  - `cargo test --profile cli`
+- CI-oriented test lane (excludes codegen/legacy-only tests):
+  - `CI=1 cargo test --profile cli`
+- Ignored-test sweep (runs all ignored tests across the workspace, including manual fixture/debug tests):
+  - `cargo test --profile cli -- --ignored`
+- Targeted current-pipeline proving regressions:
+  - `cargo test --profile cli -p execution_utils test_prove_unrolled -- --ignored`
+
 ## Policies
 
 - [Security policy](SECURITY.md)

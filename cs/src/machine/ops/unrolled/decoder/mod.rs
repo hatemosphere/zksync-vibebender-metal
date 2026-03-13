@@ -49,7 +49,7 @@ pub trait InstructionFamilyBitmaskCircuitParser: 'static + std::fmt::Debug {
 }
 
 pub const INVALID_OPCODE_DEFAULTS: (bool, InstructionType, InstructionFamilyBitmaskRepr) =
-    (false, InstructionType::RType, 0); // We do not need info about instruciton being R-type for decoder
+    (false, InstructionType::RType, 0); // We do not need info about instruction being R-type for decoder
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Hash)]
 pub struct ExecutorFamilyDecoderExtendedData {
@@ -286,7 +286,7 @@ mod test {
 
         let _ = process_binary_into_separate_tables::<Mersenne31Field, Global>(
             &binary,
-            &opcodes_for_full_machine(),
+            &opcodes_for_full_machine_with_mem_word_access_specialization(),
             1 << 20,
             &[],
         );

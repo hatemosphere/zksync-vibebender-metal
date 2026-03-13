@@ -1,9 +1,8 @@
 use core::mem::offset_of;
-use std::collections::VecDeque;
 
 use super::*;
+#[cfg(test)]
 use prover::prover_stages::Proof;
-use verifier_common::proof_flattener::*;
 use verifier_common::prover::nd_source_std::*;
 use verifier_common::{
     cs::one_row_compiler::CompiledCircuitArtifact, DefaultLeafInclusionVerifier,
@@ -20,8 +19,14 @@ fn deserialize_from_file<T: serde::de::DeserializeOwned>(filename: &str) -> T {
     serde_json::from_reader(src).unwrap()
 }
 
+#[cfg(test)]
+use test_utils::skip_if_ci;
+
+#[cfg(test)]
+#[ignore = "manual unified/delegation verifier fixture test"]
 #[test]
 fn test_unified_cycle_or_delegation() {
+    skip_if_ci!();
     // create an oracle to feed into verifier and look at the transcript values
 
     // let proof: Proof = deserialize_from_file("../../zksync-airbender/prover/delegation_proof");
@@ -73,7 +78,7 @@ fn test_unified_cycle_or_delegation() {
     match result {
         Ok(..) => {}
         Err(err) => {
-            panic!("Verifier thread failes with {}", err);
+            panic!("Verifier thread fails with {}", err);
         }
     }
 }
@@ -133,183 +138,8 @@ fn test_unrolled_circuit() {
     match result {
         Ok(..) => {}
         Err(err) => {
-            panic!("Verifier thread failes with {}", err);
+            panic!("Verifier thread fails with {}", err);
         }
-    }
-}
-
-use risc_v_simulator::{
-    abstractions::non_determinism::QuasiUARTSourceState,
-    cycle::IWithoutByteAccessIsaConfigWithDelegation,
-};
-struct VectorBasedNonDeterminismSource(VecDeque<u32>, QuasiUARTSourceState);
-
-impl
-    risc_v_simulator::abstractions::non_determinism::NonDeterminismCSRSource<
-        risc_v_simulator::abstractions::memory::VectorMemoryImpl,
-    > for VectorBasedNonDeterminismSource
-{
-    fn read(&mut self) -> u32 {
-        self.0.pop_front().unwrap()
-    }
-    fn write_with_memory_access(
-        &mut self,
-        _memory: &risc_v_simulator::abstractions::memory::VectorMemoryImpl,
-        value: u32,
-    ) {
-        self.1.process_write(value);
-    }
-}
-
-#[test]
-fn test_full_machine_verifier_out_of_simulator() {
-    let proof: Proof = deserialize_from_file("../prover/delegation_proof");
-    let compiled_circuit: CompiledCircuitArtifact<Mersenne31Field> =
-        deserialize_from_file("../prover/full_machine_layout.json");
-
-    let mut oracle_data: Vec<u32> = vec![];
-
-    oracle_data.extend(flatten_proof_for_skeleton(
-        &proof,
-        compiled_circuit
-            .memory_layout
-            .shuffle_ram_inits_and_teardowns
-            .len(),
-    ));
-    for query in proof.queries.iter() {
-        oracle_data.extend(flatten_query(query));
-    }
-
-    // we have a problem with a stack size in debug, so let's cheat
-    std::thread::Builder::new()
-        .stack_size(1 << 27)
-        .spawn(move || {
-            let it = oracle_data.into_iter();
-
-            set_iterator(it);
-
-            #[allow(invalid_value)]
-            let mut proof_output: ProofOutput<
-                TREE_CAP_SIZE,
-                NUM_COSETS,
-                NUM_DELEGATION_CHALLENGES,
-                NUM_AUX_BOUNDARY_VALUES,
-                NUM_MACHINE_STATE_PERMUTATION_CHALLENGES,
-            > = unsafe { MaybeUninit::uninit().assume_init() };
-            let mut state_variables = ProofPublicInputs::uninit();
-
-            unsafe { verify(&mut proof_output, &mut state_variables) };
-
-            dbg!(proof_output, state_variables);
-        })
-        .unwrap()
-        .join()
-        .unwrap();
-}
-
-#[test]
-fn test_reduced_machine_verifier_out_of_simulator() {
-    let proof: Proof = deserialize_from_file("../prover/reduced_machine_proof");
-    let compiled_circuit: CompiledCircuitArtifact<Mersenne31Field> =
-        deserialize_from_file("../prover/reduced_machine_layout");
-
-    let mut oracle_data: Vec<u32> = vec![];
-
-    oracle_data.extend(flatten_proof_for_skeleton(
-        &proof,
-        compiled_circuit
-            .memory_layout
-            .shuffle_ram_inits_and_teardowns
-            .len(),
-    ));
-    for query in proof.queries.iter() {
-        oracle_data.extend(flatten_query(query));
-    }
-
-    // we have a problem with a stack size in debug, so let's cheat
-    std::thread::Builder::new()
-        .stack_size(1 << 27)
-        .spawn(move || {
-            let it = oracle_data.into_iter();
-
-            set_iterator(it);
-
-            #[allow(invalid_value)]
-            let mut proof_output: ProofOutput<
-                TREE_CAP_SIZE,
-                NUM_COSETS,
-                NUM_DELEGATION_CHALLENGES,
-                NUM_AUX_BOUNDARY_VALUES,
-                NUM_MACHINE_STATE_PERMUTATION_CHALLENGES,
-            > = unsafe { MaybeUninit::uninit().assume_init() };
-            let mut state_variables = ProofPublicInputs::uninit();
-
-            unsafe { verify(&mut proof_output, &mut state_variables) };
-
-            dbg!(proof_output, state_variables);
-        })
-        .unwrap()
-        .join()
-        .unwrap();
-}
-
-// #[ignore = "Requires ZKsyncOS app bin"]
-#[test]
-fn test_verifier_in_simulator() {
-    let proof: Proof = deserialize_from_file("../../zksync-airbender/prover/delegation_proof");
-    let compiled_circuit: CompiledCircuitArtifact<Mersenne31Field> =
-        deserialize_from_file("../../zksync-airbender/prover/full_machine_layout.json");
-
-    // let proof: Proof = deserialize_from_file("../../zksync-airbender/prover/proof");
-    // let compiled_circuit: CompiledCircuitArtifact<Mersenne31Field> =
-    //     deserialize_from_file("../../zksync-airbender/prover/layout");
-
-    let mut oracle_data: Vec<u32> = vec![];
-    {
-        oracle_data.extend(flatten_proof_for_skeleton(
-            &proof,
-            compiled_circuit
-                .memory_layout
-                .shuffle_ram_inits_and_teardowns
-                .len(),
-        ));
-        for query in proof.queries.iter() {
-            oracle_data.extend(flatten_query(query));
-        }
-
-        let path = "../tools/verifier/tester.bin";
-        let path_sym = "../tools/verifier/tester.elf";
-
-        use risc_v_simulator::runner::run_simple_with_entry_point_and_non_determimism_source_for_config;
-        use risc_v_simulator::sim::*;
-
-        let mut config = SimulatorConfig::simple(path);
-        config.cycles = 1 << 23;
-        config.entry_point = 0;
-        config.diagnostics = Some({
-            let mut d = DiagnosticsConfig::new(std::path::PathBuf::from(path_sym));
-
-            d.profiler_config = {
-                let mut p =
-                    ProfilerConfig::new(std::env::current_dir().unwrap().join("flamegraph.svg"));
-
-                p.frequency_recip = 1;
-                p.reverse_graph = false;
-
-                Some(p)
-            };
-
-            d
-        });
-
-        let inner = VecDeque::<u32>::from(oracle_data);
-        let oracle = VectorBasedNonDeterminismSource(inner, QuasiUARTSourceState::Ready);
-        let output = run_simple_with_entry_point_and_non_determimism_source_for_config::<
-            _,
-            IWithoutByteAccessIsaConfigWithDelegation,
-            // IMIsaConfigWithAllDelegations,
-        >(config, oracle);
-        dbg!(output.state);
     }
 }
 

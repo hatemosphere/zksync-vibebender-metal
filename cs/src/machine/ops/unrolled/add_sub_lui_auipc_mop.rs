@@ -260,7 +260,7 @@ fn apply_add_sub_lui_auipc_mop<F: PrimeField, CS: Circuit<F>>(
 
     // Witness function
     let out_vars = out.0.map(|el| el.get_variable());
-    let intemediate_vars = intermediate_tmp.0.map(|el| el.get_variable());
+    let intermediate_vars = intermediate_tmp.0.map(|el| el.get_variable());
     let imm_vars = inputs.decoder_data.imm;
     let pc_vars = inputs.cycle_start_state.pc;
     let rs1_vars = rs1_reg.0.map(|el| el.get_variable());
@@ -420,7 +420,7 @@ fn apply_add_sub_lui_auipc_mop<F: PrimeField, CS: Circuit<F>>(
 
         // actually assign
         placer.assign_u32_from_u16_parts(out_vars, &out_value);
-        placer.assign_u32_from_u16_parts(intemediate_vars, &intermediate_value);
+        placer.assign_u32_from_u16_parts(intermediate_vars, &intermediate_value);
         placer.assign_mask(of_var, &of_value);
     };
     cs.set_values(value_fn);
@@ -462,11 +462,14 @@ pub fn add_sub_lui_auipc_mop_circuit_with_preprocessed_bytecode<F: PrimeField, C
 
 #[cfg(test)]
 mod test {
+    use test_utils::skip_if_ci;
+
     use super::*;
     use crate::utils::serialize_to_file;
 
     #[test]
     fn compile_add_sub_lui_auipc_mop_circuit() {
+        skip_if_ci!();
         use ::field::Mersenne31Field;
 
         let compiled = compile_unrolled_circuit_state_transition::<Mersenne31Field>(
@@ -480,7 +483,9 @@ mod test {
     }
 
     #[test]
+    #[serial_test::serial(cs_codegen)]
     fn compile_add_sub_lui_auipc_mop_witness_graph() {
+        skip_if_ci!();
         use ::field::Mersenne31Field;
 
         let ssa_forms = dump_ssa_witness_eval_form_for_unrolled_circuit::<Mersenne31Field>(

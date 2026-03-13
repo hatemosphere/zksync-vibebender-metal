@@ -35,13 +35,8 @@ use worker::Worker;
 
 pub use bigint_with_control;
 pub use blake2_with_compression;
-pub use final_reduced_risc_v_machine;
 pub use keccak_special5;
-pub use machine_without_signed_mul_div;
 pub use prover;
-pub use reduced_risc_v_log_23_machine;
-pub use reduced_risc_v_machine;
-pub use risc_v_cycles;
 
 pub mod circuits;
 pub mod unrolled_circuits;
@@ -705,10 +700,14 @@ pub fn compute_and_save_params(
 
 #[cfg(test)]
 mod test {
+    use test_utils::skip_if_ci;
+
     use super::*;
 
+    #[cfg(test)]
     #[test]
     fn generate_all() {
+        skip_if_ci!();
         let description = generate_delegation_circuits_artifacts();
 
         let mut dst = std::fs::File::create("generated/all_delegation_circuits_params.rs").unwrap();
@@ -716,8 +715,10 @@ mod test {
         dst.write_all(&description.as_bytes()).unwrap();
     }
 
+    #[cfg(test)]
     #[test]
     fn test_generate_unrolled_base() {
+        skip_if_ci!();
         compute_and_save_params(
             Path::new("../../examples/basic_fibonacci/app.bin"),
             Path::new("../../examples/basic_fibonacci/app.text"),

@@ -2,6 +2,8 @@ use crate::ir::*;
 use crate::vm::*;
 use std::collections::HashMap;
 
+mod test_vector;
+
 mod add;
 mod addi;
 // mod beq;
@@ -27,7 +29,9 @@ fn test_reg_reg_op(op_name: &str, expected: u32, op1: u32, op2: u32) {
         let encoding = lib_rv32_asm::assemble_ir(&instr, &mut empty_hash, INITIAL_PC)
             .unwrap()
             .unwrap();
-        let text_section = vec![encoding];
+        // Add a self-loop after the tested instruction so bounded execution
+        // never walks off the instruction tape.
+        let text_section = vec![encoding, 0x0000006f];
 
         let instructions: Vec<Instruction> =
             preprocess_bytecode::<FullUnsignedMachineDecoderConfig>(&text_section);
@@ -58,7 +62,9 @@ fn test_reg_imm_op(op_name: &str, expected: u32, op1: u32, imm: u16) {
         let encoding = lib_rv32_asm::assemble_ir(&instr, &mut empty_hash, INITIAL_PC)
             .unwrap()
             .unwrap();
-        let text_section = vec![encoding];
+        // Add a self-loop after the tested instruction so bounded execution
+        // never walks off the instruction tape.
+        let text_section = vec![encoding, 0x0000006f];
 
         let instructions: Vec<Instruction> =
             preprocess_bytecode::<FullUnsignedMachineDecoderConfig>(&text_section);
