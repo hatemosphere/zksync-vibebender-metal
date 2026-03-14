@@ -1,10 +1,10 @@
-use crate::witness_proxy::WitnessProxy;
+use crate::gkr::witness_gen::witness_proxy::WitnessProxy;
 use common_constants::NUM_TIMESTAMP_COLUMNS_FOR_RAM;
-use cs::cs::placeholder::Placeholder;
-use cs::cs::witness_placer::scalar_witness_type_set::ScalarWitnessTypeSet;
-use cs::one_row_compiler::timestamp_scalar_into_column_values;
+use cs::definitions::timestamp_scalar_into_column_values;
+use cs::oracle::*;
+use cs::tables::TableDriver;
 use cs::utils::split_u32_into_pair_u16;
-use cs::{cs::oracle::Oracle, tables::TableDriver};
+use cs::witness_placer::scalar_witness_type_set::ScalarWitnessTypeSet;
 use field::{Mersenne31Field, PrimeField};
 
 // NOTE: very unsafe

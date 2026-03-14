@@ -1,8 +1,8 @@
 use super::*;
-use crate::witness_evaluator::utils::encoding_tuple_into_lookup_index;
+use crate::utils::encoding_tuple_into_lookup_index;
 use common_constants::TIMESTAMP_COLUMNS_NUM_BITS;
-use cs::cs::oracle::Oracle;
 use cs::gkr_compiler::GKRCircuitArtifact;
+use cs::oracle::Oracle;
 use cs::tables::TableDriver;
 use fft::GoodAllocator;
 use field::PrimeField;

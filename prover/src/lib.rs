@@ -42,26 +42,26 @@ pub mod mem_utils;
 pub mod merkle_trees;
 #[cfg(feature = "prover")]
 pub mod nd_source_std;
+// #[cfg(feature = "prover")]
+// pub mod prover_stages;
+// #[cfg(feature = "prover")]
+// pub mod quotient_evaluator;
+// #[cfg(feature = "prover")]
+// pub mod tracer;
 #[cfg(feature = "prover")]
-pub mod prover_stages;
-#[cfg(feature = "prover")]
-pub mod quotient_evaluator;
-#[cfg(feature = "prover")]
-pub mod tracer;
+pub mod query_utils;
 #[cfg(feature = "prover")]
 pub mod tracers;
 pub mod utils;
-#[cfg(feature = "prover")]
-pub mod witness_evaluator;
+// #[cfg(feature = "prover")]
+// pub mod witness_evaluator;
 
-#[cfg(feature = "prover")]
-pub use self::quotient_evaluator::*;
-#[cfg(feature = "prover")]
-pub use self::tracer::*;
-#[cfg(feature = "prover")]
-pub use self::witness_evaluator::*;
-#[cfg(feature = "prover")]
-pub use risc_v_simulator;
+// #[cfg(feature = "prover")]
+// pub use self::quotient_evaluator::*;
+// #[cfg(feature = "prover")]
+// pub use self::tracer::*;
+// #[cfg(feature = "prover")]
+// pub use self::witness_evaluator::*;
 
 #[cfg(any(test, feature = "test"))]
 pub mod tests;

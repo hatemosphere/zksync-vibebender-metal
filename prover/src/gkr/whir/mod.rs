@@ -72,7 +72,7 @@ use crate::gkr::sumcheck::eq_poly::{make_domain_eq_poly_in_full, make_eq_poly_in
 use crate::gkr::sumcheck::*;
 use crate::gkr::whir::hypercube_to_monomial::multivariate_coeffs_into_hypercube_evals;
 use crate::gkr::PAR_THRESHOLD;
-use crate::prover_stages::query_producer::assemble_query_index;
+use crate::query_utils::assemble_query_index;
 use crate::{gkr::prover::apply_row_wise, merkle_trees::ColumnMajorMerkleTreeConstructor};
 use fft::{
     batch_inverse_inplace, bitreverse_enumeration_inplace, domain_generator_for_size,

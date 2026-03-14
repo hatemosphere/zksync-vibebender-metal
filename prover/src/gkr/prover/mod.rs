@@ -13,11 +13,11 @@ use crate::gkr::prover::debug_utils::compute_initial_sumcheck_claims;
 use crate::gkr::prover::setup::GKRSetup;
 use crate::gkr::prover::stages::stage1;
 use crate::gkr::prover::transcript_utils::{commit_field_els, draw_random_field_els};
+use crate::gkr::prover::utils::flatten_merkle_caps_iter_into;
 use crate::gkr::sumcheck::access_and_fold::GKRStorage;
 use crate::gkr::whir::{whir_fold, ColumnMajorBaseOracleForLDE, WhirPolyCommitProof};
 use crate::gkr::witness_gen::family_circuits::GKRFullWitnessTrace;
 use crate::merkle_trees::ColumnMajorMerkleTreeConstructor;
-use crate::prover_stages::flatten_merkle_caps_iter_into;
 use crate::worker::Worker;
 
 use cs::definitions::{GKRAddress, NUM_MEM_ARGUMENT_LINEARIZATION_CHALLENGES};
@@ -29,6 +29,7 @@ pub mod setup;
 pub mod stages;
 pub mod sumcheck_loop;
 pub mod transcript_utils;
+pub mod utils;
 
 pub(crate) struct SendPtr<T: Sized>(*mut T);
 unsafe impl<T: Send + Sync> Send for SendPtr<T> {}

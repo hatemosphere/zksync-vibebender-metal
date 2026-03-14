@@ -1,11 +1,10 @@
 use super::*;
 use crate::gkr::sumcheck::access_and_fold::BaseFieldPoly;
-use crate::prover_stages::compute_aggregated_key_value_dyn;
+use crate::utils::compute_aggregated_key_value_dyn;
 use common_constants::TIMESTAMP_COLUMNS_NUM_BITS;
 use cs::definitions::GKRAddress;
-use cs::machine::ops::unrolled::{
-    materialize_flattened_decoder_table_with_bitmask, DecoderTableEntry,
-};
+use cs::gkr_circuits::materialize_flattened_decoder_table_with_bitmask;
+use cs::gkr_circuits::DecoderTableEntry;
 use cs::tables::{TableDriver, TableType};
 use fft::{materialize_powers_serial_starting_with_one, GoodAllocator};
 use field::batch_inverse_checked;

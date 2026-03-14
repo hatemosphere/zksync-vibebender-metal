@@ -172,3 +172,59 @@ pub(crate) fn serialize_to_file<T: serde::Serialize>(el: &T, filename: &str) {
     let mut dst = std::fs::File::create(filename).unwrap();
     serde_json::to_writer_pretty(&mut dst, el).unwrap();
 }
+
+pub fn array_to_tokens<T: quote::ToTokens, const N: usize>(
+    els: &[T; N],
+) -> proc_macro2::TokenStream {
+    use quote::quote;
+    use quote::TokenStreamExt;
+
+    let mut stream = proc_macro2::TokenStream::new();
+    stream.append_separated(
+        els.into_iter().map(|el| {
+            quote! { #el }
+        }),
+        quote! {,},
+    );
+    let stream = quote! {
+        [#stream]
+    };
+
+    stream
+}
+
+pub fn slice_to_tokens<T: quote::ToTokens>(els: &[T]) -> proc_macro2::TokenStream {
+    use quote::quote;
+    use quote::TokenStreamExt;
+
+    let mut stream = proc_macro2::TokenStream::new();
+    stream.append_separated(
+        els.into_iter().map(|el| {
+            quote! { #el }
+        }),
+        quote! {,},
+    );
+    let stream = quote! {
+        &[#stream]
+    };
+
+    stream
+}
+
+pub fn slice_to_token_array<T: quote::ToTokens>(els: &[T]) -> proc_macro2::TokenStream {
+    use quote::quote;
+    use quote::TokenStreamExt;
+
+    let mut stream = proc_macro2::TokenStream::new();
+    stream.append_separated(
+        els.into_iter().map(|el| {
+            quote! { #el }
+        }),
+        quote! {,},
+    );
+    let stream = quote! {
+        [#stream]
+    };
+
+    stream
+}

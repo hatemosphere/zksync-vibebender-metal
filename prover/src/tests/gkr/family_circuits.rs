@@ -1,42 +1,30 @@
 use super::*;
-use ::field::baby_bear::base::BabyBearField;
-use ::field::baby_bear::ext4::BabyBearExt4;
-use risc_v_simulator::abstractions::non_determinism::QuasiUARTSource;
-use risc_v_simulator::machine_mode_only_unrolled::*;
-use riscv_transpiler::replayer::*;
-use riscv_transpiler::witness::*;
-use std::collections::BTreeSet;
-
-use cs::machine::ops::unrolled::compile_unrolled_circuit_state_transition_into_gkr;
-use cs::machine::ops::unrolled::opcodes_for_full_machine_with_mem_word_access_specialization;
-use cs::machine::ops::unrolled::opcodes_for_full_machine_with_unsigned_mul_div_only_with_mem_word_access_specialization;
-
 use crate::gkr::prover::prove_configured_with_gkr;
 use crate::gkr::prover::setup::GKRSetup;
 use crate::gkr::prover::GKRExternalChallenges;
 use crate::gkr::prover::WhirSchedule;
 use crate::gkr::witness_gen::family_circuits::evaluate_gkr_memory_witness_for_executor_family;
 use crate::gkr::witness_gen::family_circuits::evaluate_gkr_witness_for_executor_family;
-use crate::unrolled::NonMemoryCircuitOracle;
-
-use cs::definitions::INITIAL_TIMESTAMP;
-use cs::machine::ops::unrolled::{
-    load_store_subword_only::{
-        subword_only_load_store_circuit_with_preprocessed_bytecode,
-        subword_only_load_store_table_addition_fn, subword_only_load_store_table_driver_fn,
-    },
-    load_store_word_only::{
-        create_word_only_load_store_special_tables,
-        word_only_load_store_circuit_with_preprocessed_bytecode,
-        word_only_load_store_table_addition_fn, word_only_load_store_table_driver_fn,
-    },
-};
-
-use crate::unrolled::{
-    evaluate_init_and_teardown_memory_witness, evaluate_init_and_teardown_witness,
-};
-
+use crate::gkr::witness_gen::oracles::NonMemoryCircuitOracle;
+use crate::gkr::witness_gen::trace_structs::RamShuffleMemStateRecord;
+use crate::merkle_trees::DefaultTreeConstructor;
 use crate::tracers::oracles::transpiler_oracles::delegation::*;
+use ::field::baby_bear::base::BabyBearField;
+use ::field::baby_bear::ext4::BabyBearExt4;
+use common_constants::TIMESTAMP_STEP;
+use cs::definitions::INITIAL_TIMESTAMP;
+use cs::definitions::*;
+use cs::tables::TableDriver;
+use fft::materialize_powers_serial_starting_with_elem;
+use fft::Twiddles;
+use riscv_transpiler::ir::simple_instruction_set::preprocess_bytecode;
+use riscv_transpiler::ir::simple_instruction_set::Instruction;
+use riscv_transpiler::ir::*;
+use riscv_transpiler::replayer::*;
+use riscv_transpiler::witness::*;
+use std::alloc::Global;
+use std::collections::BTreeSet;
+use worker::Worker;
 
 const SUPPORT_SIGNED: bool = false;
 const INITIAL_PC: u32 = 0;
@@ -50,8 +38,8 @@ fn gkr_run_basic_unrolled_test() {
 }
 
 pub fn gkr_run_basic_unrolled_test_impl(
-    maybe_gpu_unrolled_comparison_hook: Option<Box<dyn Fn(&GpuComparisonArgs)>>,
-    maybe_gpu_delegation_comparison_hook: Option<Box<dyn Fn(&GpuComparisonArgs)>>,
+    maybe_gpu_unrolled_comparison_hook: Option<Box<dyn Fn()>>,
+    maybe_gpu_delegation_comparison_hook: Option<Box<dyn Fn()>>,
 ) {
     use riscv_transpiler::ir::*;
     use riscv_transpiler::vm::*;
@@ -68,15 +56,6 @@ pub fn gkr_run_basic_unrolled_test_impl(
     let trace_len: usize = 1 << TRACE_LEN_LOG2;
     let lde_factor = 2;
     let tree_cap_size = 32;
-
-    use crate::prover_stages::unrolled_prover::UnrolledModeProof;
-    let serialize_to_file_if_not_gpu_comparison = |proof: &UnrolledModeProof, filename: &str| {
-        if maybe_gpu_unrolled_comparison_hook.is_none()
-            && maybe_gpu_delegation_comparison_hook.is_none()
-        {
-            serialize_to_file(proof, filename);
-        }
-    };
 
     // let worker = Worker::new_with_num_threads(1);
     let worker = Worker::new_with_num_threads(8);
@@ -141,7 +120,6 @@ pub fn gkr_run_basic_unrolled_test_impl(
 
     let shuffle_ram_touched_addresses = ram.collect_inits_and_teardowns(&worker, Global);
 
-    use crate::tracers::oracles::chunk_lazy_init_and_teardown;
     let total_unique_teardowns: usize = shuffle_ram_touched_addresses
         .iter()
         .map(|el| el.len())
@@ -149,13 +127,13 @@ pub fn gkr_run_basic_unrolled_test_impl(
 
     println!("Touched {} unique addresses", total_unique_teardowns);
 
-    let (num_trivial, inits_and_teardowns) = chunk_lazy_init_and_teardown::<Global, _>(
-        1,
-        NUM_CYCLES_PER_CHUNK * NUM_INIT_AND_TEARDOWN_SETS,
-        &shuffle_ram_touched_addresses,
-        &worker,
-    );
-    assert_eq!(num_trivial, 0, "trivial padding is not expected in tests");
+    // let (num_trivial, inits_and_teardowns) = chunk_lazy_init_and_teardown::<Global, _>(
+    //     1,
+    //     NUM_CYCLES_PER_CHUNK * NUM_INIT_AND_TEARDOWN_SETS,
+    //     &shuffle_ram_touched_addresses,
+    //     &worker,
+    // );
+    // assert_eq!(num_trivial, 0, "trivial padding is not expected in tests");
 
     let flattened_inits_and_teardowns: Vec<_> = shuffle_ram_touched_addresses
         .into_iter()
@@ -207,7 +185,6 @@ pub fn gkr_run_basic_unrolled_test_impl(
     };
 
     // evaluate memory witness
-    use crate::cs::machine::ops::unrolled::process_binary_into_separate_tables_ext;
 
     let preprocessing_data = if SUPPORT_SIGNED {
         process_binary_into_separate_tables_ext::<BabyBearField, true, Global>(

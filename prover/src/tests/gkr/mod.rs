@@ -1,10 +1,16 @@
-use cs::gkr_compiler::GKRCircuitArtifact;
-
-use crate::gkr::witness_gen::family_circuits::{GKRFullWitnessTrace, GKRMemoryOnlyWitnessTrace};
-
 use super::*;
+use crate::gkr::witness_gen::family_circuits::{GKRFullWitnessTrace, GKRMemoryOnlyWitnessTrace};
+use cs::definitions::GKRAddress;
+use cs::gkr_compiler::GKRCircuitArtifact;
+use fft::GoodAllocator;
+use field::PrimeField;
 
 use std::alloc::Allocator;
+
+fn serialize_to_file<T: serde::Serialize>(el: &T, filename: &str) {
+    let mut dst = std::fs::File::create(filename).unwrap();
+    serde_json::to_writer_pretty(&mut dst, el).unwrap();
+}
 
 mod family_circuits;
 
@@ -254,16 +260,15 @@ pub fn check_satisfied_row<F: PrimeField, A: GoodAllocator, B: GoodAllocator>(
 mod add_sub_lui_auipc_mod {
     use crate::gkr::witness_gen::column_major_proxy::ColumnMajorWitnessProxy;
     use crate::unrolled::NonMemoryCircuitOracle;
-    use crate::witness_proxy::WitnessProxy;
-    use ::cs::cs::placeholder::Placeholder;
-    use ::cs::cs::witness_placer::WitnessTypeSet;
-    use ::cs::cs::witness_placer::{
+    use ::cs::oracle::Placeholder;
+    use ::cs::witness_placer::WitnessTypeSet;
+    use ::cs::witness_placer::{
         WitnessComputationCore, WitnessComputationalField, WitnessComputationalI32,
         WitnessComputationalInteger, WitnessComputationalU16, WitnessComputationalU32,
         WitnessComputationalU8, WitnessMask,
     };
     use ::field::baby_bear::base::BabyBearField;
-    use cs::cs::witness_placer::scalar_witness_type_set::ScalarWitnessTypeSet;
+    use cs::witness_placer::scalar_witness_type_set::ScalarWitnessTypeSet;
 
     include!("../../../add_sub_lui_auipc_mop_preprocessed_generated_gkr.rs");
 
