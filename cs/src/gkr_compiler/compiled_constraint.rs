@@ -374,56 +374,72 @@ pub struct OneStepConstraintsEvaluationNode<F: PrimeField> {
     pub constant_parts: Vec<F>,
 }
 
-pub(crate) fn layout_constraints_on_single_layer<F: PrimeField>(
+pub(crate) fn layout_constraints_at_layers<F: PrimeField>(
     graph: &mut GKRGraph,
     constraints: Vec<(Constraint<F>, bool)>,
-    output_layer: usize,
-) -> (Vec<Degree2Constraint<F>>, Vec<Degree1Constraint<F>>) {
-    assert!(output_layer > 0);
-
-    let mut quadratic_parts = vec![];
-    let mut linear_parts = vec![];
-    let mut constant_parts = vec![];
-
-    let mut compiled_quadratic = vec![];
-    let mut compiled_linear = vec![];
+    layers_mapping: &HashMap<Variable, usize>,
+) {
+    // sort constraints by layers
+    let mut layers = BTreeMap::new();
 
     for (c, _) in constraints.into_iter() {
-        let (q, l, c) = c.split_max_quadratic();
-
-        if q.is_empty() {
-            assert!(l.is_empty() == false);
-            let compiled = Degree1Constraint {
-                linear_terms: l.clone().into_boxed_slice(),
-                constant_term: c,
-            };
-            compiled_linear.push(compiled);
-        } else {
-            let compiled = Degree2Constraint {
-                quadratic_terms: q.clone().into_boxed_slice(),
-                linear_terms: l.clone().into_boxed_slice(),
-                constant_term: c,
-            };
-            compiled_quadratic.push(compiled);
+        let all_vars = c.stable_variable_set();
+        let mut layer = None;
+        for var in all_vars.into_iter() {
+            let var_layer = *layers_mapping.get(&var).expect("must be known");
+            if let Some(layer) = layer {
+                assert_eq!(layer, var_layer);
+            } else {
+                layer = Some(var_layer);
+            }
         }
-
-        quadratic_parts.push(q);
-        linear_parts.push(l);
-        constant_parts.push(c);
+        let layer = layer.expect("placement layer");
+        layers.entry(layer).or_insert(vec![]).push(c);
     }
 
-    assert_eq!(quadratic_parts.len(), linear_parts.len());
-    assert_eq!(quadratic_parts.len(), constant_parts.len());
+    for (input_layer, constraints) in layers.into_iter() {
+        let mut quadratic_parts = vec![];
+        let mut linear_parts = vec![];
+        let mut constant_parts = vec![];
 
-    let node = OneStepConstraintsEvaluationNode {
-        quadratic_parts,
-        linear_parts,
-        constant_parts,
-    };
+        let mut compiled_quadratic = vec![];
+        let mut compiled_linear = vec![];
 
-    node.add_at_layer(graph, output_layer);
+        for c in constraints.into_iter() {
+            let (q, l, c) = c.split_max_quadratic();
 
-    (compiled_quadratic, compiled_linear)
+            if q.is_empty() {
+                assert!(l.is_empty() == false);
+                let compiled = Degree1Constraint {
+                    linear_terms: l.clone().into_boxed_slice(),
+                    constant_term: c,
+                };
+                compiled_linear.push(compiled);
+            } else {
+                let compiled = Degree2Constraint {
+                    quadratic_terms: q.clone().into_boxed_slice(),
+                    linear_terms: l.clone().into_boxed_slice(),
+                    constant_term: c,
+                };
+                compiled_quadratic.push(compiled);
+            }
+
+            quadratic_parts.push(q);
+            linear_parts.push(l);
+            constant_parts.push(c);
+        }
+
+        assert_eq!(quadratic_parts.len(), linear_parts.len());
+        assert_eq!(quadratic_parts.len(), constant_parts.len());
+
+        let node = OneStepConstraintsEvaluationNode {
+            quadratic_parts,
+            linear_parts,
+            constant_parts,
+        };
+
+        node.add_at_layer(graph, input_layer + 1);
+    }
 }
 
 impl<F: PrimeField> GKRGate for OneStepConstraintsEvaluationNode<F> {

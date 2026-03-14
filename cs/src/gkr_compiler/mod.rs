@@ -79,15 +79,14 @@ pub struct GKRCircuitArtifact<F: PrimeField> {
 
     pub memory_layout: GKRMemoryLayout,
     pub witness_layout: GKRWitnessLayout,
-    pub scratch_space_size: usize,
+    // pub scratch_space_size: usize,
     pub placement_data: BTreeMap<Variable, GKRAddress>,
     pub generic_lookup_tables_width: usize,
     pub decode_table_columns_mask: Vec<bool>,
     pub tables_ids_in_generic_lookups: bool,
 
-    pub degree_2_constraints: Vec<Degree2Constraint<F>>,
-    pub degree_1_constraints: Vec<Degree1Constraint<F>>,
-
+    // pub degree_2_constraints: Vec<Degree2Constraint<F>>,
+    // pub degree_1_constraints: Vec<Degree1Constraint<F>>,
     pub variable_names: BTreeMap<Variable, String>,
 
     pub aux_layout_data: GKRAuxLayoutData,

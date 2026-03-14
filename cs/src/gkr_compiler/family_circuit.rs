@@ -522,31 +522,32 @@ impl<F: PrimeField> GKRCompiler<F> {
             constraints.push((c, false));
         }
 
-        // now we can optimize the constraints and all remaining variables
-        for c in constraints.iter_mut() {
-            c.0.normalize();
-        }
+        // // now we can optimize the constraints and all remaining variables
+        // for c in constraints.iter_mut() {
+        //     c.0.normalize();
+        // }
 
-        let (optimized_out_variables, mut constraints) = optimize_out_linear_constraints(
-            &[],
-            &[],
-            &substitutions,
-            constraints,
-            &mut all_variables_to_place,
-        );
+        // let (optimized_out_variables, mut constraints) = optimize_out_linear_constraints(
+        //     &[],
+        //     &[],
+        //     &substitutions,
+        //     constraints,
+        //     &mut all_variables_to_place,
+        // );
 
-        println!(
-            "{} variables were optimized out",
-            optimized_out_variables.len()
-        );
-        let scratch_space_size = optimized_out_variables.len();
+        // println!(
+        //     "{} variables were optimized out",
+        //     optimized_out_variables.len()
+        // );
+        // let scratch_space_size = optimized_out_variables.len();
 
-        for var in optimized_out_variables.iter() {
-            if let Some(c) = variables_from_constraints.remove(var) {
-                assert!(c.degree() < 2);
-            }
-        }
+        // for var in optimized_out_variables.iter() {
+        //     if let Some(c) = variables_from_constraints.remove(var) {
+        //         assert!(c.degree() < 2);
+        //     }
+        // }
 
+        // normalize constraint for next steps
         for c in constraints.iter_mut() {
             c.0.normalize();
         }
@@ -750,8 +751,7 @@ impl<F: PrimeField> GKRCompiler<F> {
         }
 
         // Place a gate for constraints batch eval
-        let (degree_2_constraints, degree_1_constraints) =
-            layout_constraints_on_single_layer(&mut graph, constraints, 1);
+        layout_constraints_at_layers(&mut graph, constraints, &layers_mapping);
 
         // work out the outputs
         let lookup_outputs = BTreeMap::from_iter(
@@ -945,15 +945,12 @@ impl<F: PrimeField> GKRCompiler<F> {
             global_output_map,
             memory_layout,
             witness_layout,
-            scratch_space_size,
+            // scratch_space_size,
             placement_data,
             generic_lookup_tables_width: generic_lookup_width,
             tables_ids_in_generic_lookups: expect_table_id_for_generic_lookup,
             decode_table_columns_mask,
             has_decoder_lookup: true,
-
-            degree_2_constraints,
-            degree_1_constraints,
 
             variable_names: BTreeMap::from_iter(variable_names.into_iter()),
 
