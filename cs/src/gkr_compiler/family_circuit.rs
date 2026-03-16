@@ -911,6 +911,7 @@ impl<F: PrimeField> GKRCompiler<F> {
         let mut placement_data = BTreeMap::new();
         placement_data.extend(graph.base_layer_memory.iter().map(|(k, v)| (*k, *v)));
         placement_data.extend(graph.base_layer_witness.iter().map(|(k, v)| (*k, *v)));
+        placement_data.extend(graph.intermediate_layers.iter().map(|(k, v)| (*k, *v)));
 
         let witness_layout = GKRWitnessLayout {
             multiplicities_columns_for_range_check_16,
