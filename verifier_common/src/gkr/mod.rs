@@ -1,4 +1,6 @@
-use blake2s_u32::BLAKE2S_DIGEST_SIZE_U32_WORDS;
+use core::mem::MaybeUninit;
+
+use blake2s_u32::{AlignedArray64, DelegatedBlake2sState, BLAKE2S_DIGEST_SIZE_U32_WORDS};
 use cs::definitions::gkr_static_types::{
     OutputType, StaticGKRLayerDescription, StaticNoFieldGKRRelation,
     StaticNoFieldMaxQuadraticConstraintsGKRRelation,
@@ -25,6 +27,11 @@ pub struct GKRLayerMeta<'a> {
     pub num_sumcheck_rounds: usize,
     pub output_groups: &'a [GKROutputGroup],
     pub layer_desc: Option<&'a StaticGKRLayerDescription<'a>>,
+    pub sorted_dedup_input_addrs: &'a [GKRAddress],
+    /// For dim-reducing layers: mapping from iteration order (output_groups walk)
+    /// to sorted position in sorted_dedup_input_addrs.
+    /// Empty for standard layers.
+    pub input_sorted_indices: &'a [usize],
 }
 
 #[derive(Clone, Debug)]
@@ -39,93 +46,57 @@ pub struct GKRVerifierConfig<'a> {
 
 #[derive(Clone, Debug)]
 #[repr(C)]
-pub struct SmallMap<K, V, const N: usize> {
-    data: [(K, V); N],
+pub struct LazyVec<V: Copy, const N: usize> {
+    data: [MaybeUninit<V>; N],
     len: usize,
 }
 
-impl<K: PartialEq + Copy + Ord, V: Copy, const N: usize> SmallMap<K, V, N> {
-    fn new(default_key: K, default_val: V) -> Self {
+impl<V: Copy, const N: usize> LazyVec<V, N> {
+    #[inline(always)]
+    fn new() -> Self {
         Self {
-            data: [(default_key, default_val); N],
+            data: [MaybeUninit::uninit(); N],
             len: 0,
         }
     }
 
-    fn insert(&mut self, key: K, val: V) {
-        assert!(self.len < N);
-        debug_assert!(self.len == 0 || self.data[self.len - 1].0 < key);
-
-        unsafe { *self.data.get_unchecked_mut(self.len) = (key, val) };
+    #[inline(always)]
+    fn push(&mut self, val: V) {
+        debug_assert!(self.len < N);
+        unsafe {
+            self.data.get_unchecked_mut(self.len).write(val);
+        }
         self.len += 1;
     }
 
+    #[inline(always)]
+    fn get(&self, idx: usize) -> &V {
+        debug_assert!(idx < self.len);
+        unsafe { self.data.get_unchecked(idx).assume_init_ref() }
+    }
+
+    #[inline(always)]
+    fn as_slice(&self) -> &[V] {
+        unsafe { core::slice::from_raw_parts(self.data.as_ptr() as *const V, self.len) }
+    }
+
+    #[inline(always)]
     fn clear(&mut self) {
         self.len = 0;
     }
 
-    fn get(&self, key: &K) -> Option<&V> {
-        match self.data[..self.len].binary_search_by_key(&key, |(k, _)| k) {
-            Ok(idx) => Some(unsafe { &self.data.get_unchecked(idx).1 }),
-            Err(_) => None,
-        }
-    }
-
+    #[inline(always)]
     pub fn len(&self) -> usize {
         self.len
     }
-}
 
-#[derive(Clone, Debug)]
-#[repr(C)]
-struct SmallVecMap<K, V, const N: usize, const M: usize> {
-    keys: [K; N],
-    vals: [[V; M]; N],
-    val_lens: [usize; N],
-    len: usize,
-}
-
-impl<K: PartialEq + Copy + Ord, V: Copy, const N: usize, const M: usize> SmallVecMap<K, V, N, M> {
-    fn new(default_key: K, default_val: V) -> Self {
-        Self {
-            keys: [default_key; N],
-            vals: [[default_val; M]; N],
-            val_lens: [0; N],
-            len: 0,
-        }
-    }
-
-    fn insert_vec(&mut self, key: K, vals: &[V]) {
-        assert!(vals.len() <= M);
-        assert!(self.len < N);
-        debug_assert!(self.len == 0 || self.keys[self.len - 1] < key);
-
-        unsafe {
-            *self.keys.get_unchecked_mut(self.len) = key;
-            self.vals.get_unchecked_mut(self.len)[..vals.len()].copy_from_slice(vals);
-            *self.val_lens.get_unchecked_mut(self.len) = vals.len();
-        }
-        self.len += 1;
-    }
-
-    fn get(&self, key: &K) -> Option<&[V]> {
-        match self.keys[..self.len].binary_search(key) {
-            Ok(idx) => unsafe {
-                let len = *self.val_lens.get_unchecked(idx);
-                Some(&self.vals.get_unchecked(idx)[..len])
-            },
-            Err(_) => None,
-        }
-    }
-
-    /// Reinterpret the first `self.len` rows of `vals` as a flat `&[V]` of length `self.len * M`.
-    /// Caller must ensure every inserted row uses exactly M elements.
-    unsafe fn vals_as_flat_slice(&self) -> &[V] {
-        debug_assert!(self.val_lens[..self.len].iter().all(|&len| len == M));
-        core::slice::from_raw_parts(self.vals.as_ptr() as *const V, self.len * M)
+    #[inline(always)]
+    pub unsafe fn as_array(self) -> [V; N] {
+        MaybeUninit::array_assume_init(self.data)
     }
 }
 
+#[inline(always)]
 fn read_field_el<F: PrimeField, E: FieldExtension<F>, I: NonDeterminismSource>() -> E
 where
     [(); E::DEGREE]: Sized,
@@ -140,6 +111,7 @@ where
     E::from_coeffs(coeffs)
 }
 
+#[inline(always)]
 fn read_field_els<F: PrimeField, E: FieldExtension<F>, I: NonDeterminismSource>(dst: &mut [E])
 where
     [(); E::DEGREE]: Sized,
@@ -149,11 +121,12 @@ where
     }
 }
 
+#[inline(always)]
 fn commit_field_els<F: PrimeField, E: FieldExtension<F>>(seed: &mut Seed, els: &[E])
 where
     [(); E::DEGREE]: Sized,
 {
-    use core::mem::{size_of, align_of};
+    use core::mem::{align_of, size_of};
     assert!(size_of::<F>() == size_of::<u32>());
     assert!(align_of::<F>() == align_of::<u32>());
 
@@ -162,6 +135,7 @@ where
     Blake2sTranscript::commit_with_seed(seed, as_u32);
 }
 
+#[inline(always)]
 fn draw_field_els_into<F: PrimeField, E: FieldExtension<F>>(seed: &mut Seed, dst: &mut [E])
 where
     [(); E::DEGREE]: Sized,
@@ -169,11 +143,21 @@ where
     use field::FixedArrayConvertible;
     let n = dst.len();
     let padded = (n * E::DEGREE).next_multiple_of(BLAKE2S_DIGEST_SIZE_U32_WORDS);
-    debug_assert!(padded <= DRAW_BUF_CAPACITY, "draw buffer too small");
-    let mut words = [0u32; DRAW_BUF_CAPACITY];
-    Blake2sTranscript::draw_randomness(seed, &mut words[..padded]);
-    for (i, chunk) in words[..n * E::DEGREE].chunks_exact(E::DEGREE).enumerate() {
-        let mut arr = [F::ZERO; E::DEGREE];
+    assert!(padded <= DRAW_BUF_CAPACITY, "draw buffer too small");
+
+    let mut words = [MaybeUninit::<u32>::uninit(); DRAW_BUF_CAPACITY];
+    let mut arr = [F::ZERO; E::DEGREE];
+
+    unsafe {
+        let dst = core::slice::from_raw_parts_mut(words.as_mut_ptr() as *mut u32, padded);
+        Blake2sTranscript::draw_randomness(seed, dst);
+    }
+
+    for (i, chunk) in words[..n * E::DEGREE]
+        .chunks_exact(E::DEGREE)
+        .map(|chunk| unsafe { chunk.assume_init_ref() })
+        .enumerate()
+    {
         for (j, &w) in chunk.iter().enumerate() {
             arr[j] = F::from_u32_with_reduction(w);
         }
@@ -182,6 +166,7 @@ where
     }
 }
 
+#[inline(always)]
 fn draw_one_field_el<F: PrimeField, E: FieldExtension<F> + Field>(seed: &mut Seed) -> E
 where
     [(); E::DEGREE]: Sized,
@@ -197,30 +182,7 @@ pub enum GKRVerificationError {
     FinalStepCheckFailed { layer: usize },
 }
 
-fn eval_cubic_poly<F: PrimeField, E: FieldExtension<F> + Field>(coeffs: &[E; 4], r: E) -> E {
-    let mut result = coeffs[3];
-    result.mul_assign(&r);
-    result.add_assign(&coeffs[2]);
-    result.mul_assign(&r);
-    result.add_assign(&coeffs[1]);
-    result.mul_assign(&r);
-    result.add_assign(&coeffs[0]);
-    result
-}
-
-fn eval_eq<E: Field>(x: E, y: E) -> E {
-    let mut one_minus_x = E::ONE;
-    one_minus_x.sub_assign(&x);
-    let mut one_minus_y = E::ONE;
-    one_minus_y.sub_assign(&y);
-    let mut t = one_minus_x;
-    t.mul_assign(&one_minus_y);
-    let mut xy = x;
-    xy.mul_assign(&y);
-    t.add_assign(&xy);
-    t
-}
-
+#[inline(always)]
 fn dot_eq<E: Field>(values: &[E], eq: &[E]) -> E {
     assert_eq!(values.len(), eq.len());
     let mut result = E::ZERO;
@@ -232,72 +194,52 @@ fn dot_eq<E: Field>(values: &[E], eq: &[E]) -> E {
     result
 }
 
-fn get_eval_at_j<E: Field, const N: usize, const M: usize>(
-    evals: &SmallVecMap<GKRAddress, E, N, M>,
-    addr: GKRAddress,
-    j: usize,
-) -> E {
-    evals
-        .get(&addr)
-        .and_then(|v| v.get(j).copied())
-        .expect("address should exist")
-}
-
+#[inline(always)]
 fn eval_constraint_kernel<
     F: PrimeField,
     E: FieldExtension<F> + Field,
-    const N: usize,
-    const M: usize,
+    const ADDRS: usize,
     const MAX_POW: usize,
 >(
     rel: &StaticNoFieldMaxQuadraticConstraintsGKRRelation,
-    constraints_batch_challenge: E,
-    evals: &SmallVecMap<GKRAddress, E, N, M>,
+    challenge_powers: &[E; MAX_POW],
+    evals: &LazyVec<[E; 2], ADDRS>,
     j: usize,
 ) -> E {
-    let get_value_at = |addr: GKRAddress| -> E {
-        debug_assert!(addr != GKRAddress::placeholder());
-        get_eval_at_j(evals, addr, j)
-    };
+    let get_value_at = |idx: usize| &evals.get(idx)[j];
 
     let mut result = E::ZERO;
-    let mut challenge_powers = [E::ZERO; MAX_POW];
-    challenge_powers[0] = E::ONE;
-    challenge_powers.iter_mut().reduce(|prev, cur| {
-        *cur = *prev;
-        cur.mul_assign(&constraints_batch_challenge);
-        cur
-    });
 
-    // pow < MAX_POW guaranteed by generator
     let get_pow = |pow: usize| unsafe { *challenge_powers.get_unchecked(pow) };
 
+    // Coefficients are pre-converted to Montgomery form by the code generator,
+    // so we use from_reduced_raw_repr
     for &(coeff, pow) in rel.constants.iter() {
         let mut t = get_pow(pow);
-        let c = F::from_u32_with_reduction(coeff);
+        let c = F::from_reduced_raw_repr(coeff);
         t.mul_assign_by_base(&c);
         result.add_assign(&t);
     }
 
-    for (addr, terms) in rel.linear_terms.iter() {
-        let val = get_value_at(*addr);
+    for (idx, terms) in rel.linear_terms.iter() {
+        let val = get_value_at(*idx);
         for &(coeff, pow) in terms.iter() {
             let mut t = get_pow(pow);
-            let c = F::from_u32_with_reduction(coeff);
+            let c = F::from_reduced_raw_repr(coeff);
             t.mul_assign_by_base(&c);
-            t.mul_assign(&val);
+            t.mul_assign(val);
             result.add_assign(&t);
         }
     }
 
-    for ((addr_a, addr_b), terms) in rel.quadratic_terms.iter() {
-        let va = get_value_at(*addr_a);
-        let vb = get_value_at(*addr_b);
-        let mut prod = va;
-        prod.mul_assign(&vb);
+    for ((idx_a, idx_b), terms) in rel.quadratic_terms.iter() {
+        let va = get_value_at(*idx_a);
+        let vb = get_value_at(*idx_b);
+        let mut prod = *va;
+        prod.mul_assign(vb);
         for &(coeff, pow) in terms.iter() {
             let mut t = get_pow(pow);
-            let c = F::from_u32_with_reduction(coeff);
+            let c = F::from_reduced_raw_repr(coeff);
             t.mul_assign_by_base(&c);
             t.mul_assign(&prod);
             result.add_assign(&t);
@@ -307,15 +249,15 @@ fn eval_constraint_kernel<
     result
 }
 
+#[inline(always)]
 fn compute_standard_final_step_accumulator<
     F: PrimeField,
     E: FieldExtension<F> + Field,
-    const N: usize,
-    const M: usize,
+    const ADDRS: usize,
     const MAX_POW: usize,
 >(
     layer: &StaticGKRLayerDescription,
-    final_step_evaluations: &SmallVecMap<GKRAddress, E, N, M>,
+    final_step_evaluations: &LazyVec<[E; 2], ADDRS>,
     batching_challenge: E,
     lookup_additive_challenge: E,
     constraints_batch_challenge: E,
@@ -328,6 +270,14 @@ where
     let mut acc = [E::ZERO; 2];
     let mut current_batch = E::ONE;
     let batch_base = batching_challenge;
+
+    let mut challenge_powers = [E::ZERO; MAX_POW];
+    challenge_powers[0] = E::ONE;
+    challenge_powers.iter_mut().reduce(|prev, cur| {
+        *cur = *prev;
+        cur.mul_assign(&constraints_batch_challenge);
+        cur
+    });
 
     let relations = layer
         .gates
@@ -346,9 +296,9 @@ where
             Rel::EnforceConstraintsMaxQuadratic { input } => {
                 let bc = get_challenge();
                 for (j, acc_j) in acc.iter_mut().enumerate() {
-                    let val = eval_constraint_kernel::<F, E, N, M, MAX_POW>(
+                    let val = eval_constraint_kernel::<F, E, ADDRS, MAX_POW>(
                         input,
-                        constraints_batch_challenge,
+                        &challenge_powers,
                         final_step_evaluations,
                         j,
                     );
@@ -363,7 +313,7 @@ where
             | Rel::MaskIntoIdentityProduct { .. } => {
                 let bc = get_challenge();
                 for (j, acc_j) in acc.iter_mut().enumerate() {
-                    let val = eval_single_output_relation::<F, E, N, M>(
+                    let val = eval_single_output_relation::<F, E, ADDRS>(
                         relation,
                         final_step_evaluations,
                         lookup_additive_challenge,
@@ -382,7 +332,7 @@ where
                 let bc0 = get_challenge();
                 let bc1 = get_challenge();
                 for (j, acc_j) in acc.iter_mut().enumerate() {
-                    let [out0, out1] = eval_two_output_relation::<F, E, N, M>(
+                    let [out0, out1] = eval_two_output_relation::<F, E, ADDRS>(
                         relation,
                         final_step_evaluations,
                         lookup_additive_challenge,
@@ -411,33 +361,29 @@ where
     acc
 }
 
-fn eval_single_output_relation<
-    F: PrimeField,
-    E: FieldExtension<F> + Field,
-    const N: usize,
-    const M: usize,
->(
+#[inline(always)]
+fn eval_single_output_relation<F: PrimeField, E: FieldExtension<F> + Field, const ADDRS: usize>(
     relation: &StaticNoFieldGKRRelation,
-    evals: &SmallVecMap<GKRAddress, E, N, M>,
+    evals: &LazyVec<[E; 2], ADDRS>,
     _lookup_additive_challenge: E,
     j: usize,
 ) -> E {
     use StaticNoFieldGKRRelation as Rel;
-    let get = |addr: GKRAddress| get_eval_at_j(evals, addr, j);
+    let get = |idx: usize| &evals.get(idx)[j];
 
     match relation {
-        Rel::Copy { input, .. } => get(*input),
+        Rel::Copy { input, .. } => *get(*input),
         Rel::InitialGrandProductFromCaches { input, .. } | Rel::TrivialProduct { input, .. } => {
-            let mut v = get(input[0]);
-            v.mul_assign(&get(input[1]));
+            let mut v = *get(input[0]);
+            v.mul_assign(get(input[1]));
             v
         }
         Rel::MaskIntoIdentityProduct { input, mask, .. } => {
             let input_val = get(*input);
             let mask_val = get(*mask);
-            let mut out = input_val;
+            let mut out = *input_val;
             out.sub_assign_base(&F::ONE);
-            out.mul_assign(&mask_val);
+            out.mul_assign(mask_val);
             out.add_assign_base(&F::ONE);
             out
         }
@@ -445,19 +391,15 @@ fn eval_single_output_relation<
     }
 }
 
-fn eval_two_output_relation<
-    F: PrimeField,
-    E: FieldExtension<F> + Field,
-    const N: usize,
-    const M: usize,
->(
+#[inline(always)]
+fn eval_two_output_relation<F: PrimeField, E: FieldExtension<F> + Field, const ADDRS: usize>(
     relation: &StaticNoFieldGKRRelation,
-    evals: &SmallVecMap<GKRAddress, E, N, M>,
+    evals: &LazyVec<[E; 2], ADDRS>,
     lookup_additive_challenge: E,
     j: usize,
 ) -> [E; 2] {
     use StaticNoFieldGKRRelation as Rel;
-    let get = |addr: GKRAddress| get_eval_at_j(evals, addr, j);
+    let get = |idx: usize| &evals.get(idx)[j];
     let gamma = lookup_additive_challenge;
 
     match relation {
@@ -466,19 +408,19 @@ fn eval_two_output_relation<
             let b = get(input[0][1]);
             let c = get(input[1][0]);
             let d = get(input[1][1]);
-            let mut num = a;
-            num.mul_assign(&d);
-            let mut cb = c;
-            cb.mul_assign(&b);
+            let mut num = *a;
+            num.mul_assign(d);
+            let mut cb = *c;
+            cb.mul_assign(b);
             num.add_assign(&cb);
-            let mut den = b;
-            den.mul_assign(&d);
+            let mut den = *b;
+            den.mul_assign(d);
             [num, den]
         }
         Rel::LookupPairFromMaterializedBaseInputs { input, .. } => {
-            let mut b_g = get(input[0]);
+            let mut b_g = *get(input[0]);
             b_g.add_assign(&gamma);
-            let mut d_g = get(input[1]);
+            let mut d_g = *get(input[1]);
             d_g.add_assign(&gamma);
             let mut num = b_g;
             num.add_assign(&d_g);
@@ -487,12 +429,11 @@ fn eval_two_output_relation<
             [num, den]
         }
         Rel::LookupFromMaterializedBaseInputWithSetup { input, setup, .. } => {
-            let mut b_g = get(*input);
+            let mut b_g = *get(*input);
             b_g.add_assign(&gamma);
-            let mut d_g = get(setup[1]);
+            let mut d_g = *get(setup[1]);
             d_g.add_assign(&gamma);
-            let c = get(setup[0]);
-            let mut cb_g = c;
+            let mut cb_g = *get(setup[0]);
             cb_g.mul_assign(&b_g);
             let mut num = d_g;
             num.sub_assign(&cb_g);
@@ -505,12 +446,12 @@ fn eval_two_output_relation<
         } => {
             let a = get(input[0]);
             let b = get(input[1]);
-            let mut d_g = get(*remainder);
+            let mut d_g = *get(*remainder);
             d_g.add_assign(&gamma);
-            let mut num = a;
+            let mut num = *a;
             num.mul_assign(&d_g);
-            num.add_assign(&b);
-            let mut den = b;
+            num.add_assign(b);
+            let mut den = *b;
             den.mul_assign(&d_g);
             [num, den]
         }
@@ -519,27 +460,28 @@ fn eval_two_output_relation<
             let b = get(input[1]);
             let c = get(setup[0]);
             let d = get(setup[1]);
-            let mut ad = a;
-            ad.mul_assign(&d);
-            let mut cb = c;
-            cb.mul_assign(&b);
+            let mut ad = *a;
+            ad.mul_assign(d);
+            let mut cb = *c;
+            cb.mul_assign(b);
             ad.sub_assign(&cb);
-            let mut den = b;
-            den.mul_assign(&d);
+            let mut den = *b;
+            den.mul_assign(d);
             [ad, den]
         }
         _ => unreachable!("eval_two_output_relation called with non-two-output relation"),
     }
 }
 
+#[inline(always)]
 fn compute_dim_reducing_final_step_accumulator<
     F: PrimeField,
     E: FieldExtension<F> + Field,
     const ADDRS: usize,
 >(
     output_groups: &[GKROutputGroup],
-    input_addrs: &[GKRAddress],
-    final_step_evaluations: &SmallVecMap<GKRAddress, E, ADDRS, 4>,
+    input_sorted_indices: &[usize],
+    final_step_evaluations: &LazyVec<[E; 4], ADDRS>,
     batching_challenge: E,
 ) -> [E; 2]
 where
@@ -555,69 +497,68 @@ where
         c
     };
 
-    let mut addr_idx = 0;
+    let mut iter_idx = 0;
     for group in output_groups.iter() {
         match group.output_type {
             OutputType::PermutationProduct => {
                 for _ in 0..group.num_addresses {
-                    debug_assert!(addr_idx < input_addrs.len());
-                    let addr = unsafe { *input_addrs.get_unchecked(addr_idx) };
-                    addr_idx += 1;
+                    debug_assert!(iter_idx < input_sorted_indices.len());
+                    let sorted_idx = unsafe { *input_sorted_indices.get_unchecked(iter_idx) };
+                    iter_idx += 1;
                     let bc = get_challenge();
-                    if let Some(evals) = final_step_evaluations.get(&addr) {
-                        unsafe {
-                            let mut v01 = *evals.get_unchecked(0);
-                            v01.mul_assign(evals.get_unchecked(1));
-                            let mut c0 = bc;
-                            c0.mul_assign(&v01);
-                            acc[0].add_assign(&c0);
-                            let mut v23 = *evals.get_unchecked(2);
-                            v23.mul_assign(evals.get_unchecked(3));
-                            let mut c1 = bc;
-                            c1.mul_assign(&v23);
-                            acc[1].add_assign(&c1);
-                        }
+                    let evals = final_step_evaluations.get(sorted_idx);
+                    unsafe {
+                        let mut v01 = *evals.get_unchecked(0);
+                        v01.mul_assign(evals.get_unchecked(1));
+                        let mut c0 = bc;
+                        c0.mul_assign(&v01);
+                        acc[0].add_assign(&c0);
+                        let mut v23 = *evals.get_unchecked(2);
+                        v23.mul_assign(evals.get_unchecked(3));
+                        let mut c1 = bc;
+                        c1.mul_assign(&v23);
+                        acc[1].add_assign(&c1);
                     }
                 }
             }
             OutputType::Lookup16Bits | OutputType::LookupTimestamps | OutputType::GenericLookup => {
                 let bc0 = get_challenge();
                 let bc1 = get_challenge();
-                debug_assert!(addr_idx + 1 < input_addrs.len());
-                let v0 = final_step_evaluations.get(unsafe { input_addrs.get_unchecked(addr_idx) });
-                let v1 = final_step_evaluations.get(unsafe { input_addrs.get_unchecked(addr_idx + 1) });
-                addr_idx += 2;
-                if let (Some(v0), Some(v1)) = (v0, v1) {
-                    unsafe {
-                        // j=0
-                        let mut num0 = *v0.get_unchecked(0);
-                        num0.mul_assign(v1.get_unchecked(1));
-                        let mut cb0 = *v0.get_unchecked(1);
-                        cb0.mul_assign(v1.get_unchecked(0));
-                        num0.add_assign(&cb0);
-                        let mut den0 = *v1.get_unchecked(0);
-                        den0.mul_assign(v1.get_unchecked(1));
-                        let mut c00 = bc0;
-                        c00.mul_assign(&num0);
-                        let mut c01 = bc1;
-                        c01.mul_assign(&den0);
-                        acc[0].add_assign(&c00);
-                        acc[0].add_assign(&c01);
-                        // j=1
-                        let mut num1 = *v0.get_unchecked(2);
-                        num1.mul_assign(v1.get_unchecked(3));
-                        let mut cb1 = *v0.get_unchecked(3);
-                        cb1.mul_assign(v1.get_unchecked(2));
-                        num1.add_assign(&cb1);
-                        let mut den1 = *v1.get_unchecked(2);
-                        den1.mul_assign(v1.get_unchecked(3));
-                        let mut c10 = bc0;
-                        c10.mul_assign(&num1);
-                        let mut c11 = bc1;
-                        c11.mul_assign(&den1);
-                        acc[1].add_assign(&c10);
-                        acc[1].add_assign(&c11);
-                    }
+                debug_assert!(iter_idx + 1 < input_sorted_indices.len());
+                let si0 = unsafe { *input_sorted_indices.get_unchecked(iter_idx) };
+                let si1 = unsafe { *input_sorted_indices.get_unchecked(iter_idx + 1) };
+                iter_idx += 2;
+                let v0 = final_step_evaluations.get(si0);
+                let v1 = final_step_evaluations.get(si1);
+                unsafe {
+                    // j=0
+                    let mut num0 = *v0.get_unchecked(0);
+                    num0.mul_assign(v1.get_unchecked(1));
+                    let mut cb0 = *v0.get_unchecked(1);
+                    cb0.mul_assign(v1.get_unchecked(0));
+                    num0.add_assign(&cb0);
+                    let mut den0 = *v1.get_unchecked(0);
+                    den0.mul_assign(v1.get_unchecked(1));
+                    let mut c00 = bc0;
+                    c00.mul_assign(&num0);
+                    let mut c01 = bc1;
+                    c01.mul_assign(&den0);
+                    acc[0].add_assign(&c00);
+                    acc[0].add_assign(&c01);
+                    // j=1
+                    let mut num1 = *v0.get_unchecked(2);
+                    num1.mul_assign(v1.get_unchecked(3));
+                    let mut cb1 = *v0.get_unchecked(3);
+                    cb1.mul_assign(v1.get_unchecked(2));
+                    num1.add_assign(&cb1);
+                    let mut den1 = *v1.get_unchecked(2);
+                    den1.mul_assign(v1.get_unchecked(3));
+                    let mut c10 = bc0;
+                    c10.mul_assign(&num1);
+                    let mut c11 = bc1;
+                    c11.mul_assign(&den1);
+                    acc[1].add_assign(&c10);
+                    acc[1].add_assign(&c11);
                 }
             }
         }
@@ -626,6 +567,7 @@ where
     acc
 }
 
+#[inline(always)]
 fn make_eq_poly_last<E: Field>(challenges: &[E], buf: &mut [E]) {
     assert!(!challenges.is_empty());
     let n = challenges.len();
@@ -642,7 +584,7 @@ fn make_eq_poly_last<E: Field>(challenges: &[E], buf: &mut [E]) {
         let mut f0 = E::ONE;
         f0.sub_assign(&c);
         let half = size;
-        
+
         for i in (0..half).rev() {
             debug_assert!(i < buf.len());
             debug_assert!(i + half < buf.len());
@@ -660,9 +602,10 @@ fn make_eq_poly_last<E: Field>(challenges: &[E], buf: &mut [E]) {
     }
 }
 
+#[inline(always)]
 fn compute_standard_layer_claim<F: PrimeField, E: FieldExtension<F> + Field, const ADDRS: usize>(
     layer: &StaticGKRLayerDescription,
-    output_claims: &SmallMap<GKRAddress, E, ADDRS>,
+    output_claims: &LazyVec<E, ADDRS>,
     batching_challenge: E,
 ) -> E {
     let gates = layer
@@ -686,9 +629,10 @@ fn compute_standard_layer_claim<F: PrimeField, E: FieldExtension<F> + Field, con
     combined
 }
 
+#[inline(always)]
 fn add_relation_claim<F: PrimeField, E: FieldExtension<F> + Field, const ADDRS: usize>(
     relation: &StaticNoFieldGKRRelation,
-    output_claims: &SmallMap<GKRAddress, E, ADDRS>,
+    output_claims: &LazyVec<E, ADDRS>,
     get_challenge: &mut impl FnMut() -> E,
     combined: &mut E,
 ) {
@@ -705,11 +649,10 @@ fn add_relation_claim<F: PrimeField, E: FieldExtension<F> + Field, const ADDRS: 
         | Rel::MaterializeSingleLookupInput { output, .. }
         | Rel::MaterializedVectorLookupInput { output, .. } => {
             let bc = get_challenge();
-            if let Some(claim) = output_claims.get(output) {
-                let mut t = bc;
-                t.mul_assign(claim);
-                combined.add_assign(&t);
-            }
+            let claim = output_claims.get(*output);
+            let mut t = bc;
+            t.mul_assign(claim);
+            combined.add_assign(&t);
         }
         Rel::LookupPair { output, .. }
         | Rel::LookupPairFromBaseInputs { output, .. }
@@ -722,25 +665,24 @@ fn add_relation_claim<F: PrimeField, E: FieldExtension<F> + Field, const ADDRS: 
         | Rel::LookupWithCachedDensAndSetup { output, .. } => {
             let bc0 = get_challenge();
             let bc1 = get_challenge();
-            for (bc, addr) in [(bc0, &output[0]), (bc1, &output[1])] {
-                if let Some(claim) = output_claims.get(addr) {
-                    let mut t = bc;
-                    t.mul_assign(claim);
-                    combined.add_assign(&t);
-                }
+            for (bc, idx) in [(bc0, output[0]), (bc1, output[1])] {
+                let claim = output_claims.get(idx);
+                let mut t = bc;
+                t.mul_assign(claim);
+                combined.add_assign(&t);
             }
         }
     }
 }
 
+#[inline(always)]
 fn compute_dim_reducing_layer_claim<
     F: PrimeField,
     E: FieldExtension<F> + Field,
     const ADDRS: usize,
 >(
     output_groups: &[GKROutputGroup],
-    output_addrs: &[GKRAddress],
-    output_claims: &SmallMap<GKRAddress, E, ADDRS>,
+    output_claims: &LazyVec<E, ADDRS>,
     batching_challenge: E,
 ) -> E {
     let mut combined = E::ZERO;
@@ -753,35 +695,32 @@ fn compute_dim_reducing_layer_claim<
         c
     };
 
-    let mut addr_idx = 0;
+    // For dim-reducing layers, output addresses are sequential InnerLayer addresses.
+    // They are already in sorted order matching output_groups iteration,
+    // so output index = iteration index.
+    let mut out_idx = 0;
     for group in output_groups.iter() {
         match group.output_type {
             OutputType::PermutationProduct => {
                 for _ in 0..group.num_addresses {
                     let bc = get_challenge();
-                    debug_assert!(addr_idx < output_addrs.len());
-                    let addr = unsafe { *output_addrs.get_unchecked(addr_idx) };
-                    addr_idx += 1;
-                    if let Some(claim) = output_claims.get(&addr) {
-                        let mut t = bc;
-                        t.mul_assign(claim);
-                        combined.add_assign(&t);
-                    }
+                    let claim = output_claims.get(out_idx);
+                    out_idx += 1;
+                    let mut t = bc;
+                    t.mul_assign(claim);
+                    combined.add_assign(&t);
                 }
             }
             OutputType::Lookup16Bits | OutputType::LookupTimestamps | OutputType::GenericLookup => {
                 let bc0 = get_challenge();
                 let bc1 = get_challenge();
-                debug_assert!(addr_idx + 1 < output_addrs.len());
-                for (bc, i) in [(bc0, 0), (bc1, 1)] {
-                    let addr = unsafe { *output_addrs.get_unchecked(addr_idx + i) };
-                    if let Some(claim) = output_claims.get(&addr) {
-                        let mut t = bc;
-                        t.mul_assign(claim);
-                        combined.add_assign(&t);
-                    }
+                for bc in [bc0, bc1] {
+                    let claim = output_claims.get(out_idx);
+                    out_idx += 1;
+                    let mut t = bc;
+                    t.mul_assign(claim);
+                    combined.add_assign(&t);
                 }
-                addr_idx += 2;
             }
         }
     }
@@ -789,7 +728,10 @@ fn compute_dim_reducing_layer_claim<
 }
 
 pub struct GKRVerifierOutput<'a, E: Field, const ROUNDS: usize, const ADDRS: usize> {
-    pub base_layer_claims: SmallMap<GKRAddress, E, ADDRS>,
+    pub base_layer_claims: LazyVec<E, ADDRS>,
+    /// The sorted_dedup_input_addrs of the base (layer 0) config entry.
+    /// Use this to map indices back to GKRAddress values.
+    pub base_layer_addrs: &'a [GKRAddress],
     pub evaluation_point: [E; ROUNDS],
     pub evaluation_point_len: usize,
     pub grand_product_accumulator: E,
@@ -800,6 +742,7 @@ pub struct GKRVerifierOutput<'a, E: Field, const ROUNDS: usize, const ADDRS: usi
 
 /// Run the regular sumcheck rounds (all rounds except the final step).
 /// Returns (final_claim, final_eq_prefactor, folding_challenges, fc_len).
+#[inline(always)]
 fn verify_sumcheck_rounds<
     F: PrimeField,
     E: FieldExtension<F> + Field,
@@ -817,12 +760,31 @@ where
     let num_regular_rounds = prev_point.len();
     let mut claim = initial_claim;
     let mut eq_prefactor = E::ONE;
-    let mut folding_challenges = [E::ZERO; ROUNDS];
-    let mut fc_len = 0;
+    let mut folding_challenges: LazyVec<E, ROUNDS> = LazyVec::new();
+
+    // Sumcheck coefficients: 4 ext field elements = 4 * E::DEGREE u32 words.
+    // With seed (8 words), total = 8 + 4*DEGREE words.
+    // For BabyBearExt4 (DEGREE=4): 24 words = 2 blocks of 16.
+    let coeff_data_words = 4 * E::DEGREE;
+    let total_commit_words = BLAKE2S_DIGEST_SIZE_U32_WORDS + coeff_data_words;
+
+    // Aligned buffer: zero-initialized (padding stays zero), reused across rounds.
+    let mut commit_buf: AlignedArray64<u32, 32> = AlignedArray64::from_value(0u32);
+    let mut hasher = DelegatedBlake2sState::new();
 
     for round in 0..num_regular_rounds {
-        let mut coeffs = [E::ZERO; 4];
-        read_field_els::<F, E, I>(&mut coeffs);
+        // Copy seed into aligned buffer
+        commit_buf[0..BLAKE2S_DIGEST_SIZE_U32_WORDS].copy_from_slice(&seed.0);
+
+        // Read NDS words directly into the data region of the aligned buffer.
+        // The words are Montgomery-form field elements, so the buffer can be
+        // reinterpreted as &[E; 4] without conversion.
+        for i in 0..coeff_data_words {
+            commit_buf[BLAKE2S_DIGEST_SIZE_U32_WORDS + i] = I::read_word();
+        }
+
+        let coeffs =
+            unsafe { &*(commit_buf.as_ptr().add(BLAKE2S_DIGEST_SIZE_U32_WORDS) as *const [E; 4]) };
 
         let p0 = coeffs[0];
         let mut p1 = coeffs[0];
@@ -841,22 +803,55 @@ where
             });
         }
 
-        commit_field_els::<F, E>(seed, &coeffs);
+        Blake2sTranscript::commit_with_seed_using_hasher_and_aligned_buffer(
+            &mut hasher,
+            seed,
+            &commit_buf,
+            total_commit_words,
+        );
         let r_k = draw_one_field_el::<F, E>(seed);
 
-        claim = eval_cubic_poly(&coeffs, r_k);
-        debug_assert!(round < prev_point.len());
-        eq_prefactor = eval_eq(r_k, unsafe { *prev_point.get_unchecked(round) });
+        // Fused eval_cubic_poly + eval_eq to share r_k in registers
+        {
+            let mut result = coeffs[3];
+            result.mul_assign(&r_k);
+            result.add_assign(&coeffs[2]);
+            result.mul_assign(&r_k);
+            result.add_assign(&coeffs[1]);
+            result.mul_assign(&r_k);
+            result.add_assign(&coeffs[0]);
+            claim = result;
+        }
+        {
+            debug_assert!(round < prev_point.len());
+            let p = unsafe { *prev_point.get_unchecked(round) };
+            let mut one_minus_r = E::ONE;
+            one_minus_r.sub_assign(&r_k);
+            let mut one_minus_p = E::ONE;
+            one_minus_p.sub_assign(&p);
+            let mut t = one_minus_r;
+            t.mul_assign(&one_minus_p);
+            let mut rp = r_k;
+            rp.mul_assign(&p);
+            t.add_assign(&rp);
+            eq_prefactor = t;
+        }
 
-        debug_assert!(fc_len < folding_challenges.len());
-        unsafe { *folding_challenges.get_unchecked_mut(fc_len) = r_k };
-        fc_len += 1;
+        folding_challenges.push(r_k);
     }
+
+    let fc_len = folding_challenges.len();
+
+    for _ in num_regular_rounds..ROUNDS {
+        folding_challenges.push(E::ZERO);
+    }
+    let folding_challenges = unsafe { folding_challenges.as_array() };
 
     Ok((claim, eq_prefactor, folding_challenges, fc_len))
 }
 
 /// Verify the final step consistency: ((1 - last_prev) * f[0] + last_prev * f[1]) * eq_prefactor == claim.
+#[inline(always)]
 fn verify_final_step_check<F: PrimeField, E: FieldExtension<F> + Field>(
     f: [E; 2],
     last_prev_point: E,
@@ -885,7 +880,6 @@ pub fn verify_gkr_sumcheck<
     I: NonDeterminismSource,
     const ROUNDS: usize,
     const ADDRS: usize,
-    const RAW_ADDRS: usize,
     const EVALS: usize,
     const TRANSCRIPT_U32: usize,
     const MAX_POW: usize,
@@ -896,13 +890,13 @@ where
     [(); E::DEGREE]: Sized,
     [(); ROUNDS + 1]: Sized,
 {
-    let mut transcript_buf = [0u32; TRANSCRIPT_U32];
+    let mut transcript_buf = LazyVec::<u32, TRANSCRIPT_U32>::new();
     let transcript_len = config.initial_transcript_num_u32_words;
     assert!(transcript_len <= TRANSCRIPT_U32);
-    for word in transcript_buf[..transcript_len].iter_mut() {
-        *word = I::read_word();
+    for _ in 0..transcript_len {
+        transcript_buf.push(I::read_word());
     }
-    let mut seed = Blake2sTranscript::commit_initial(&transcript_buf[..transcript_len]);
+    let mut seed = Blake2sTranscript::commit_initial(transcript_buf.as_slice());
 
     // init_challenges[0] is lookup_alpha for lookups preprocessing - not needed by the verifier
     let mut init_challenges = [E::ZERO; 3];
@@ -924,10 +918,17 @@ where
     let evals_per_poly = 1usize << config.final_trace_size_log_2;
     let total_evals = total_output_polys * evals_per_poly;
 
-    let mut evals_flat = [E::ZERO; EVALS];
     assert!(total_evals <= EVALS);
-    read_field_els::<F, E, I>(&mut evals_flat[..total_evals]);
-    commit_field_els::<F, E>(&mut seed, &evals_flat[..total_evals]);
+
+    let mut evals_flat = [MaybeUninit::<E>::uninit(); EVALS];
+
+    read_field_els::<F, E, I>(unsafe {
+        core::slice::from_raw_parts_mut(evals_flat.as_mut_ptr().cast(), total_evals)
+    });
+
+    let evals_slice =
+        unsafe { core::slice::from_raw_parts(evals_flat.as_ptr().cast(), total_evals) };
+    commit_field_els::<F, E>(&mut seed, evals_slice);
 
     let num_challenges = config.final_trace_size_log_2 + 1;
     let mut all_challenges = [E::ZERO; ROUNDS + 1];
@@ -946,41 +947,31 @@ where
     };
     let top_layer_idx = initial_layer_for_sumcheck + 1;
 
-    let mut current_claims: SmallMap<GKRAddress, E, ADDRS> =
-        SmallMap::new(GKRAddress::placeholder(), E::ZERO);
+    // Build initial claims. For the topmost dim-reducing layer, output addresses are
+    // InnerLayer{layer: top_layer_idx, offset: ...} — sequential, so output index = iteration index.
+    let mut current_claims: LazyVec<E, ADDRS> = LazyVec::new();
     let mut eval_offset = 0usize;
-    let mut addr_offset = 0usize;
     for group in top_layer_meta.output_groups.iter() {
         match group.output_type {
             OutputType::PermutationProduct => {
-                for i in 0..group.num_addresses {
-                    let addr = GKRAddress::InnerLayer {
-                        layer: top_layer_idx,
-                        offset: addr_offset + i,
-                    };
+                for _ in 0..group.num_addresses {
                     let claim = dot_eq(
-                        &evals_flat[eval_offset..eval_offset + evals_per_poly],
+                        &evals_slice[eval_offset..eval_offset + evals_per_poly],
                         &eq_buf[..evals_per_poly],
                     );
-                    current_claims.insert(addr, claim);
+                    current_claims.push(claim);
                     eval_offset += evals_per_poly;
                 }
-                addr_offset += group.num_addresses;
             }
             OutputType::Lookup16Bits | OutputType::LookupTimestamps | OutputType::GenericLookup => {
-                for i in 0..2 {
-                    let addr = GKRAddress::InnerLayer {
-                        layer: top_layer_idx,
-                        offset: addr_offset + i,
-                    };
+                for _ in 0..2 {
                     let claim = dot_eq(
-                        &evals_flat[eval_offset..eval_offset + evals_per_poly],
+                        &evals_slice[eval_offset..eval_offset + evals_per_poly],
                         &eq_buf[..evals_per_poly],
                     );
-                    current_claims.insert(addr, claim);
+                    current_claims.push(claim);
                     eval_offset += evals_per_poly;
                 }
-                addr_offset += 2;
             }
         }
     }
@@ -995,84 +986,9 @@ where
         assert!(layer_meta.is_dim_reducing != 0);
 
         let circuit_layer_idx = config_idx;
-        let output_layer_idx = circuit_layer_idx + 1;
-
-        let mut output_addrs = [GKRAddress::placeholder(); ADDRS];
-        let mut output_addr_count = 0;
-        {
-            let mut off = 0;
-            for group in layer_meta.output_groups.iter() {
-                match group.output_type {
-                    OutputType::PermutationProduct => {
-                        for i in 0..group.num_addresses {
-                            debug_assert!(output_addr_count < output_addrs.len());
-                            unsafe {
-                                *output_addrs.get_unchecked_mut(output_addr_count) =
-                                    GKRAddress::InnerLayer { layer: output_layer_idx, offset: off + i };
-                            }
-                            output_addr_count += 1;
-                        }
-                        off += group.num_addresses;
-                    }
-                    OutputType::Lookup16Bits
-                    | OutputType::LookupTimestamps
-                    | OutputType::GenericLookup => {
-                        debug_assert!(output_addr_count + 1 < output_addrs.len());
-                        unsafe {
-                            *output_addrs.get_unchecked_mut(output_addr_count) =
-                                GKRAddress::InnerLayer { layer: output_layer_idx, offset: off };
-                            *output_addrs.get_unchecked_mut(output_addr_count + 1) =
-                                GKRAddress::InnerLayer { layer: output_layer_idx, offset: off + 1 };
-                        }
-                        output_addr_count += 2;
-                        off += 2;
-                    }
-                }
-            }
-        }
-
-        let mut input_addrs = [GKRAddress::placeholder(); ADDRS];
-        let mut input_addr_count = 0;
-        if config_idx == num_standard {
-            let n = config.global_input_addrs.len();
-            input_addrs[..n].copy_from_slice(config.global_input_addrs);
-            input_addr_count = n;
-        } else {
-            let below_meta = &config.layers[config_idx - 1];
-            let mut off = 0;
-            for group in below_meta.output_groups.iter() {
-                match group.output_type {
-                    OutputType::PermutationProduct => {
-                        for i in 0..group.num_addresses {
-                            debug_assert!(input_addr_count < input_addrs.len());
-                            unsafe {
-                                *input_addrs.get_unchecked_mut(input_addr_count) =
-                                    GKRAddress::InnerLayer { layer: circuit_layer_idx, offset: off + i };
-                            }
-                            input_addr_count += 1;
-                        }
-                        off += group.num_addresses;
-                    }
-                    OutputType::Lookup16Bits
-                    | OutputType::LookupTimestamps
-                    | OutputType::GenericLookup => {
-                        debug_assert!(input_addr_count + 1 < input_addrs.len());
-                        unsafe {
-                            *input_addrs.get_unchecked_mut(input_addr_count) =
-                                GKRAddress::InnerLayer { layer: circuit_layer_idx, offset: off };
-                            *input_addrs.get_unchecked_mut(input_addr_count + 1) =
-                                GKRAddress::InnerLayer { layer: circuit_layer_idx, offset: off + 1 };
-                        }
-                        input_addr_count += 2;
-                        off += 2;
-                    }
-                }
-            }
-        }
 
         let initial_claim = compute_dim_reducing_layer_claim::<F, E, ADDRS>(
             layer_meta.output_groups,
-            &output_addrs[..output_addr_count],
             &prev_claims,
             batching_challenge,
         );
@@ -1086,24 +1002,21 @@ where
                 circuit_layer_idx,
             )?;
 
-        let mut final_step_evals: SmallVecMap<GKRAddress, E, ADDRS, 4> =
-            SmallVecMap::new(GKRAddress::placeholder(), E::ZERO);
+        let mut final_step_evals: LazyVec<[E; 4], ADDRS> = LazyVec::new();
 
-        let mut sorted_input_addrs = [GKRAddress::placeholder(); ADDRS];
-        sorted_input_addrs[..input_addr_count].copy_from_slice(&input_addrs[..input_addr_count]);
-        sorted_input_addrs[..input_addr_count].sort();
+        let num_input_addrs = layer_meta.sorted_dedup_input_addrs.len();
 
-        for &addr in sorted_input_addrs[..input_addr_count].iter() {
+        for _ in 0..num_input_addrs {
             let mut vals = [E::ZERO; 4];
             read_field_els::<F, E, I>(&mut vals);
-            final_step_evals.insert_vec(addr, &vals);
+            final_step_evals.push(vals);
         }
 
         // final step consistency check
         {
             let f = compute_dim_reducing_final_step_accumulator::<F, E, ADDRS>(
                 layer_meta.output_groups,
-                &input_addrs[..input_addr_count],
+                layer_meta.input_sorted_indices,
                 &final_step_evals,
                 batching_challenge,
             );
@@ -1119,10 +1032,11 @@ where
         }
 
         {
-            // all dim-reducing rows have exactly 4 evals, so vals[..len] is contiguous.
-            // keys were inserted in sorted order, matching the commit order.
-            let flat = unsafe { final_step_evals.vals_as_flat_slice() };
-            commit_field_els::<F, E>(&mut seed, flat);
+            // all dim-reducing rows have exactly 4 evals, stored contiguously
+            let flat = final_step_evals.as_slice();
+            let flat_e =
+                unsafe { core::slice::from_raw_parts(flat.as_ptr() as *const E, flat.len() * 4) };
+            commit_field_els::<F, E>(&mut seed, flat_e);
         }
 
         let mut draw_buf = [E::ZERO; 3];
@@ -1143,11 +1057,10 @@ where
         make_eq_poly_last(&[r_before_last, r_last], &mut eq4);
 
         prev_claims.clear();
-        for &addr in sorted_input_addrs[..input_addr_count].iter() {
-            if let Some(evals) = final_step_evals.get(&addr) {
-                let claim = dot_eq(evals, &eq4);
-                prev_claims.insert(addr, claim);
-            }
+        for i in 0..num_input_addrs {
+            let evals = final_step_evals.get(i);
+            let claim = dot_eq(evals, &eq4);
+            prev_claims.push(claim);
         }
 
         batching_challenge = next_batching;
@@ -1177,40 +1090,24 @@ where
                 config_idx,
             )?;
 
-        let mut final_step_addrs = [GKRAddress::placeholder(); RAW_ADDRS];
-        let mut fsa_len = 0;
-        collect_standard_layer_input_addrs(layer_desc, &mut final_step_addrs, &mut fsa_len);
-        final_step_addrs[..fsa_len].sort();
+        let num_dedup_addrs = layer_meta.sorted_dedup_input_addrs.len();
 
-        let mut dedup_addrs = [GKRAddress::placeholder(); ADDRS];
-        let mut dedup_len = 0;
-        for &addr in final_step_addrs[..fsa_len].iter() {
-            debug_assert!(dedup_len < dedup_addrs.len());
-            unsafe {
-                if dedup_len == 0 || *dedup_addrs.get_unchecked(dedup_len - 1) != addr {
-                    *dedup_addrs.get_unchecked_mut(dedup_len) = addr;
-                    dedup_len += 1;
-                }
-            }
-        }
-
-        let mut final_step_evals: SmallVecMap<GKRAddress, E, ADDRS, 2> =
-            SmallVecMap::new(GKRAddress::placeholder(), E::ZERO);
-        for &addr in dedup_addrs[..dedup_len].iter() {
+        let mut final_step_evals: LazyVec<[E; 2], ADDRS> = LazyVec::new();
+        for _ in 0..num_dedup_addrs {
             let mut vals = [E::ZERO; 2];
             read_field_els::<F, E, I>(&mut vals);
-            final_step_evals.insert_vec(addr, &vals);
+            final_step_evals.push(vals);
         }
 
         {
-            let f = compute_standard_final_step_accumulator::<F, E, ADDRS, 2, MAX_POW>(
+            let f = compute_standard_final_step_accumulator::<F, E, ADDRS, MAX_POW>(
                 layer_desc,
                 &final_step_evals,
                 batching_challenge,
                 lookup_additive_challenge,
                 constraints_batch_challenge,
             );
-            
+
             debug_assert!(1 <= prev_point_len);
             debug_assert!(prev_point_len <= prev_point.len());
             verify_final_step_check::<F, E>(
@@ -1223,10 +1120,11 @@ where
         }
 
         {
-            // Standard layers: 2 evals per addr, all rows fully used.
-            // Keys inserted in sorted order, matching commit order.
-            let flat = unsafe { final_step_evals.vals_as_flat_slice() };
-            commit_field_els::<F, E>(&mut seed, flat);
+            // Standard layers: 2 evals per addr, stored contiguously
+            let flat = final_step_evals.as_slice();
+            let flat_e =
+                unsafe { core::slice::from_raw_parts(flat.as_ptr() as *const E, flat.len() * 2) };
+            commit_field_els::<F, E>(&mut seed, flat_e);
         }
 
         let mut draw_buf = [E::ZERO; 2];
@@ -1239,17 +1137,16 @@ where
         fc_len += 1;
 
         prev_claims.clear();
-        for &addr in dedup_addrs[..dedup_len].iter() {
-            if let Some(evals) = final_step_evals.get(&addr) {
-                unsafe {
-                    let f0 = *evals.get_unchecked(0);
-                    let f1 = *evals.get_unchecked(1);
-                    let mut diff = f1;
-                    diff.sub_assign(&f0);
-                    diff.mul_assign(&last_r);
-                    diff.add_assign(&f0);
-                    prev_claims.insert(addr, diff);
-                }
+        for i in 0..num_dedup_addrs {
+            let evals = final_step_evals.get(i);
+            unsafe {
+                let f0 = *evals.get_unchecked(0);
+                let f1 = *evals.get_unchecked(1);
+                let mut diff = f1;
+                diff.sub_assign(&f0);
+                diff.mul_assign(&last_r);
+                diff.add_assign(&f0);
+                prev_claims.push(diff);
             }
         }
 
@@ -1270,8 +1167,15 @@ where
         .map(|desc| desc.additional_base_layer_openings)
         .unwrap_or(&[]);
 
+    let base_layer_addrs = config
+        .layers
+        .first()
+        .map(|l| l.sorted_dedup_input_addrs)
+        .unwrap_or(&[]);
+
     Ok(GKRVerifierOutput {
         base_layer_claims: prev_claims,
+        base_layer_addrs,
         evaluation_point: prev_point,
         evaluation_point_len: prev_point_len,
         grand_product_accumulator,
@@ -1279,100 +1183,4 @@ where
         whir_batching_challenge,
         whir_transcript_seed: seed,
     })
-}
-
-fn collect_standard_layer_input_addrs(
-    layer: &StaticGKRLayerDescription,
-    dst: &mut [GKRAddress],
-    len: &mut usize,
-) {
-    use StaticNoFieldGKRRelation as Rel;
-
-    let relations = layer
-        .gates
-        .iter()
-        .chain(layer.gates_with_external_connections.iter())
-        .map(|g| &g.enforced_relation);
-
-    for relation in relations {
-        match relation {
-            Rel::EnforceConstraintsMaxQuadratic { input } => {
-                for (addr, _) in input.linear_terms.iter() {
-                    unsafe { *dst.get_unchecked_mut(*len) = *addr };
-                    *len += 1;
-                }
-                for ((addr_a, addr_b), _) in input.quadratic_terms.iter() {
-                    unsafe { *dst.get_unchecked_mut(*len) = *addr_a };
-                    *len += 1;
-                    unsafe { *dst.get_unchecked_mut(*len) = *addr_b };
-                    *len += 1;
-                }
-            }
-            Rel::Copy { input, .. } => {
-                unsafe { *dst.get_unchecked_mut(*len) = *input };
-                *len += 1;
-            }
-            Rel::InitialGrandProductFromCaches { input, .. }
-            | Rel::TrivialProduct { input, .. } => {
-                unsafe { *dst.get_unchecked_mut(*len) = input[0] };
-                *len += 1;
-                unsafe { *dst.get_unchecked_mut(*len) = input[1] };
-                *len += 1;
-            }
-            Rel::MaskIntoIdentityProduct { input, mask, .. } => {
-                unsafe { *dst.get_unchecked_mut(*len) = *input };
-                *len += 1;
-                unsafe { *dst.get_unchecked_mut(*len) = *mask };
-                *len += 1;
-            }
-            Rel::LookupPair { input, .. } => {
-                unsafe { *dst.get_unchecked_mut(*len) = input[0][0] };
-                *len += 1;
-                unsafe { *dst.get_unchecked_mut(*len) = input[0][1] };
-                *len += 1;
-                unsafe { *dst.get_unchecked_mut(*len) = input[1][0] };
-                *len += 1;
-                unsafe { *dst.get_unchecked_mut(*len) = input[1][1] };
-                *len += 1;
-            }
-            Rel::LookupPairFromMaterializedBaseInputs { input, .. } => {
-                unsafe { *dst.get_unchecked_mut(*len) = input[0] };
-                *len += 1;
-                unsafe { *dst.get_unchecked_mut(*len) = input[1] };
-                *len += 1;
-            }
-            Rel::LookupFromMaterializedBaseInputWithSetup { input, setup, .. } => {
-                unsafe { *dst.get_unchecked_mut(*len) = *input };
-                *len += 1;
-                unsafe { *dst.get_unchecked_mut(*len) = setup[0] };
-                *len += 1;
-                unsafe { *dst.get_unchecked_mut(*len) = setup[1] };
-                *len += 1;
-            }
-            Rel::LookupUnbalancedPairWithMaterializedBaseInputs {
-                input, remainder, ..
-            } => {
-                unsafe { *dst.get_unchecked_mut(*len) = input[0] };
-                *len += 1;
-                unsafe { *dst.get_unchecked_mut(*len) = input[1] };
-                *len += 1;
-                unsafe { *dst.get_unchecked_mut(*len) = *remainder };
-                *len += 1;
-            }
-            Rel::LookupWithCachedDensAndSetup { input, setup, .. } => {
-                unsafe { *dst.get_unchecked_mut(*len) = input[0] };
-                *len += 1;
-                unsafe { *dst.get_unchecked_mut(*len) = input[1] };
-                *len += 1;
-                unsafe { *dst.get_unchecked_mut(*len) = setup[0] };
-                *len += 1;
-                unsafe { *dst.get_unchecked_mut(*len) = setup[1] };
-                *len += 1;
-            }
-            _ => {
-                panic!("unimplemented relation variant in collect_input_addrs");
-            }
-        }
-    }
-    
 }

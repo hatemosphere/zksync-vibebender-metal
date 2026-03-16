@@ -458,7 +458,6 @@ fn test_gkr_sumcheck_verify_with_generated_config() {
                 ThreadLocalBasedSource,
                 GKR_ROUNDS,
                 GKR_ADDRS,
-                GKR_RAW_ADDRS,
                 GKR_EVALS,
                 GKR_TRANSCRIPT_U32,
                 GKR_MAX_POW,
@@ -494,4 +493,122 @@ fn test_gkr_sumcheck_verify_with_generated_config() {
             panic!("Failed to spawn verifier thread: {}", err);
         }
     }
+}
+
+#[test]
+#[cfg(feature = "gkr_verify")]
+#[ignore = "requires RISC-V binary from tools/gkr_verifier"]
+fn test_gkr_verifier_in_transpiler() {
+    use field::baby_bear::base::BabyBearField;
+    use field::baby_bear::ext4::BabyBearExt4;
+    use prover::gkr::prover::GKRProof;
+    use prover::merkle_trees::DefaultTreeConstructor;
+    use risc_v_simulator::abstractions::non_determinism::QuasiUARTSource;
+    use riscv_transpiler::ir::*;
+    use riscv_transpiler::vm::*;
+    use verifier_common::cs::gkr_compiler::GKRCircuitArtifact;
+    use verifier_common::gkr::flatten::flatten_gkr_proof_for_nds;
+
+    let proof: GKRProof<BabyBearField, BabyBearExt4, DefaultTreeConstructor> =
+        deserialize_from_file("../prover/add_sub_lui_auipc_mop_gkr_proof.json");
+    let compiled_circuit: GKRCircuitArtifact<BabyBearField> =
+        deserialize_from_file("../prover/add_sub_lui_auipc_mop_gkr_circuit.json");
+
+    let oracle_data = flatten_gkr_proof_for_nds::<
+        BabyBearField,
+        BabyBearExt4,
+        DefaultTreeConstructor,
+    >(&proof, &compiled_circuit);
+
+    println!("Oracle data length: {} u32 words", oracle_data.len());
+
+    let binary_bytes = std::fs::read("../tools/gkr_verifier/app.bin")
+        .expect("Missing app.bin — run `cd tools/gkr_verifier && ./dump_bin.sh` first");
+    assert!(binary_bytes.len() % 4 == 0);
+    let binary: Vec<u32> = binary_bytes
+        .chunks_exact(4)
+        .map(|c| u32::from_le_bytes([c[0], c[1], c[2], c[3]]))
+        .collect();
+
+    let text_bytes = std::fs::read("../tools/gkr_verifier/app.text")
+        .expect("Missing app.text — run `cd tools/gkr_verifier && ./dump_bin.sh` first");
+    assert!(text_bytes.len() % 4 == 0);
+    let text_section: Vec<u32> = text_bytes
+        .chunks_exact(4)
+        .map(|c| u32::from_le_bytes([c[0], c[1], c[2], c[3]]))
+        .collect();
+
+    let instructions: Vec<Instruction> =
+        preprocess_bytecode::<ReducedMachineDecoderConfig>(&text_section);
+    let tape = SimpleTape::new(&instructions);
+    let mut ram =
+        RamWithRomRegion::<{ common_constants::rom::ROM_SECOND_WORD_BITS }>::from_rom_content(
+            &binary,
+            1 << 30,
+        );
+
+    let cycles_bound = 1 << 24;
+    let mut state =
+        State::initial_with_counters(DelegationsAndFamiliesCounters::default());
+    let mut snapshotter = SimpleSnapshotter::<
+        DelegationsAndFamiliesCounters,
+        { common_constants::rom::ROM_SECOND_WORD_BITS },
+    >::new_with_cycle_limit(cycles_bound, state);
+    let mut non_determinism = QuasiUARTSource::new_with_reads(oracle_data);
+
+    let symbols_path = std::path::PathBuf::from("../tools/gkr_verifier/app.elf");
+    let output_path = std::env::current_dir().unwrap().join("gkr_flamegraph.svg");
+    let mut fg_config = riscv_transpiler::vm::FlamegraphConfig::new(
+        symbols_path,
+        output_path.clone(),
+    );
+    fg_config.frequency_recip = 1; // sample every cycle for accuracy
+    let mut profiler =
+        riscv_transpiler::vm::VmFlamegraphProfiler::new(fg_config).unwrap();
+
+    let is_program_finished =
+        VM::<DelegationsAndFamiliesCounters>::run_basic_unrolled_with_flamegraph::<_, _, _>(
+            &mut state,
+            &mut ram,
+            &mut snapshotter,
+            &tape,
+            cycles_bound,
+            &mut non_determinism,
+            &mut profiler,
+        )
+        .expect("flamegraph profiler IO error");
+
+    assert!(
+        is_program_finished,
+        "GKR verifier program did not finish (PC stuck or cycle bound reached)"
+    );
+
+    let exact_cycles =
+        (state.timestamp - common_constants::INITIAL_TIMESTAMP) / common_constants::TIMESTAMP_STEP;
+    println!("GKR verifier finished in {} cycles", exact_cycles);
+
+    println!("  PC = 0x{:08x}", state.pc);
+    for (i, reg) in state.registers[10..18].iter().enumerate() {
+        println!("  a{} = 0x{:08x} ({})", i, reg.value, reg.value);
+    }
+
+    let a0 = state.registers[10].value;
+    if a0 == 0xDEAD {
+        let error_code = state.registers[11].value;
+        let layer = state.registers[12].value;
+        let round = state.registers[13].value;
+        match error_code {
+            1 => panic!("GKR SumcheckRoundFailed at layer={}, round={}", layer, round),
+            2 => panic!("GKR FinalStepCheckFailed at layer={}", layer),
+            _ => panic!("GKR unknown error code={}", error_code),
+        }
+    }
+    assert_eq!(
+        a0, 1,
+        "GKR verifier failed: a0 = {} (expected 1 for success)",
+        a0
+    );
+
+    println!("GKR verifier completed successfully in transpiler");
+    println!("Flamegraph written to {}", output_path.display());
 }

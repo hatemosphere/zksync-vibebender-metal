@@ -9,9 +9,16 @@ use prover::cs::gkr_compiler::{
 use prover::cs::one_row_compiler::gkr::{
     NoFieldLinearRelation, NoFieldSingleColumnLookupRelation, NoFieldVectorLookupRelation,
 };
+use prover::field::baby_bear::base::BabyBearField;
 use prover::field::{Field, FieldExtension, PrimeField};
 use prover::gkr::prover::{GKRExternalChallenges, GKRProof};
 use prover::merkle_trees::ColumnMajorMerkleTreeConstructor;
+
+fn coeff_to_montgomery(coeff: u32) -> u32 {
+    BabyBearField::from_nonreduced_u32(coeff).raw_u32_value()
+}
+
+// --- TokenStream builders for GKR address and type enums ---
 
 fn transform_gkr_address(addr: &GKRAddress) -> TokenStream {
     match addr {
@@ -45,13 +52,22 @@ fn transform_output_type(ot: &OutputType) -> TokenStream {
     }
 }
 
-fn transform_linear_relation(rel: &NoFieldLinearRelation) -> TokenStream {
+fn addr_to_idx(addr: &GKRAddress, sorted_addrs: &[GKRAddress]) -> usize {
+    sorted_addrs
+        .binary_search(addr)
+        .unwrap_or_else(|_| panic!("address {:?} not found in sorted addrs", addr))
+}
+
+fn transform_linear_relation(
+    rel: &NoFieldLinearRelation,
+    input_sorted_addrs: &[GKRAddress],
+) -> TokenStream {
     let constant = rel.constant;
     let mut terms_stream = TokenStream::new();
     terms_stream.append_separated(
         rel.linear_terms.iter().map(|(coeff, addr)| {
-            let addr = transform_gkr_address(addr);
-            quote! { (#coeff, #addr) }
+            let idx = addr_to_idx(addr, input_sorted_addrs);
+            quote! { (#coeff, #idx) }
         }),
         quote! {,},
     );
@@ -63,8 +79,11 @@ fn transform_linear_relation(rel: &NoFieldLinearRelation) -> TokenStream {
     }
 }
 
-fn transform_single_column_lookup(rel: &NoFieldSingleColumnLookupRelation) -> TokenStream {
-    let input = transform_linear_relation(&rel.input);
+fn transform_single_column_lookup(
+    rel: &NoFieldSingleColumnLookupRelation,
+    input_sorted_addrs: &[GKRAddress],
+) -> TokenStream {
+    let input = transform_linear_relation(&rel.input, input_sorted_addrs);
     let lookup_set_index = rel.lookup_set_index;
     quote! {
         StaticNoFieldSingleColumnLookupRelation {
@@ -74,10 +93,15 @@ fn transform_single_column_lookup(rel: &NoFieldSingleColumnLookupRelation) -> To
     }
 }
 
-fn transform_vector_lookup(rel: &NoFieldVectorLookupRelation) -> TokenStream {
+fn transform_vector_lookup(
+    rel: &NoFieldVectorLookupRelation,
+    input_sorted_addrs: &[GKRAddress],
+) -> TokenStream {
     let mut columns_stream = TokenStream::new();
     columns_stream.append_separated(
-        rel.columns.iter().map(|c| transform_linear_relation(c)),
+        rel.columns
+            .iter()
+            .map(|c| transform_linear_relation(c, input_sorted_addrs)),
         quote! {,},
     );
     let lookup_set_index = rel.lookup_set_index;
@@ -91,20 +115,22 @@ fn transform_vector_lookup(rel: &NoFieldVectorLookupRelation) -> TokenStream {
 
 fn transform_max_quadratic_relation(
     rel: &NoFieldMaxQuadraticConstraintsGKRRelation,
+    input_sorted_addrs: &[GKRAddress],
 ) -> TokenStream {
     let mut qt_stream = TokenStream::new();
     qt_stream.append_separated(
         rel.quadratic_terms.iter().map(|((a, b), terms)| {
-            let a = transform_gkr_address(a);
-            let b = transform_gkr_address(b);
+            let a_idx = addr_to_idx(a, input_sorted_addrs);
+            let b_idx = addr_to_idx(b, input_sorted_addrs);
             let mut inner = TokenStream::new();
             inner.append_separated(
                 terms.iter().map(|(coeff, pow)| {
-                    quote! { (#coeff, #pow) }
+                    let mont = coeff_to_montgomery(*coeff);
+                    quote! { (#mont, #pow) }
                 }),
                 quote! {,},
             );
-            quote! { ((#a, #b), &[#inner] as &[(u32, usize)]) }
+            quote! { ((#a_idx, #b_idx), &[#inner] as &[(u32, usize)]) }
         }),
         quote! {,},
     );
@@ -112,15 +138,16 @@ fn transform_max_quadratic_relation(
     let mut lt_stream = TokenStream::new();
     lt_stream.append_separated(
         rel.linear_terms.iter().map(|(addr, terms)| {
-            let addr = transform_gkr_address(addr);
+            let idx = addr_to_idx(addr, input_sorted_addrs);
             let mut inner = TokenStream::new();
             inner.append_separated(
                 terms.iter().map(|(coeff, pow)| {
-                    quote! { (#coeff, #pow) }
+                    let mont = coeff_to_montgomery(*coeff);
+                    quote! { (#mont, #pow) }
                 }),
                 quote! {,},
             );
-            quote! { (#addr, &[#inner] as &[(u32, usize)]) }
+            quote! { (#idx, &[#inner] as &[(u32, usize)]) }
         }),
         quote! {,},
     );
@@ -128,7 +155,8 @@ fn transform_max_quadratic_relation(
     let mut ct_stream = TokenStream::new();
     ct_stream.append_separated(
         rel.constants.iter().map(|(coeff, pow)| {
-            quote! { (#coeff, #pow) }
+            let mont = coeff_to_montgomery(*coeff);
+            quote! { (#mont, #pow) }
         }),
         quote! {,},
     );
@@ -142,24 +170,31 @@ fn transform_max_quadratic_relation(
     }
 }
 
-fn transform_relation(rel: &NoFieldGKRRelation) -> TokenStream {
+fn transform_relation(
+    rel: &NoFieldGKRRelation,
+    input_sorted_addrs: &[GKRAddress],
+    output_sorted_addrs: &[GKRAddress],
+) -> TokenStream {
     use NoFieldGKRRelation as R;
+    let in_idx = |addr: &GKRAddress| addr_to_idx(addr, input_sorted_addrs);
+    let out_idx = |addr: &GKRAddress| addr_to_idx(addr, output_sorted_addrs);
+
     match rel {
         R::EnforceConstraintsMaxQuadratic { input } => {
-            let input = transform_max_quadratic_relation(input);
+            let input = transform_max_quadratic_relation(input, input_sorted_addrs);
             quote! {
                 StaticNoFieldGKRRelation::EnforceConstraintsMaxQuadratic { input: #input }
             }
         }
         R::Copy { input, output } => {
-            let i = transform_gkr_address(input);
-            let o = transform_gkr_address(output);
+            let i = in_idx(input);
+            let o = out_idx(output);
             quote! { StaticNoFieldGKRRelation::Copy { input: #i, output: #o } }
         }
         R::InitialGrandProductFromCaches { input, output } => {
-            let i0 = transform_gkr_address(&input[0]);
-            let i1 = transform_gkr_address(&input[1]);
-            let o = transform_gkr_address(output);
+            let i0 = in_idx(&input[0]);
+            let i1 = in_idx(&input[1]);
+            let o = out_idx(output);
             quote! { StaticNoFieldGKRRelation::InitialGrandProductFromCaches { input: [#i0, #i1], output: #o } }
         }
         R::UnbalancedGrandProductWithCache {
@@ -167,15 +202,15 @@ fn transform_relation(rel: &NoFieldGKRRelation) -> TokenStream {
             input,
             output,
         } => {
-            let s = transform_gkr_address(scalar);
-            let i = transform_gkr_address(input);
-            let o = transform_gkr_address(output);
+            let s = in_idx(scalar);
+            let i = in_idx(input);
+            let o = out_idx(output);
             quote! { StaticNoFieldGKRRelation::UnbalancedGrandProductWithCache { scalar: #s, input: #i, output: #o } }
         }
         R::TrivialProduct { input, output } => {
-            let i0 = transform_gkr_address(&input[0]);
-            let i1 = transform_gkr_address(&input[1]);
-            let o = transform_gkr_address(output);
+            let i0 = in_idx(&input[0]);
+            let i1 = in_idx(&input[1]);
+            let o = out_idx(output);
             quote! { StaticNoFieldGKRRelation::TrivialProduct { input: [#i0, #i1], output: #o } }
         }
         R::MaskIntoIdentityProduct {
@@ -183,19 +218,19 @@ fn transform_relation(rel: &NoFieldGKRRelation) -> TokenStream {
             mask,
             output,
         } => {
-            let i = transform_gkr_address(input);
-            let m = transform_gkr_address(mask);
-            let o = transform_gkr_address(output);
+            let i = in_idx(input);
+            let m = in_idx(mask);
+            let o = out_idx(output);
             quote! { StaticNoFieldGKRRelation::MaskIntoIdentityProduct { input: #i, mask: #m, output: #o } }
         }
         R::MaterializeSingleLookupInput { input, output } => {
-            let i = transform_single_column_lookup(input);
-            let o = transform_gkr_address(output);
+            let i = transform_single_column_lookup(input, input_sorted_addrs);
+            let o = out_idx(output);
             quote! { StaticNoFieldGKRRelation::MaterializeSingleLookupInput { input: #i, output: #o } }
         }
         R::MaterializedVectorLookupInput { input, output } => {
-            let i = transform_vector_lookup(input);
-            let o = transform_gkr_address(output);
+            let i = transform_vector_lookup(input, input_sorted_addrs);
+            let o = out_idx(output);
             quote! { StaticNoFieldGKRRelation::MaterializedVectorLookupInput { input: #i, output: #o } }
         }
         R::LookupWithCachedDensAndSetup {
@@ -203,26 +238,26 @@ fn transform_relation(rel: &NoFieldGKRRelation) -> TokenStream {
             setup,
             output,
         } => {
-            let i0 = transform_gkr_address(&input[0]);
-            let i1 = transform_gkr_address(&input[1]);
-            let s0 = transform_gkr_address(&setup[0]);
-            let s1 = transform_gkr_address(&setup[1]);
-            let o0 = transform_gkr_address(&output[0]);
-            let o1 = transform_gkr_address(&output[1]);
+            let i0 = in_idx(&input[0]);
+            let i1 = in_idx(&input[1]);
+            let s0 = in_idx(&setup[0]);
+            let s1 = in_idx(&setup[1]);
+            let o0 = out_idx(&output[0]);
+            let o1 = out_idx(&output[1]);
             quote! { StaticNoFieldGKRRelation::LookupWithCachedDensAndSetup { input: [#i0, #i1], setup: [#s0, #s1], output: [#o0, #o1] } }
         }
         R::LookupPairFromBaseInputs { input, output } => {
-            let i0 = transform_single_column_lookup(&input[0]);
-            let i1 = transform_single_column_lookup(&input[1]);
-            let o0 = transform_gkr_address(&output[0]);
-            let o1 = transform_gkr_address(&output[1]);
+            let i0 = transform_single_column_lookup(&input[0], input_sorted_addrs);
+            let i1 = transform_single_column_lookup(&input[1], input_sorted_addrs);
+            let o0 = out_idx(&output[0]);
+            let o1 = out_idx(&output[1]);
             quote! { StaticNoFieldGKRRelation::LookupPairFromBaseInputs { input: [#i0, #i1], output: [#o0, #o1] } }
         }
         R::LookupPairFromMaterializedBaseInputs { input, output } => {
-            let i0 = transform_gkr_address(&input[0]);
-            let i1 = transform_gkr_address(&input[1]);
-            let o0 = transform_gkr_address(&output[0]);
-            let o1 = transform_gkr_address(&output[1]);
+            let i0 = in_idx(&input[0]);
+            let i1 = in_idx(&input[1]);
+            let o0 = out_idx(&output[0]);
+            let o1 = out_idx(&output[1]);
             quote! { StaticNoFieldGKRRelation::LookupPairFromMaterializedBaseInputs { input: [#i0, #i1], output: [#o0, #o1] } }
         }
         R::LookupUnbalancedPairWithBaseInputs {
@@ -230,11 +265,11 @@ fn transform_relation(rel: &NoFieldGKRRelation) -> TokenStream {
             remainder,
             output,
         } => {
-            let i0 = transform_gkr_address(&input[0]);
-            let i1 = transform_gkr_address(&input[1]);
-            let r = transform_single_column_lookup(remainder);
-            let o0 = transform_gkr_address(&output[0]);
-            let o1 = transform_gkr_address(&output[1]);
+            let i0 = in_idx(&input[0]);
+            let i1 = in_idx(&input[1]);
+            let r = transform_single_column_lookup(remainder, input_sorted_addrs);
+            let o0 = out_idx(&output[0]);
+            let o1 = out_idx(&output[1]);
             quote! { StaticNoFieldGKRRelation::LookupUnbalancedPairWithBaseInputs { input: [#i0, #i1], remainder: #r, output: [#o0, #o1] } }
         }
         R::LookupFromBaseInputsWithSetup {
@@ -242,11 +277,11 @@ fn transform_relation(rel: &NoFieldGKRRelation) -> TokenStream {
             setup,
             output,
         } => {
-            let i = transform_single_column_lookup(input);
-            let s0 = transform_gkr_address(&setup[0]);
-            let s1 = transform_gkr_address(&setup[1]);
-            let o0 = transform_gkr_address(&output[0]);
-            let o1 = transform_gkr_address(&output[1]);
+            let i = transform_single_column_lookup(input, input_sorted_addrs);
+            let s0 = in_idx(&setup[0]);
+            let s1 = in_idx(&setup[1]);
+            let o0 = out_idx(&output[0]);
+            let o1 = out_idx(&output[1]);
             quote! { StaticNoFieldGKRRelation::LookupFromBaseInputsWithSetup { input: #i, setup: [#s0, #s1], output: [#o0, #o1] } }
         }
         R::LookupFromMaterializedBaseInputWithSetup {
@@ -254,11 +289,11 @@ fn transform_relation(rel: &NoFieldGKRRelation) -> TokenStream {
             setup,
             output,
         } => {
-            let i = transform_gkr_address(input);
-            let s0 = transform_gkr_address(&setup[0]);
-            let s1 = transform_gkr_address(&setup[1]);
-            let o0 = transform_gkr_address(&output[0]);
-            let o1 = transform_gkr_address(&output[1]);
+            let i = in_idx(input);
+            let s0 = in_idx(&setup[0]);
+            let s1 = in_idx(&setup[1]);
+            let o0 = out_idx(&output[0]);
+            let o1 = out_idx(&output[1]);
             quote! { StaticNoFieldGKRRelation::LookupFromMaterializedBaseInputWithSetup { input: #i, setup: [#s0, #s1], output: [#o0, #o1] } }
         }
         R::LookupUnbalancedPairWithMaterializedBaseInputs {
@@ -266,35 +301,39 @@ fn transform_relation(rel: &NoFieldGKRRelation) -> TokenStream {
             remainder,
             output,
         } => {
-            let i0 = transform_gkr_address(&input[0]);
-            let i1 = transform_gkr_address(&input[1]);
-            let r = transform_gkr_address(remainder);
-            let o0 = transform_gkr_address(&output[0]);
-            let o1 = transform_gkr_address(&output[1]);
+            let i0 = in_idx(&input[0]);
+            let i1 = in_idx(&input[1]);
+            let r = in_idx(remainder);
+            let o0 = out_idx(&output[0]);
+            let o1 = out_idx(&output[1]);
             quote! { StaticNoFieldGKRRelation::LookupUnbalancedPairWithMaterializedBaseInputs { input: [#i0, #i1], remainder: #r, output: [#o0, #o1] } }
         }
         R::LookupPairFromVectorInputs { input, output } => {
-            let i0 = transform_vector_lookup(&input[0]);
-            let i1 = transform_vector_lookup(&input[1]);
-            let o0 = transform_gkr_address(&output[0]);
-            let o1 = transform_gkr_address(&output[1]);
+            let i0 = transform_vector_lookup(&input[0], input_sorted_addrs);
+            let i1 = transform_vector_lookup(&input[1], input_sorted_addrs);
+            let o0 = out_idx(&output[0]);
+            let o1 = out_idx(&output[1]);
             quote! { StaticNoFieldGKRRelation::LookupPairFromVectorInputs { input: [#i0, #i1], output: [#o0, #o1] } }
         }
         R::LookupPair { input, output } => {
-            let i00 = transform_gkr_address(&input[0][0]);
-            let i01 = transform_gkr_address(&input[0][1]);
-            let i10 = transform_gkr_address(&input[1][0]);
-            let i11 = transform_gkr_address(&input[1][1]);
-            let o0 = transform_gkr_address(&output[0]);
-            let o1 = transform_gkr_address(&output[1]);
+            let i00 = in_idx(&input[0][0]);
+            let i01 = in_idx(&input[0][1]);
+            let i10 = in_idx(&input[1][0]);
+            let i11 = in_idx(&input[1][1]);
+            let o0 = out_idx(&output[0]);
+            let o1 = out_idx(&output[1]);
             quote! { StaticNoFieldGKRRelation::LookupPair { input: [[#i00, #i01], [#i10, #i11]], output: [#o0, #o1] } }
         }
     }
 }
 
-fn transform_gate(gate: &GateArtifacts) -> TokenStream {
+fn transform_gate(
+    gate: &GateArtifacts,
+    input_sorted_addrs: &[GKRAddress],
+    output_sorted_addrs: &[GKRAddress],
+) -> TokenStream {
     let output_layer = gate.output_layer;
-    let rel = transform_relation(&gate.enforced_relation);
+    let rel = transform_relation(&gate.enforced_relation, input_sorted_addrs, output_sorted_addrs);
     quote! {
         StaticGateArtifacts {
             output_layer: #output_layer,
@@ -303,21 +342,32 @@ fn transform_gate(gate: &GateArtifacts) -> TokenStream {
     }
 }
 
-fn transform_layer_description(layer: &GKRLayerDescription, layer_idx: usize) -> TokenStream {
+fn transform_layer_description(
+    layer: &GKRLayerDescription,
+    layer_idx: usize,
+    input_sorted_addrs: &[GKRAddress],
+    output_sorted_addrs: &[GKRAddress],
+) -> TokenStream {
     let gates_name = quote::format_ident!("LAYER_{}_GATES", layer_idx);
     let ext_gates_name = quote::format_ident!("LAYER_{}_EXT_GATES", layer_idx);
     let base_openings_name = quote::format_ident!("LAYER_{}_BASE_OPENINGS", layer_idx);
     let desc_name = quote::format_ident!("LAYER_{}_DESC", layer_idx);
 
     let mut gates_stream = TokenStream::new();
-    gates_stream.append_separated(layer.gates.iter().map(|g| transform_gate(g)), quote! {,});
+    gates_stream.append_separated(
+        layer
+            .gates
+            .iter()
+            .map(|g| transform_gate(g, input_sorted_addrs, output_sorted_addrs)),
+        quote! {,},
+    );
 
     let mut ext_gates_stream = TokenStream::new();
     ext_gates_stream.append_separated(
         layer
             .gates_with_external_connections
             .iter()
-            .map(|g| transform_gate(g)),
+            .map(|g| transform_gate(g, input_sorted_addrs, output_sorted_addrs)),
         quote! {,},
     );
 
@@ -342,101 +392,100 @@ fn transform_layer_description(layer: &GKRLayerDescription, layer_idx: usize) ->
     }
 }
 
-fn compute_max_pow(layer: &GKRLayerDescription) -> usize {
-    use NoFieldGKRRelation as R;
-    let mut max_pow = 0usize;
-    let relations = layer
-        .gates
-        .iter()
-        .chain(layer.gates_with_external_connections.iter())
-        .map(|g| &g.enforced_relation);
-    for relation in relations {
-        if let R::EnforceConstraintsMaxQuadratic { input } = relation {
-            for (_, terms) in input.quadratic_terms.iter() {
-                for &(_, pow) in terms.iter() {
-                    max_pow = max_pow.max(pow);
-                }
-            }
-            for (_, terms) in input.linear_terms.iter() {
-                for &(_, pow) in terms.iter() {
-                    max_pow = max_pow.max(pow);
-                }
-            }
-            for &(_, pow) in input.constants.iter() {
-                max_pow = max_pow.max(pow);
-            }
-        }
+fn collect_addrs_from_linear_relation(
+    rel: &NoFieldLinearRelation,
+    addrs: &mut std::collections::BTreeSet<GKRAddress>,
+) {
+    for (_, addr) in &rel.linear_terms {
+        addrs.insert(*addr);
     }
-    max_pow
 }
 
-fn count_raw_addrs(layer: &GKRLayerDescription) -> usize {
-    use NoFieldGKRRelation as R;
-    let mut count = 0;
-    let relations = layer
-        .gates
-        .iter()
-        .chain(layer.gates_with_external_connections.iter())
-        .map(|g| &g.enforced_relation);
-    for relation in relations {
-        count += match relation {
-            R::EnforceConstraintsMaxQuadratic { input } => {
-                input.linear_terms.len() + input.quadratic_terms.len() * 2
-            }
-            R::Copy { .. } => 1,
-            R::InitialGrandProductFromCaches { .. } | R::TrivialProduct { .. } => 2,
-            R::MaskIntoIdentityProduct { .. } => 2,
-            R::LookupPair { .. } => 4,
-            R::LookupPairFromMaterializedBaseInputs { .. } => 2,
-            R::LookupFromMaterializedBaseInputWithSetup { .. } => 3,
-            R::LookupUnbalancedPairWithMaterializedBaseInputs { .. } => 3,
-            R::LookupWithCachedDensAndSetup { .. } => 4,
-            _ => panic!("unimplemented relation variant in count_raw_addrs"),
-        };
-    }
-    count
+fn collect_addrs_from_single_lookup(
+    rel: &NoFieldSingleColumnLookupRelation,
+    addrs: &mut std::collections::BTreeSet<GKRAddress>,
+) {
+    collect_addrs_from_linear_relation(&rel.input, addrs);
 }
 
-fn count_unique_addrs(layer: &GKRLayerDescription) -> usize {
+fn collect_addrs_from_vector_lookup(
+    rel: &NoFieldVectorLookupRelation,
+    addrs: &mut std::collections::BTreeSet<GKRAddress>,
+) {
+    for col in &rel.columns {
+        collect_addrs_from_linear_relation(col, addrs);
+    }
+}
+
+fn collect_sorted_unique_addrs(layer: &GKRLayerDescription) -> Vec<GKRAddress> {
     use std::collections::BTreeSet;
     use NoFieldGKRRelation as R;
     let mut addrs = BTreeSet::new();
-    let relations = layer
+
+    for gate in layer
         .gates
         .iter()
         .chain(layer.gates_with_external_connections.iter())
-        .map(|g| &g.enforced_relation);
-    for relation in relations {
-        match relation {
+    {
+        match &gate.enforced_relation {
             R::EnforceConstraintsMaxQuadratic { input } => {
-                for (addr, _) in input.linear_terms.iter() {
-                    addrs.insert(*addr);
-                }
-                for ((a, b), _) in input.quadratic_terms.iter() {
+                for ((a, b), _) in &input.quadratic_terms {
                     addrs.insert(*a);
                     addrs.insert(*b);
+                }
+                for (addr, _) in &input.linear_terms {
+                    addrs.insert(*addr);
                 }
             }
             R::Copy { input, .. } => {
                 addrs.insert(*input);
             }
-            R::InitialGrandProductFromCaches { input, .. } | R::TrivialProduct { input, .. } => {
+            R::InitialGrandProductFromCaches { input, .. }
+            | R::TrivialProduct { input, .. } => {
                 addrs.insert(input[0]);
                 addrs.insert(input[1]);
+            }
+            R::UnbalancedGrandProductWithCache {
+                scalar, input, ..
+            } => {
+                addrs.insert(*scalar);
+                addrs.insert(*input);
             }
             R::MaskIntoIdentityProduct { input, mask, .. } => {
                 addrs.insert(*input);
                 addrs.insert(*mask);
             }
-            R::LookupPair { input, .. } => {
-                addrs.insert(input[0][0]);
-                addrs.insert(input[0][1]);
-                addrs.insert(input[1][0]);
-                addrs.insert(input[1][1]);
+            R::MaterializeSingleLookupInput { input, .. } => {
+                collect_addrs_from_single_lookup(input, &mut addrs);
+            }
+            R::MaterializedVectorLookupInput { input, .. } => {
+                collect_addrs_from_vector_lookup(input, &mut addrs);
+            }
+            R::LookupWithCachedDensAndSetup { input, setup, .. } => {
+                addrs.insert(input[0]);
+                addrs.insert(input[1]);
+                addrs.insert(setup[0]);
+                addrs.insert(setup[1]);
+            }
+            R::LookupPairFromBaseInputs { input, .. } => {
+                collect_addrs_from_single_lookup(&input[0], &mut addrs);
+                collect_addrs_from_single_lookup(&input[1], &mut addrs);
             }
             R::LookupPairFromMaterializedBaseInputs { input, .. } => {
                 addrs.insert(input[0]);
                 addrs.insert(input[1]);
+            }
+            R::LookupUnbalancedPairWithBaseInputs {
+                input, remainder, ..
+            } => {
+                addrs.insert(input[0]);
+                addrs.insert(input[1]);
+                collect_addrs_from_single_lookup(remainder, &mut addrs);
+            }
+            R::LookupFromBaseInputsWithSetup { input, setup, .. } => {
+                collect_addrs_from_single_lookup(input, &mut addrs);
+                addrs.insert(setup[0]);
+                addrs.insert(setup[1]);
             }
             R::LookupFromMaterializedBaseInputWithSetup { input, setup, .. } => {
                 addrs.insert(*input);
@@ -450,16 +499,82 @@ fn count_unique_addrs(layer: &GKRLayerDescription) -> usize {
                 addrs.insert(input[1]);
                 addrs.insert(*remainder);
             }
-            R::LookupWithCachedDensAndSetup { input, setup, .. } => {
-                addrs.insert(input[0]);
-                addrs.insert(input[1]);
-                addrs.insert(setup[0]);
-                addrs.insert(setup[1]);
+            R::LookupPairFromVectorInputs { input, .. } => {
+                collect_addrs_from_vector_lookup(&input[0], &mut addrs);
+                collect_addrs_from_vector_lookup(&input[1], &mut addrs);
             }
-            _ => panic!("unimplemented relation variant in count_unique_addrs"),
+            R::LookupPair { input, .. } => {
+                addrs.insert(input[0][0]);
+                addrs.insert(input[0][1]);
+                addrs.insert(input[1][0]);
+                addrs.insert(input[1][1]);
+            }
         }
     }
-    addrs.len()
+    addrs.into_iter().collect()
+}
+
+fn count_unique_addrs(layer: &GKRLayerDescription) -> usize {
+    collect_sorted_unique_addrs(layer).len()
+}
+
+fn compute_max_pow(layer: &GKRLayerDescription) -> usize {
+    use NoFieldGKRRelation as R;
+    let mut max_pow = 0usize;
+    for gate in layer
+        .gates
+        .iter()
+        .chain(layer.gates_with_external_connections.iter())
+    {
+        if let R::EnforceConstraintsMaxQuadratic { input } = &gate.enforced_relation {
+            for (_, terms) in &input.quadratic_terms {
+                for &(_, pow) in terms.iter() {
+                    max_pow = max_pow.max(pow);
+                }
+            }
+            for (_, terms) in &input.linear_terms {
+                for &(_, pow) in terms.iter() {
+                    max_pow = max_pow.max(pow);
+                }
+            }
+            for &(_, pow) in input.constants.iter() {
+                max_pow = max_pow.max(pow);
+            }
+        }
+    }
+    max_pow
+}
+
+fn scan_used_relation_types(layers: &[GKRLayerDescription]) -> (bool, bool, bool) {
+    let mut uses_linear = false;
+    let mut uses_single_lookup = false;
+    let mut uses_vector_lookup = false;
+
+    for layer in layers {
+        for gate in layer
+            .gates
+            .iter()
+            .chain(layer.gates_with_external_connections.iter())
+        {
+            use NoFieldGKRRelation as R;
+            match &gate.enforced_relation {
+                R::MaterializeSingleLookupInput { .. }
+                | R::LookupPairFromBaseInputs { .. }
+                | R::LookupUnbalancedPairWithBaseInputs { .. }
+                | R::LookupFromBaseInputsWithSetup { .. } => {
+                    uses_linear = true;
+                    uses_single_lookup = true;
+                }
+                R::MaterializedVectorLookupInput { .. }
+                | R::LookupPairFromVectorInputs { .. } => {
+                    uses_linear = true;
+                    uses_vector_lookup = true;
+                }
+                _ => panic!("unsupported relation")
+            }
+        }
+    }
+    (uses_linear, uses_single_lookup, uses_vector_lookup)
 }
 
 pub fn generate_gkr_config<F: PrimeField, E: FieldExtension<F> + Field, T>(
@@ -478,9 +593,85 @@ where
         .max()
         .expect("proof must have sumcheck values");
 
+    // Precompute sorted input addresses for each standard layer.
+    let standard_sorted_addrs: Vec<Vec<GKRAddress>> = compiled_circuit
+        .layers
+        .iter()
+        .map(|l| collect_sorted_unique_addrs(l))
+        .collect();
+
+    // Build the iteration-order addresses for a dim-reducing layer.
+    // For the lowest dim-reducing layer, these come directly from global_output_map.
+    // For higher layers, they are InnerLayer addresses laid out per output group.
+    let build_dim_reducing_addrs = |layer_idx: usize| -> Vec<GKRAddress> {
+        let mut addrs = Vec::new();
+        if layer_idx == num_standard_layers {
+            for (_, group_addrs) in compiled_circuit.global_output_map.iter() {
+                for addr in group_addrs.iter() {
+                    addrs.push(*addr);
+                }
+            }
+        } else {
+            let mut off = 0;
+            for (output_type, group_addrs) in compiled_circuit.global_output_map.iter() {
+                match output_type {
+                    OutputType::PermutationProduct => {
+                        for i in 0..group_addrs.len() {
+                            addrs.push(GKRAddress::InnerLayer {
+                                layer: layer_idx,
+                                offset: off + i,
+                            });
+                        }
+                        off += group_addrs.len();
+                    }
+                    OutputType::Lookup16Bits
+                    | OutputType::LookupTimestamps
+                    | OutputType::GenericLookup => {
+                        addrs.push(GKRAddress::InnerLayer {
+                            layer: layer_idx,
+                            offset: off,
+                        });
+                        addrs.push(GKRAddress::InnerLayer {
+                            layer: layer_idx,
+                            offset: off + 1,
+                        });
+                        off += 2;
+                    }
+                }
+            }
+        }
+        addrs
+    };
+
+    // Compute sorted addresses for each dim-reducing layer.
+    let dim_reducing_sorted_addrs: Vec<Vec<GKRAddress>> = (num_standard_layers
+        ..=initial_layer_for_sumcheck)
+        .map(|layer_idx| {
+            let mut addrs = build_dim_reducing_addrs(layer_idx);
+            addrs.sort();
+            addrs
+        })
+        .collect();
+
+    // For standard layer N, output addresses index into the next layer's input space.
+    let get_output_sorted_addrs = |layer_idx: usize| -> &[GKRAddress] {
+        if layer_idx + 1 < num_standard_layers {
+            &standard_sorted_addrs[layer_idx + 1]
+        } else if !dim_reducing_sorted_addrs.is_empty() {
+            &dim_reducing_sorted_addrs[0]
+        } else {
+            &standard_sorted_addrs[layer_idx]
+        }
+    };
+
     let mut layer_desc_consts = TokenStream::new();
     for (idx, layer_desc) in compiled_circuit.layers.iter().enumerate() {
-        layer_desc_consts.extend(transform_layer_description(layer_desc, idx));
+        layer_desc_consts.extend(transform_layer_description(
+            layer_desc,
+            idx,
+            &standard_sorted_addrs[idx],
+            get_output_sorted_addrs(idx),
+        ));
     }
 
     let mut output_groups_stream = TokenStream::new();
@@ -498,6 +689,7 @@ where
         quote! {,},
     );
 
+    let mut sorted_addrs_consts = TokenStream::new();
     let mut layer_metas_stream = TokenStream::new();
 
     // Standard layers
@@ -508,34 +700,79 @@ where
             .expect("missing sumcheck values");
         let num_sumcheck_rounds = proof_values.sumcheck_num_rounds;
         let desc_name = quote::format_ident!("LAYER_{}_DESC", layer_idx);
+
+        let sorted_addrs = &standard_sorted_addrs[layer_idx];
+        let sorted_addrs_name = quote::format_ident!("LAYER_{}_SORTED_ADDRS", layer_idx);
+        let mut addrs_stream = TokenStream::new();
+        addrs_stream.append_separated(
+            sorted_addrs.iter().map(|a| transform_gkr_address(a)),
+            quote! {,},
+        );
+        sorted_addrs_consts.extend(quote! {
+            const #sorted_addrs_name: &[GKRAddress] = &[#addrs_stream];
+        });
+
         layer_metas_stream.extend(quote! {
             GKRLayerMeta {
                 is_dim_reducing: 0usize,
                 num_sumcheck_rounds: #num_sumcheck_rounds,
                 output_groups: &[],
                 layer_desc: Some(&#desc_name),
+                sorted_dedup_input_addrs: #sorted_addrs_name,
+                input_sorted_indices: &[],
             },
         });
     }
 
     // Dim-reducing layers
-    for layer_idx in num_standard_layers..=initial_layer_for_sumcheck {
+    for (dim_idx, layer_idx) in (num_standard_layers..=initial_layer_for_sumcheck).enumerate() {
         let proof_values = proof
             .sumcheck_intermediate_values
             .get(&layer_idx)
             .expect("missing sumcheck values");
         let num_sumcheck_rounds = proof_values.sumcheck_num_rounds;
+
+        let input_addrs = &dim_reducing_sorted_addrs[dim_idx];
+
+        let sorted_addrs_name = quote::format_ident!("LAYER_{}_SORTED_ADDRS", layer_idx);
+        let mut addrs_stream = TokenStream::new();
+        addrs_stream.append_separated(
+            input_addrs.iter().map(|a| transform_gkr_address(a)),
+            quote! {,},
+        );
+        sorted_addrs_consts.extend(quote! {
+            const #sorted_addrs_name: &[GKRAddress] = &[#addrs_stream];
+        });
+
+        // input_sorted_indices maps from iteration order to sorted position.
+        let iteration_order_addrs = build_dim_reducing_addrs(layer_idx);
+        let input_sorted_indices_name =
+            quote::format_ident!("LAYER_{}_INPUT_SORTED_IDX", layer_idx);
+        let mut idx_stream = TokenStream::new();
+        idx_stream.append_separated(
+            iteration_order_addrs.iter().map(|addr| {
+                let idx = addr_to_idx(addr, input_addrs);
+                quote! { #idx }
+            }),
+            quote! {,},
+        );
+        sorted_addrs_consts.extend(quote! {
+            const #input_sorted_indices_name: &[usize] = &[#idx_stream];
+        });
+
         layer_metas_stream.extend(quote! {
             GKRLayerMeta {
                 is_dim_reducing: 1usize,
                 num_sumcheck_rounds: #num_sumcheck_rounds,
                 output_groups: OUTPUT_GROUPS,
                 layer_desc: None,
+                sorted_dedup_input_addrs: #sorted_addrs_name,
+                input_sorted_indices: #input_sorted_indices_name,
             },
         });
     }
 
-    // Build global_input_addrs
+    // Global input addresses (iteration order from global_output_map)
     let mut global_input_addrs_stream = TokenStream::new();
     global_input_addrs_stream.append_separated(
         compiled_circuit
@@ -546,6 +783,7 @@ where
         quote! {,},
     );
 
+    // Buffer size constants
     let max_sumcheck_rounds = proof
         .sumcheck_intermediate_values
         .values()
@@ -560,7 +798,6 @@ where
         .max()
         .unwrap_or(0);
 
-    // Dim-reducing layers use global_output_map addresses
     let dim_reducing_addr_count: usize = compiled_circuit
         .global_output_map
         .iter()
@@ -568,15 +805,6 @@ where
         .sum();
     let max_addrs = max_unique_addrs_standard.max(dim_reducing_addr_count);
 
-    // Max raw (pre-dedup) addresses across standard layers
-    let max_raw_addrs = compiled_circuit
-        .layers
-        .iter()
-        .map(|l| count_raw_addrs(l))
-        .max()
-        .unwrap_or(0);
-
-    // Max challenge power index across all constraint relations (+1 for array size)
     let max_pow = compiled_circuit
         .layers
         .iter()
@@ -585,58 +813,32 @@ where
         .unwrap_or(0)
         + 1;
 
-    // Max extension field elements needed for eval buffers
     let total_output_polys: usize = compiled_circuit
         .global_output_map
         .iter()
         .map(|(_, addrs)| addrs.len())
         .sum();
-    let evals_per_poly = 1usize << final_trace_size_log_2;
-    let max_evals = total_output_polys * evals_per_poly;
+    let max_evals = total_output_polys * (1usize << final_trace_size_log_2);
 
-    // Scan all relations to determine which static types are actually used
-    let mut uses_linear_relation = false;
-    let mut uses_single_column_lookup = false;
-    let mut uses_vector_lookup = false;
-    for layer in compiled_circuit.layers.iter() {
-        for gate in layer
-            .gates
-            .iter()
-            .chain(layer.gates_with_external_connections.iter())
-        {
-            use NoFieldGKRRelation as R;
-            match &gate.enforced_relation {
-                R::MaterializeSingleLookupInput { .. }
-                | R::LookupPairFromBaseInputs { .. }
-                | R::LookupUnbalancedPairWithBaseInputs { .. }
-                | R::LookupFromBaseInputsWithSetup { .. } => {
-                    uses_linear_relation = true;
-                    uses_single_column_lookup = true;
-                }
-                R::MaterializedVectorLookupInput { .. } | R::LookupPairFromVectorInputs { .. } => {
-                    uses_linear_relation = true;
-                    uses_vector_lookup = true;
-                }
-                R::EnforceConstraintsMaxQuadratic { .. } => {
-                    // uses StaticNoFieldMaxQuadraticConstraintsGKRRelation (always imported)
-                }
-                _ => {}
-            }
-        }
-    }
+    let (uses_linear, uses_single_lookup, uses_vector_lookup) =
+        scan_used_relation_types(&compiled_circuit.layers);
 
     let mut extra_type_imports = TokenStream::new();
-    if uses_linear_relation {
+    if uses_linear {
         extra_type_imports.extend(quote! { StaticNoFieldLinearRelation, });
     }
-    if uses_single_column_lookup {
+    if uses_single_lookup {
         extra_type_imports.extend(quote! { StaticNoFieldSingleColumnLookupRelation, });
     }
     if uses_vector_lookup {
         extra_type_imports.extend(quote! { StaticNoFieldVectorLookupRelation, });
     }
 
-    let has_inits_teardowns: usize = if proof.inits_and_teardowns_top_bits.is_some() { 1 } else { 0 };
+    let has_inits_teardowns: usize = if proof.inits_and_teardowns_top_bits.is_some() {
+        1
+    } else {
+        0
+    };
 
     let initial_transcript_num_u32_words = {
         let mut tmp = Vec::<u32>::new();
@@ -677,12 +879,13 @@ where
         /// Per-circuit buffer size constants for `verify_gkr_sumcheck`.
         pub const GKR_ROUNDS: usize = #max_sumcheck_rounds;
         pub const GKR_ADDRS: usize = #max_addrs;
-        pub const GKR_RAW_ADDRS: usize = #max_raw_addrs;
         pub const GKR_EVALS: usize = #max_evals;
         pub const GKR_TRANSCRIPT_U32: usize = #initial_transcript_num_u32_words;
         pub const GKR_MAX_POW: usize = #max_pow;
 
         #layer_desc_consts
+
+        #sorted_addrs_consts
 
         const OUTPUT_GROUPS: &[GKROutputGroup] = &[#output_groups_stream];
 

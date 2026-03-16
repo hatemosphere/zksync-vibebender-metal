@@ -3,6 +3,7 @@
 #![feature(slice_from_ptr_range)]
 #![allow(incomplete_features)]
 #![feature(generic_const_exprs)]
+#![feature(maybe_uninit_array_assume_init)]
 
 #[cfg(all(feature = "security_80", feature = "security_100"))]
 compile_error!("multiple security levels selected at the same time");

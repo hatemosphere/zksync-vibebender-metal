@@ -14,7 +14,7 @@ pub enum OutputType {
 
 #[derive(Clone, Copy, Debug)]
 pub struct StaticNoFieldLinearRelation<'a> {
-    pub linear_terms: &'a [(u32, GKRAddress)],
+    pub linear_terms: &'a [(u32, usize)],
     pub constant: u32,
 }
 
@@ -30,13 +30,13 @@ pub struct StaticNoFieldVectorLookupRelation<'a> {
     pub lookup_set_index: usize,
 }
 
-/// quadratic terms: ((addr_a, addr_b), &[(coeff, power_of_challenge)])
-/// linear terms: (addr, &[(coeff, power_of_challenge)])
+/// quadratic terms: ((idx_a, idx_b), &[(coeff, power_of_challenge)])
+/// linear terms: (idx, &[(coeff, power_of_challenge)])
 /// constants: &[(coeff, power_of_challenge)]
 #[derive(Clone, Copy, Debug)]
 pub struct StaticNoFieldMaxQuadraticConstraintsGKRRelation<'a> {
-    pub quadratic_terms: &'a [((GKRAddress, GKRAddress), &'a [(u32, usize)])],
-    pub linear_terms: &'a [(GKRAddress, &'a [(u32, usize)])],
+    pub quadratic_terms: &'a [((usize, usize), &'a [(u32, usize)])],
+    pub linear_terms: &'a [(usize, &'a [(u32, usize)])],
     pub constants: &'a [(u32, usize)],
 }
 
@@ -47,75 +47,75 @@ pub enum StaticNoFieldGKRRelation<'a> {
         input: StaticNoFieldMaxQuadraticConstraintsGKRRelation<'a>,
     },
     Copy {
-        input: GKRAddress,
-        output: GKRAddress,
+        input: usize,
+        output: usize,
     },
     InitialGrandProductFromCaches {
-        input: [GKRAddress; 2],
-        output: GKRAddress,
+        input: [usize; 2],
+        output: usize,
     },
     UnbalancedGrandProductWithCache {
-        scalar: GKRAddress,
-        input: GKRAddress,
-        output: GKRAddress,
+        scalar: usize,
+        input: usize,
+        output: usize,
     },
     TrivialProduct {
-        input: [GKRAddress; 2],
-        output: GKRAddress,
+        input: [usize; 2],
+        output: usize,
     },
     MaskIntoIdentityProduct {
-        input: GKRAddress,
-        mask: GKRAddress,
-        output: GKRAddress,
+        input: usize,
+        mask: usize,
+        output: usize,
     },
     MaterializeSingleLookupInput {
         input: StaticNoFieldSingleColumnLookupRelation<'a>,
-        output: GKRAddress,
+        output: usize,
     },
     MaterializedVectorLookupInput {
         input: StaticNoFieldVectorLookupRelation<'a>,
-        output: GKRAddress,
+        output: usize,
     },
     LookupWithCachedDensAndSetup {
-        input: [GKRAddress; 2],
-        setup: [GKRAddress; 2],
-        output: [GKRAddress; 2],
+        input: [usize; 2],
+        setup: [usize; 2],
+        output: [usize; 2],
     },
     LookupPairFromBaseInputs {
         input: [StaticNoFieldSingleColumnLookupRelation<'a>; 2],
-        output: [GKRAddress; 2],
+        output: [usize; 2],
     },
     LookupPairFromMaterializedBaseInputs {
-        input: [GKRAddress; 2],
-        output: [GKRAddress; 2],
+        input: [usize; 2],
+        output: [usize; 2],
     },
     LookupUnbalancedPairWithBaseInputs {
-        input: [GKRAddress; 2],
+        input: [usize; 2],
         remainder: StaticNoFieldSingleColumnLookupRelation<'a>,
-        output: [GKRAddress; 2],
+        output: [usize; 2],
     },
     LookupFromBaseInputsWithSetup {
         input: StaticNoFieldSingleColumnLookupRelation<'a>,
-        setup: [GKRAddress; 2],
-        output: [GKRAddress; 2],
+        setup: [usize; 2],
+        output: [usize; 2],
     },
     LookupFromMaterializedBaseInputWithSetup {
-        input: GKRAddress,
-        setup: [GKRAddress; 2],
-        output: [GKRAddress; 2],
+        input: usize,
+        setup: [usize; 2],
+        output: [usize; 2],
     },
     LookupUnbalancedPairWithMaterializedBaseInputs {
-        input: [GKRAddress; 2],
-        remainder: GKRAddress,
-        output: [GKRAddress; 2],
+        input: [usize; 2],
+        remainder: usize,
+        output: [usize; 2],
     },
     LookupPairFromVectorInputs {
         input: [StaticNoFieldVectorLookupRelation<'a>; 2],
-        output: [GKRAddress; 2],
+        output: [usize; 2],
     },
     LookupPair {
-        input: [[GKRAddress; 2]; 2],
-        output: [GKRAddress; 2],
+        input: [[usize; 2]; 2],
+        output: [usize; 2],
     },
 }
 
