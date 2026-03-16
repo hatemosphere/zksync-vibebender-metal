@@ -13,8 +13,8 @@ use std::{
 use type_map::concurrent::TypeMap;
 
 mod binops;
-// mod branch_opcode_related;
-// mod jump_opcode_related;
+mod integer_ops;
+mod jump_branch_opcode_related;
 // mod keccak_precompile_related;
 // mod memory_opcode_related;
 // mod range_checks_and_decompositions;
@@ -24,8 +24,8 @@ mod quote;
 mod zero_entry;
 
 pub use self::binops::*;
-// pub use self::branch_opcode_related::*;
-// pub use self::jump_opcode_related::*;
+pub use self::integer_ops::*;
+pub use self::jump_branch_opcode_related::*;
 // pub use self::keccak_precompile_related::*;
 // pub use self::memory_opcode_related::*;
 // pub use self::range_checks_and_decompositions::*;
@@ -658,26 +658,20 @@ impl TableType {
             TableType::ZeroEntry => {
                 LookupWrapper::Initialized(create_zero_entry_table::<F, TOTAL_WIDTH>(id))
             }
+            TableType::RegIsZero => LookupWrapper::Initialized(create_reg_is_zero_table::<F>(id)),
+            TableType::U16GetSign => LookupWrapper::Initialized(create_u16_get_sign_table::<F>(id)),
             TableType::And => LookupWrapper::Initialized(create_and_table::<F>(id)),
             TableType::Xor => LookupWrapper::Initialized(create_xor_table::<F, 8>(id)),
             TableType::Or => LookupWrapper::Initialized(create_or_table::<F>(id)),
+            TableType::ConditionalJmpBranchSlt => {
+                LookupWrapper::Initialized(create_conditional_op_resolution_table(id))
+            }
+            TableType::JumpCleanupOffset => {
+                LookupWrapper::Initialized(create_jump_cleanup_offset_table(id))
+            }
             // TableType::RangeCheck8x8 => LookupWrapper::Dimensional3(
             //     create_formal_width_3_range_check_table_for_two_tuple::<F, 8>(id),
             // ),
-            // // TableType::RangeCheckLarge => {
-            // //     LookupWrapper::Dimensional1(create_range_check_table::<F, 16>(id))
-            // // }
-            // // TableType::PowersOf2 => LookupWrapper::Dimensional3(create_pow2_table::<F, 5>(id)),
-            // TableType::OpTypeBitmask => {
-            //     panic!("Machine must defined it's own way to create supporting decoder table")
-            // }
-            // TableType::InsnEncodingChecker => {
-            //     panic!("deprecated")
-            // }
-            // TableType::CsrBitmask => {
-            //     panic!("Machine must defined it's own way to define CSR support")
-            //     // LookupWrapper::Dimensional3(create_csr_bitmask_table(id))
-            // }
             // TableType::AndNot => LookupWrapper::Dimensional3(create_and_not_table(id)),
             // TableType::QuickDecodeDecompositionCheck4x4x4 => {
             //     LookupWrapper::Dimensional3(create_quick_decoder_decomposition_table_4x4x4(id))
@@ -685,24 +679,10 @@ impl TableType {
             // TableType::QuickDecodeDecompositionCheck7x3x6 => {
             //     LookupWrapper::Dimensional3(create_quick_decoder_decomposition_table_7x3x6(id))
             // }
-            // TableType::MRetProcessLow => {
-            //     unimplemented!()
-            //     // LookupWrapper::Dimensional3(create_mret_process_low_table(id))
-            // }
-            // TableType::MRetClearHigh => {
-            //     unimplemented!()
-            //     // LookupWrapper::Dimensional3(create_mret_clear_high_table(id))
-            // }
-            // TableType::TrapProcessLow => {
-            //     unimplemented!()
-            //     // LookupWrapper::Dimensional3(create_trap_process_low_table(id))
-            // }
             // TableType::U16GetSignAndHighByte => {
             //     LookupWrapper::Dimensional3(create_u16_get_sign_and_high_byte_table(id))
             // }
-            // TableType::JumpCleanupOffset => {
-            //     LookupWrapper::Dimensional3(create_jump_cleanup_offset_table(id))
-            // }
+
             // TableType::MemoryOffsetGetBits => {
             //     LookupWrapper::Dimensional3(create_memory_offset_lowest_bits_table(id))
             // }
@@ -832,7 +812,7 @@ impl TableType {
 }
 
 #[inline(always)]
-pub(crate) fn first_key_index_gen_fn<F: PrimeField, const N: usize>(keys: &[F; N]) -> usize {
+pub(crate) fn first_key_index_gen_fn<F: PrimeField>(keys: &[F]) -> usize {
     keys[0].as_u32_reduced() as usize
 }
 

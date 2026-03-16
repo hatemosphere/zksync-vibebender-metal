@@ -3,6 +3,7 @@ use super::*;
 use crate::constraint::Constraint;
 use crate::constraint::Term;
 use crate::cs::circuit_trait::*;
+use crate::gkr_circuits::utils::update_intermediate_carry_value;
 use crate::oracle::Placeholder;
 use crate::tables::TableDriver;
 use crate::types::*;
@@ -159,6 +160,7 @@ fn apply_add_sub_lui_auipc_mop_inner<F: PrimeField, CS: Circuit<F>>(
     // Witness function - added before any constraints, so we can use debug machinery
     {
         let of_var = carry.get_variable().unwrap();
+        let intermediate_of_var = intermediate_carry.get_variable().unwrap();
         let out_vars = [out_low, out_high];
         let intermediate_vars = intermediate_tmp.0.map(|el| el.get_variable());
         let imm_vars = inputs.decoder_data.imm;
@@ -181,12 +183,20 @@ fn apply_add_sub_lui_auipc_mop_inner<F: PrimeField, CS: Circuit<F>>(
             let mut out_value = <CS::WitnessPlacer as WitnessTypeSet<F>>::U32::constant(0);
             let mut intermediate_value = <CS::WitnessPlacer as WitnessTypeSet<F>>::U32::constant(0);
             let mut of_value = <CS::WitnessPlacer as WitnessTypeSet<F>>::Mask::constant(false);
+            let mut u16_intermedaite_carry_value =
+                <CS::WitnessPlacer as WitnessTypeSet<F>>::Mask::constant(false);
 
+            let imm_low = placer.get_u16(imm_vars[0]);
             let imm = placer.get_u32_from_u16_parts(imm_vars);
+            let rs1_low = placer.get_u16(rs1_vars[0]);
             let rs1_u32 = placer.get_u32_from_u16_parts(rs1_vars);
+            let rs2_low = placer.get_u16(rs2_vars[0]);
             let rs2_u32 = placer.get_u32_from_u16_parts(rs2_vars);
+            let pc_low = placer.get_u16(pc_vars[0]);
             let pc_u32 = placer.get_u32_from_u16_parts(pc_vars);
             let boolean_false = <CS::WitnessPlacer as WitnessTypeSet<F>>::Mask::constant(false);
+            let modulus_low =
+                <CS::WitnessPlacer as WitnessTypeSet<F>>::U16::constant(F::CHARACTERISTICS as u16);
             let modulus_constant =
                 <CS::WitnessPlacer as WitnessTypeSet<F>>::U32::constant(F::CHARACTERISTICS as u32);
             {
@@ -201,6 +211,13 @@ fn apply_add_sub_lui_auipc_mop_inner<F: PrimeField, CS: Circuit<F>>(
                 );
                 of_value =
                     <CS::WitnessPlacer as WitnessTypeSet<F>>::Mask::select(&is_add, &of, &of_value);
+                update_intermediate_carry_value::<F, CS::WitnessPlacer, false>(
+                    &mut u16_intermedaite_carry_value,
+                    &is_add,
+                    &rs1_low,
+                    &rs2_low,
+                    Some(&imm_low),
+                );
             }
             {
                 let is_sub = placer.get_boolean(is_sub_var);
@@ -212,6 +229,13 @@ fn apply_add_sub_lui_auipc_mop_inner<F: PrimeField, CS: Circuit<F>>(
                 );
                 of_value =
                     <CS::WitnessPlacer as WitnessTypeSet<F>>::Mask::select(&is_sub, &of, &of_value);
+                update_intermediate_carry_value::<F, CS::WitnessPlacer, true>(
+                    &mut u16_intermedaite_carry_value,
+                    &is_sub,
+                    &rs1_low,
+                    &rs2_low,
+                    Some(&imm_low),
+                );
             }
             {
                 let is_auipc = placer.get_boolean(is_auipc_var);
@@ -223,6 +247,13 @@ fn apply_add_sub_lui_auipc_mop_inner<F: PrimeField, CS: Circuit<F>>(
                 );
                 of_value = <CS::WitnessPlacer as WitnessTypeSet<F>>::Mask::select(
                     &is_auipc, &of, &of_value,
+                );
+                update_intermediate_carry_value::<F, CS::WitnessPlacer, false>(
+                    &mut u16_intermedaite_carry_value,
+                    &is_auipc,
+                    &pc_low,
+                    &imm_low,
+                    None,
                 );
             }
 
@@ -243,6 +274,7 @@ fn apply_add_sub_lui_auipc_mop_inner<F: PrimeField, CS: Circuit<F>>(
                     addmod_f.add_assign(&rs2_f);
                     addmod_f.as_integer()
                 };
+                let add_mod_low = addmod_result.truncate();
                 out_value = <CS::WitnessPlacer as WitnessTypeSet<F>>::U32::select(
                     &is_addmod,
                     &addmod_result,
@@ -258,6 +290,13 @@ fn apply_add_sub_lui_auipc_mop_inner<F: PrimeField, CS: Circuit<F>>(
                 of_value = <CS::WitnessPlacer as WitnessTypeSet<F>>::Mask::select(
                     &is_addmod, &of, &of_value,
                 );
+                update_intermediate_carry_value::<F, CS::WitnessPlacer, true>(
+                    &mut u16_intermedaite_carry_value,
+                    &is_addmod,
+                    &add_mod_low,
+                    &modulus_low,
+                    None,
+                );
             }
             // submod
             {
@@ -267,6 +306,7 @@ fn apply_add_sub_lui_auipc_mop_inner<F: PrimeField, CS: Circuit<F>>(
                     submod_f.sub_assign(&rs2_f);
                     submod_f.as_integer()
                 };
+                let sub_mod_low = submod_result.truncate();
                 out_value = <CS::WitnessPlacer as WitnessTypeSet<F>>::U32::select(
                     &is_submod,
                     &submod_result,
@@ -281,6 +321,13 @@ fn apply_add_sub_lui_auipc_mop_inner<F: PrimeField, CS: Circuit<F>>(
                 of_value = <CS::WitnessPlacer as WitnessTypeSet<F>>::Mask::select(
                     &is_submod, &of, &of_value,
                 );
+                update_intermediate_carry_value::<F, CS::WitnessPlacer, true>(
+                    &mut u16_intermedaite_carry_value,
+                    &is_submod,
+                    &sub_mod_low,
+                    &modulus_low,
+                    None,
+                );
             }
             // mulmod - both final and intermediate var (unconditional)
             {
@@ -292,6 +339,7 @@ fn apply_add_sub_lui_auipc_mop_inner<F: PrimeField, CS: Circuit<F>>(
                 };
                 placer.assign_field(mulmod_intermediate_var, &mulmod_field);
                 let mulmod_result = mulmod_field.clone().as_integer();
+                let mul_mod_low = mulmod_result.truncate();
                 out_value = <CS::WitnessPlacer as WitnessTypeSet<F>>::U32::select(
                     &is_mulmod,
                     &mulmod_result,
@@ -305,6 +353,13 @@ fn apply_add_sub_lui_auipc_mop_inner<F: PrimeField, CS: Circuit<F>>(
                 );
                 of_value = <CS::WitnessPlacer as WitnessTypeSet<F>>::Mask::select(
                     &is_mulmod, &of, &of_value,
+                );
+                update_intermediate_carry_value::<F, CS::WitnessPlacer, true>(
+                    &mut u16_intermedaite_carry_value,
+                    &is_mulmod,
+                    &mul_mod_low,
+                    &modulus_low,
+                    None,
                 );
             }
             // non-determinism
@@ -331,6 +386,7 @@ fn apply_add_sub_lui_auipc_mop_inner<F: PrimeField, CS: Circuit<F>>(
 
             placer.assign_u32_from_u16_parts(intermediate_vars, &intermediate_value);
             placer.assign_mask(of_var, &of_value);
+            placer.assign_mask(intermediate_of_var, &u16_intermedaite_carry_value);
         };
         cs.set_values(value_fn);
     }
@@ -399,7 +455,7 @@ fn apply_add_sub_lui_auipc_mop_inner<F: PrimeField, CS: Circuit<F>>(
             Term::from(is_auipc) * Term::from(inputs.cycle_start_state.pc[0]);
         // for subtraction 2^16*of + a - b = c -> 2^16*of + a = b + c
         add_like_low_constraint += Term::from(is_sub) * Term::from(out_low);
-        // for modular ops we also do out - modulus
+        // for modular ops we also do 2^16*of + out - modulus -> intermediate
         add_like_low_constraint +=
             Term::from(is_addmod) * Term::from(intermediate_tmp.0[0].get_variable());
         add_like_low_constraint +=
@@ -419,22 +475,23 @@ fn apply_add_sub_lui_auipc_mop_inner<F: PrimeField, CS: Circuit<F>>(
         add_like_low_constraint -= Term::from(is_add) * Term::from(out_low);
         add_like_low_constraint -= Term::from(is_auipc) * Term::from(out_low);
         add_like_low_constraint -= Term::from(is_sub) * Term::from(rs1_limbs[0]);
-        add_like_low_constraint += Term::from(is_addmod) * Term::from(out_low);
-        add_like_low_constraint += Term::from(is_submod) * Term::from(out_low);
-        add_like_low_constraint += Term::from(is_mulmod) * Term::from(out_low);
+        add_like_low_constraint -= Term::from(is_addmod) * Term::from(out_low);
+        add_like_low_constraint -= Term::from(is_submod) * Term::from(out_low);
+        add_like_low_constraint -= Term::from(is_mulmod) * Term::from(out_low);
+
         // intermediate carry
         let intermediate_carry_var = intermediate_carry.get_variable().unwrap();
-        add_like_low_constraint +=
+        add_like_low_constraint -=
             Term::from(is_add) * Term::from((carry_shift, intermediate_carry_var));
-        add_like_low_constraint +=
+        add_like_low_constraint -=
             Term::from(is_auipc) * Term::from((carry_shift, intermediate_carry_var));
-        add_like_low_constraint +=
+        add_like_low_constraint -=
             Term::from(is_sub) * Term::from((carry_shift, intermediate_carry_var));
-        add_like_low_constraint +=
+        add_like_low_constraint -=
             Term::from(is_addmod) * Term::from((carry_shift, intermediate_carry_var));
-        add_like_low_constraint +=
+        add_like_low_constraint -=
             Term::from(is_submod) * Term::from((carry_shift, intermediate_carry_var));
-        add_like_low_constraint +=
+        add_like_low_constraint -=
             Term::from(is_mulmod) * Term::from((carry_shift, intermediate_carry_var));
         cs.add_constraint(add_like_low_constraint);
 
@@ -474,14 +531,14 @@ fn apply_add_sub_lui_auipc_mop_inner<F: PrimeField, CS: Circuit<F>>(
         add_like_high_constraint += Term::from(is_addmod) * Term::from(out_high);
         add_like_high_constraint += Term::from(is_submod) * Term::from(out_high);
         add_like_high_constraint += Term::from(is_mulmod) * Term::from(out_high);
-        // intermediate carry
+        // final carry
         let carry_var = carry.get_variable().unwrap();
-        add_like_high_constraint += Term::from(is_add) * Term::from((carry_shift, carry_var));
-        add_like_high_constraint += Term::from(is_auipc) * Term::from((carry_shift, carry_var));
-        add_like_high_constraint += Term::from(is_sub) * Term::from((carry_shift, carry_var));
-        add_like_high_constraint += Term::from(is_addmod) * Term::from((carry_shift, carry_var));
-        add_like_high_constraint += Term::from(is_submod) * Term::from((carry_shift, carry_var));
-        add_like_high_constraint += Term::from(is_mulmod) * Term::from((carry_shift, carry_var));
+        add_like_high_constraint -= Term::from(is_add) * Term::from((carry_shift, carry_var));
+        add_like_high_constraint -= Term::from(is_auipc) * Term::from((carry_shift, carry_var));
+        add_like_high_constraint -= Term::from(is_sub) * Term::from((carry_shift, carry_var));
+        add_like_high_constraint -= Term::from(is_addmod) * Term::from((carry_shift, carry_var));
+        add_like_high_constraint -= Term::from(is_submod) * Term::from((carry_shift, carry_var));
+        add_like_high_constraint -= Term::from(is_mulmod) * Term::from((carry_shift, carry_var));
         cs.add_constraint(add_like_high_constraint);
     }
 

@@ -934,66 +934,48 @@ impl<F: PrimeField, W: WitnessPlacer<F>, const ASSUME_MEMORY_VALUES_ASSIGNED: bo
     #[track_caller]
     fn set_variables_from_lookup_constrained<const M: usize, const N: usize>(
         &mut self,
-        inputs: [LookupInput<F>; M],
-        output_variables: [Variable; N],
-        table_type: Num<F>,
+        lookup_inputs: &[LookupInput<F>; M],
+        output_variables: &[Variable; N],
+        table_type: LookupQueryTableType<F>,
     ) {
-        todo!();
+        // assert!(M + N < self.table_driver.);
+        assert!(lookup_inputs.len() > 0);
 
-        // assert_eq!(M + N, COMMON_TABLE_WIDTH);
-        // assert!(
-        //     table_type != TableType::ZeroEntry.to_num()
-        //         && table_type != TableType::DynamicPlaceholder.to_num()
-        // );
+        let output_variables: [Variable; N] = output_variables.clone();
+        let inputs = lookup_inputs.clone();
+        let table = table_type.clone();
 
-        // if M == COMMON_TABLE_WIDTH {
-        //     assert_eq!(N, 0);
-        //     // just add lookup, no witness evaluation here
+        let value_fn = move |placer: &mut Self::WitnessPlacer| {
+            let table_id = match table {
+                LookupQueryTableType::Constant(table_id) => {
+                    <Self::WitnessPlacer as WitnessTypeSet<F>>::U16::constant(
+                        table_id as u32 as u16,
+                    )
+                }
+                LookupQueryTableType::Variable(var) => placer.get_u16(var),
+                LookupQueryTableType::Expression(..) => {
+                    todo!()
+                }
+            };
+            let input_values: [_; M] = std::array::from_fn(|i| inputs[i].evaluate(placer));
+            let output_values = placer.lookup::<M, N>(&input_values, &table_id);
+            for (var, value) in output_variables.iter().zip(output_values.iter()) {
+                placer.assign_field(*var, value);
+            }
+        };
+        self.set_values(value_fn);
 
-        //     panic!("Please use `enforce_lookup_tuple_for_fixed_table` if no outputs are required");
-        // }
+        let mut inputs = lookup_inputs.to_vec();
+        for el in output_variables.iter() {
+            let as_input = LookupInput::Variable(*el);
+            inputs.push(as_input);
+        }
 
-        // assert!(M == 1 || M == 2);
-
-        // let inputs_vars = inputs.clone();
-        // let value_fn = move |placer: &mut Self::WitnessPlacer| {
-        //     let input_values: [_; M] = std::array::from_fn(|i| inputs_vars[i].evaluate(placer));
-        //     let table_id = if let Num::Constant(c) = table_type {
-        //         <Self::WitnessPlacer as WitnessTypeSet<F>>::U16::constant(c.as_u32_reduced() as u16)
-        //     } else if let Num::Var(v) = table_type {
-        //         placer.get_u16(v)
-        //     } else {
-        //         unreachable!()
-        //     };
-        //     let output_values = placer.lookup::<M, N>(&input_values, &table_id);
-        //     for (var, value) in output_variables.iter().zip(output_values.iter()) {
-        //         placer.assign_field(*var, value);
-        //     }
-        // };
-        // self.set_values(value_fn);
-
-        // let input_len = M;
-        // let row = std::array::from_fn(|idx| {
-        //     if idx < input_len {
-        //         inputs[idx].clone()
-        //     } else {
-        //         LookupInput::Variable(output_variables[idx - input_len])
-        //     }
-        // });
-        // let query = LookupQuery {
-        //     row,
-        //     table: if let Num::Constant(c) = table_type {
-        //         LookupQueryTableType::Constant(TableType::get_table_from_id(
-        //             c.as_u32_reduced() as u32
-        //         ))
-        //     } else if let Num::Var(v) = table_type {
-        //         LookupQueryTableType::Variable(v)
-        //     } else {
-        //         unreachable!()
-        //     },
-        // };
-
-        // self.lookup_storage.push(query);
+        let query = LookupQuery {
+            row: inputs,
+            table: table_type,
+        };
+        self.lookup_storage.push(query);
     }
 
     fn require_invariant(&mut self, variable: Variable, invariant: Invariant) {

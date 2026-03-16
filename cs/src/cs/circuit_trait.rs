@@ -2,6 +2,7 @@ use super::*;
 
 use crate::constraint::Constraint;
 use crate::constraint::Term;
+use crate::cs::circuit::LookupQueryTableType;
 use crate::cs::circuit_output::CircuitOutput;
 use crate::oracle::Placeholder;
 use crate::types::{Boolean, Num};
@@ -705,9 +706,9 @@ pub trait Circuit<F: PrimeField>: Sized {
     #[track_caller]
     fn set_variables_from_lookup_constrained<const M: usize, const N: usize>(
         &mut self,
-        inputs: [LookupInput<F>; M],
-        output_variables: [Variable; N],
-        table_type: Num<F>,
+        inputs: &[LookupInput<F>; M],
+        output_variables: &[Variable; N],
+        table_type: LookupQueryTableType<F>,
     );
 
     // fn set_log(&mut self, opt_ctx: &OptimizationContext<F, Self>, name: &'static str);

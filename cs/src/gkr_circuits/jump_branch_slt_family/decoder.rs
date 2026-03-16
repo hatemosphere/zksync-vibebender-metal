@@ -7,6 +7,7 @@ const SLT_BIT: usize = 2;
 const BRANCH_BIT: usize = 3;
 const RD_IS_ZERO_BIT: usize = 4;
 
+const IGNORE_JUMP_TABLE_FUNCT3: u8 = 0b000;
 const SLT_FUNCT3: u8 = 0b010;
 const SLTU_FUNCT3: u8 = 0b011;
 
@@ -19,6 +20,10 @@ pub struct JumpSltBranchFamilyCircuitMask {
 }
 
 impl JumpSltBranchFamilyCircuitMask {
+    pub fn from_mask(mask: [Boolean; JUMP_SLT_BRANCH_FAMILY_NUM_BITS]) -> Self {
+        Self { inner: mask }
+    }
+
     // getters for our opcodes
     pub fn perform_jal(&self) -> Boolean {
         self.inner[JAL_BIT]
@@ -57,6 +62,9 @@ impl OpcodeFamilyDecoder for JumpSltBranchDecoder {
         let mut bitmask = 0u32;
         let mut funct3 = None;
 
+        // NOTE: SLT/SLTU and BRANCH opcode's funct3s are disjoint, so
+        // we will use single table for resolution in the circuit
+
         match preprocessed_opcode.name {
             InstructionName::Jal => {
                 assert_eq!(preprocessed_opcode.rs1, 0);
@@ -64,6 +72,7 @@ impl OpcodeFamilyDecoder for JumpSltBranchDecoder {
 
                 rd_index = preprocessed_opcode.rd;
                 imm = preprocessed_opcode.imm;
+                funct3 = Some(IGNORE_JUMP_TABLE_FUNCT3);
                 bitmask |= 1 << JAL_BIT;
                 if preprocessed_opcode.rd == 0 {
                     bitmask |= 1 << RD_IS_ZERO_BIT;
@@ -76,6 +85,7 @@ impl OpcodeFamilyDecoder for JumpSltBranchDecoder {
                 rs1_index = preprocessed_opcode.rs1;
                 rd_index = preprocessed_opcode.rd;
                 imm = preprocessed_opcode.imm;
+                funct3 = Some(IGNORE_JUMP_TABLE_FUNCT3);
                 bitmask |= 1 << JALR_BIT;
                 if preprocessed_opcode.rd == 0 {
                     bitmask |= 1 << RD_IS_ZERO_BIT;
@@ -88,7 +98,7 @@ impl OpcodeFamilyDecoder for JumpSltBranchDecoder {
                 rs1_index = preprocessed_opcode.rs1;
                 rs2_index = preprocessed_opcode.rs2 as u16;
                 imm = preprocessed_opcode.imm;
-                funct3 = Some(preprocessed_opcode.rd); // Stored as rd index
+                funct3 = Some(preprocessed_opcode.rd); // Funct3 is stored as rd index from decoder
                 bitmask |= 1 << BRANCH_BIT;
                 bitmask |= 1 << RD_IS_ZERO_BIT;
             }

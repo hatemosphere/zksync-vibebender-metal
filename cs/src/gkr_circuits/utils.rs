@@ -61,3 +61,39 @@ pub fn calculate_pc_next_no_overflows_with_range_checks<F: PrimeField, CS: Circu
 
     circuit.add_constraint_allow_explicit_linear_prevent_optimizations(pc_high_constraint);
 }
+
+pub(crate) fn update_intermediate_carry_value<
+    F: PrimeField,
+    W: WitnessPlacer<F>,
+    const IS_SUB: bool,
+>(
+    intermediate_carry: &mut <W as WitnessTypeSet<F>>::Mask,
+    flag: &<W as WitnessTypeSet<F>>::Mask,
+    a: &<W as WitnessTypeSet<F>>::U16,
+    b: &<W as WitnessTypeSet<F>>::U16,
+    imm_for_b: Option<&<W as WitnessTypeSet<F>>::U16>,
+) {
+    if IS_SUB {
+        let (tmp, of0) = a.overflowing_sub(b);
+        if let Some(imm_for_b) = imm_for_b {
+            let (_, of1) = tmp.overflowing_sub(imm_for_b);
+            let of = of0.or(&of1);
+            *intermediate_carry =
+                <W as WitnessTypeSet<F>>::Mask::select(flag, &of, &*intermediate_carry);
+        } else {
+            *intermediate_carry =
+                <W as WitnessTypeSet<F>>::Mask::select(flag, &of0, &*intermediate_carry);
+        }
+    } else {
+        let (tmp, of0) = a.overflowing_add(b);
+        if let Some(imm_for_b) = imm_for_b {
+            let (_, of1) = tmp.overflowing_add(imm_for_b);
+            let of = of0.or(&of1);
+            *intermediate_carry =
+                <W as WitnessTypeSet<F>>::Mask::select(flag, &of, &*intermediate_carry);
+        } else {
+            *intermediate_carry =
+                <W as WitnessTypeSet<F>>::Mask::select(flag, &of0, &*intermediate_carry);
+        }
+    }
+}

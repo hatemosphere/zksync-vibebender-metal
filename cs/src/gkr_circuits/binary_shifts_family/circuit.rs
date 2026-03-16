@@ -16,7 +16,10 @@ const TABLES_TOTAL_WIDTH: usize = 7;
 pub fn shift_binop_tables() -> Vec<TableType> {
     vec![
         TableType::ZeroEntry, // we need it, as we use conditional lookup enforcements
-        // TableType::TruncateShiftAmount,
+        TableType::TruncateShiftAmountAndRangeCheck8,
+        TableType::GetSignExtensionByte,
+        TableType::ShiftImplementationHighestByte,
+        TableType::ShiftImplementationNotHighestByte,
         TableType::Xor,
         TableType::And,
         TableType::Or,
@@ -164,7 +167,7 @@ fn apply_shift_binop_inner<F: PrimeField, CS: Circuit<F>>(
             &[LookupInput::from(inputs.decoder_data.imm[1])],
             &[binary_ops_imm_sign_ext],
             LookupInput::from(
-                F::from_u32(TableType::TruncateShiftAmount as u32).expect("must fit"),
+                F::from_u32(TableType::GetSignExtensionByte as u32).expect("must fit"),
             ),
             is_binary_op,
         );
@@ -202,7 +205,7 @@ fn apply_shift_binop_inner<F: PrimeField, CS: Circuit<F>>(
             ],
             &[truncated_shift_amount],
             LookupInput::from(
-                F::from_u32(TableType::TruncateShiftAmount as u32).expect("must fit"),
+                F::from_u32(TableType::TruncateShiftAmountAndRangeCheck8 as u32).expect("must fit"),
             ),
             is_shift,
         );
@@ -210,9 +213,9 @@ fn apply_shift_binop_inner<F: PrimeField, CS: Circuit<F>>(
             let a = rs1_limbs[i];
             let outs = shift_output_chunks[i];
             let table_id = if i == 3 {
-                TableType::ShiftImplementation
+                TableType::ShiftImplementationHighestByte
             } else {
-                TableType::ShiftImplementation
+                TableType::ShiftImplementationNotHighestByte
             };
 
             peek_lookup_values_unconstrained_into_variables(
@@ -260,11 +263,11 @@ fn apply_shift_binop_inner<F: PrimeField, CS: Circuit<F>>(
         let mut table_id = Constraint::empty();
         table_id += Term::from(is_shift)
             * Term::from_field(
-                F::from_u32(TableType::TruncateShiftAmount as u32).expect("must fit"),
+                F::from_u32(TableType::TruncateShiftAmountAndRangeCheck8 as u32).expect("must fit"),
             );
         table_id += Term::from(is_binary_op)
             * Term::from_field(
-                F::from_u32(TableType::TruncateShiftAmount as u32).expect("must fit"),
+                F::from_u32(TableType::GetSignExtensionByte as u32).expect("must fit"),
             );
         let table_id = cs.add_intermediate_named_variable_from_constraint(
             table_id,
@@ -319,9 +322,9 @@ fn apply_shift_binop_inner<F: PrimeField, CS: Circuit<F>>(
 
             let table_id = {
                 let shift_table_id = if i == 3 {
-                    TableType::ShiftImplementation
+                    TableType::ShiftImplementationHighestByte
                 } else {
-                    TableType::ShiftImplementation
+                    TableType::ShiftImplementationNotHighestByte
                 };
                 let mut table_id = Constraint::empty();
                 table_id += Term::from(is_shift)
