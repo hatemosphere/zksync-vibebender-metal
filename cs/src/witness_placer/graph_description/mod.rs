@@ -191,6 +191,7 @@ pub struct WitnessGraphCreator<F: PrimeField> {
     )>,
     current_stats_resolver: Option<ResolverDetails<F>>,
     variables_considered_assigned: BTreeSet<Variable>, // We will consider some variables as assigned by external source
+    pub variable_names: HashMap<Variable, String>,
     pub resolvers_data: Vec<ResolverDetails<F>>,
     _marker: core::marker::PhantomData<F>,
 }
@@ -461,6 +462,7 @@ impl<F: PrimeField> WitnessGraphCreator<F> {
             maybe_lookups: Vec::new(),
             current_stats_resolver: None,
             resolvers_data: Vec::new(),
+            variable_names: HashMap::new(),
             variables_considered_assigned: BTreeSet::new(),
             _marker: core::marker::PhantomData,
         }
@@ -505,7 +507,11 @@ impl<F: PrimeField> WitnessGraphCreator<F> {
             }
 
             let Some(el) = el else {
-                panic!("unassigned value for variable {:?}", variable);
+                if let Some(var_name) = self.variable_names.get(&variable) {
+                    panic!("unassigned value for variable {:?}: {}", variable, var_name);
+                } else {
+                    panic!("unassigned value for variable {:?}", variable);
+                }
             };
 
             match el {

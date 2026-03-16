@@ -599,6 +599,7 @@ mod test {
 
     use super::*;
     use crate::gkr_compiler::compile_unrolled_circuit_state_transition_into_gkr;
+    use crate::gkr_compiler::dump_ssa_witness_eval_form_for_unrolled_circuit;
     use crate::utils::serialize_to_file;
 
     #[test]
@@ -619,18 +620,18 @@ mod test {
         );
     }
 
-    // #[test]
-    // fn compile_add_sub_lui_auipc_mop_gkr_witness_graph() {
-    //     skip_if_ci!();
-    //     use ::field::baby_bear::base::BabyBearField;
+    #[test]
+    fn compile_add_sub_lui_auipc_mop_gkr_witness_graph() {
+        skip_if_ci!();
+        use ::field::baby_bear::base::BabyBearField;
 
-    //     let ssa_forms = dump_ssa_witness_eval_form_for_unrolled_circuit::<BabyBearField>(
-    //         &|cs| add_sub_lui_auipc_mop_table_addition_fn(cs),
-    //         &|cs| add_sub_lui_auipc_mop_circuit_with_preprocessed_bytecode_for_gkr(cs),
-    //     );
-    //     serialize_to_file(
-    //         &ssa_forms,
-    //         "compiled_circuits/add_sub_lui_auipc_mop_preprocessed_ssa_gkr.json",
-    //     );
-    // }
+        let ssa_forms = dump_ssa_witness_eval_form_for_unrolled_circuit::<BabyBearField>(
+            &|cs| add_sub_lui_auipc_mop_table_addition_fn(cs),
+            &|cs| add_sub_lui_auipc_mop_circuit_with_preprocessed_bytecode_for_gkr(cs),
+        );
+        serialize_to_file(
+            &ssa_forms,
+            "compiled_circuits/add_sub_lui_auipc_mop_preprocessed_ssa_gkr.json",
+        );
+    }
 }

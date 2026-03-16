@@ -814,7 +814,10 @@ pub fn dump_wintess_graph_for_unrolled_circuit<F: PrimeField>(
     (table_addition_fn)(&mut cs);
     (circuit_fn)(&mut cs);
 
-    let (_, witness_placer) = cs.finalize();
+    let (artifact, mut witness_placer) = cs.finalize();
+    if let Some(witness_placer) = witness_placer.as_mut() {
+        witness_placer.variable_names = artifact.variable_names.clone();
+    }
 
     witness_placer.unwrap()
 }

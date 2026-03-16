@@ -182,16 +182,12 @@ impl<F: PrimeField, W: WitnessPlacer<F>, const ASSUME_MEMORY_VALUES_ASSIGNED: bo
         self.variables_from_constraints
             .insert(new_var, constraint.clone());
 
-        // use crate::cs::utils::collapse_max_quadratic_constraint_into;
-        // collapse_max_quadratic_constraint_into(self, constraint.clone(), new_var);
+        // NOTE: even though we did push variable into intermediate layer,
+        // we still need to resolve it's witness because it may be a dependency for something else,
+        // that can also involve lookups and multiplicity counting
 
-        // constraint -= Term::from(new_var);
-        // if constraint.degree() == 2 {
-        //     self.add_constraint(constraint);
-        // } else {
-        //     assert_eq!(constraint.degree(), 1);
-        //     self.add_constraint_allow_explicit_linear_prevent_optimizations(constraint);
-        // }
+        use crate::cs::utils::collapse_max_quadratic_constraint_into;
+        collapse_max_quadratic_constraint_into(self, constraint.clone(), new_var);
 
         new_var
     }
@@ -365,6 +361,11 @@ impl<F: PrimeField, W: WitnessPlacer<F>, const ASSUME_MEMORY_VALUES_ASSIGNED: bo
                         self.add_named_variable(&format!("{}[{}]", name, i))
                     });
 
+                    println!(
+                        "Created variables {:?} for mem access {} read timestamp",
+                        vars, name
+                    );
+
                     if Self::ASSUME_MEMORY_VALUES_ASSIGNED {
                         let value_fn = move |placer: &mut Self::WitnessPlacer| {
                             for el in vars.iter() {
@@ -396,6 +397,10 @@ impl<F: PrimeField, W: WitnessPlacer<F>, const ASSUME_MEMORY_VALUES_ASSIGNED: bo
                         name,
                     );
                     let read_value = read_value.0.map(|el| el.get_variable());
+                    println!(
+                        "Created variables {:?} for mem access {} read value",
+                        read_value, name
+                    );
                     let read_value = WordRepresentation::U16Limbs(read_value);
 
                     let access = MemoryAccess::RegisterOnly(RegisterAccess {
@@ -413,7 +418,18 @@ impl<F: PrimeField, W: WitnessPlacer<F>, const ASSUME_MEMORY_VALUES_ASSIGNED: bo
                     let read_value: [Variable; 4] = std::array::from_fn(|i| {
                         self.add_named_variable(&format!("{}[{}]", name, i))
                     });
-                    if Self::ASSUME_MEMORY_VALUES_ASSIGNED == false {
+                    println!(
+                        "Created variables {:?} for mem access {} read value",
+                        read_value, name
+                    );
+                    if Self::ASSUME_MEMORY_VALUES_ASSIGNED {
+                        let value_fn = move |placer: &mut Self::WitnessPlacer| {
+                            for el in read_value.iter() {
+                                placer.assume_assigned(*el);
+                            }
+                        };
+                        self.set_values(value_fn);
+                    } else {
                         let value_fn = move |placer: &mut Self::WitnessPlacer| {
                             let value = placer.get_oracle_u32(read_value_placeholder);
                             let low = value.truncate();

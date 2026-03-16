@@ -753,6 +753,7 @@ mod test {
 
     use super::*;
     use crate::gkr_compiler::compile_unrolled_circuit_state_transition_into_gkr;
+    use crate::gkr_compiler::dump_ssa_witness_eval_form_for_unrolled_circuit;
     use crate::utils::serialize_to_file;
 
     #[test]
@@ -773,16 +774,18 @@ mod test {
         );
     }
 
-    // #[test]
-    // #[serial_test::serial(cs_codegen)]
-    // fn compile_jump_branch_slt_witness_graph() {
-    //     skip_if_ci!();
-    //     use ::field::Mersenne31Field;
+    #[test]
+    fn compile_jump_branch_slt_gkr_witness_graph() {
+        skip_if_ci!();
+        use ::field::baby_bear::base::BabyBearField;
 
-    //     let ssa_forms = dump_ssa_witness_eval_form_for_unrolled_circuit::<Mersenne31Field>(
-    //         &|cs| jump_branch_slt_table_addition_fn(cs),
-    //         &|cs| jump_branch_slt_circuit_with_preprocessed_bytecode::<_, _, true>(cs),
-    //     );
-    //     serialize_to_file(&ssa_forms, "jump_branch_slt_preprocessed_ssa.json");
-    // }
+        let ssa_forms = dump_ssa_witness_eval_form_for_unrolled_circuit::<BabyBearField>(
+            &|cs| jump_branch_slt_table_addition_fn(cs),
+            &|cs| jump_branch_slt_circuit_with_preprocessed_bytecode_for_gkr(cs),
+        );
+        serialize_to_file(
+            &ssa_forms,
+            "compiled_circuits/jump_branch_slt_preprocessed_ssa_gkr.json",
+        );
+    }
 }

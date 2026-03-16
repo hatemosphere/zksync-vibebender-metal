@@ -983,6 +983,13 @@ impl<F: PrimeField> Register<F> {
             };
 
             cs.set_values(value_fn);
+        } else {
+            let value_fn = move |placer: &mut CS::WitnessPlacer| {
+                for el in vars.iter() {
+                    placer.assume_assigned(*el);
+                }
+            };
+            cs.set_values(value_fn);
         }
 
         new
