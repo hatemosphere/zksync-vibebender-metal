@@ -19,8 +19,8 @@ mod jump_branch_opcode_related;
 // mod memory_opcode_related;
 // mod range_checks_and_decompositions;
 // mod rom_related;
-// mod shift_opcode_related;
 mod quote;
+mod shift_opcode_related;
 mod zero_entry;
 
 pub use self::binops::*;
@@ -30,7 +30,7 @@ pub use self::jump_branch_opcode_related::*;
 // pub use self::memory_opcode_related::*;
 // pub use self::range_checks_and_decompositions::*;
 // pub use self::rom_related::*;
-// pub use self::shift_opcode_related::*;
+pub use self::shift_opcode_related::*;
 pub use self::zero_entry::*;
 
 pub use super::definitions::TableType;
@@ -660,6 +660,12 @@ impl TableType {
             }
             TableType::RegIsZero => LookupWrapper::Initialized(create_reg_is_zero_table::<F>(id)),
             TableType::U16GetSign => LookupWrapper::Initialized(create_u16_get_sign_table::<F>(id)),
+            TableType::TruncateShiftAmountAndRangeCheck8 => LookupWrapper::Initialized(
+                create_truncate_shift_amount_and_range_check_8_table::<F>(id),
+            ),
+            TableType::GetSignExtensionByte => {
+                LookupWrapper::Initialized(create_sign_extension_byte_table::<F>(id))
+            }
             TableType::And => LookupWrapper::Initialized(create_and_table::<F>(id)),
             TableType::Xor => LookupWrapper::Initialized(create_xor_table::<F, 8>(id)),
             TableType::Or => LookupWrapper::Initialized(create_or_table::<F>(id)),
@@ -668,6 +674,9 @@ impl TableType {
             }
             TableType::JumpCleanupOffset => {
                 LookupWrapper::Initialized(create_jump_cleanup_offset_table(id))
+            }
+            TableType::ShiftImplementationOverBytes => {
+                LookupWrapper::Initialized(create_shift_implementation_table::<F>(id))
             }
             // TableType::RangeCheck8x8 => LookupWrapper::Dimensional3(
             //     create_formal_width_3_range_check_table_for_two_tuple::<F, 8>(id),

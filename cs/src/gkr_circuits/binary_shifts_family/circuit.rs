@@ -8,7 +8,7 @@ use crate::tables::TableDriver;
 use crate::types::*;
 use field::PrimeField;
 
-const TABLES_TOTAL_WIDTH: usize = 7;
+const TABLES_TOTAL_WIDTH: usize = 8;
 
 // NOTE: this circuit should specify non-dummy CSR table in proving/setup. while compilation in tests
 // takes case of properly computing offsets by using dummy table
@@ -18,8 +18,7 @@ pub fn shift_binop_tables() -> Vec<TableType> {
         TableType::ZeroEntry, // we need it, as we use conditional lookup enforcements
         TableType::TruncateShiftAmountAndRangeCheck8,
         TableType::GetSignExtensionByte,
-        TableType::ShiftImplementationHighestByte,
-        TableType::ShiftImplementationNotHighestByte,
+        TableType::ShiftImplementationOverBytes,
         TableType::Xor,
         TableType::And,
         TableType::Or,
@@ -212,15 +211,13 @@ fn apply_shift_binop_inner<F: PrimeField, CS: Circuit<F>>(
         for i in 0..4 {
             let a = rs1_limbs[i];
             let outs = shift_output_chunks[i];
-            let table_id = if i == 3 {
-                TableType::ShiftImplementationHighestByte
-            } else {
-                TableType::ShiftImplementationNotHighestByte
-            };
+            let table_id = TableType::ShiftImplementationOverBytes;
+            let byte_index = i;
 
             peek_lookup_values_unconstrained_into_variables(
                 cs,
                 &[
+                    LookupInput::from(F::from_u32_unchecked(byte_index as u32)),
                     LookupInput::from(a),
                     LookupInput::from(shift_amount_constraint.clone()),
                     LookupInput::from(inputs.decoder_data.funct3.expect("is present")),
@@ -289,20 +286,24 @@ fn apply_shift_binop_inner<F: PrimeField, CS: Circuit<F>>(
             let mut constraints: [Constraint<F>; TABLES_TOTAL_WIDTH] =
                 std::array::from_fn(|_| Constraint::empty());
 
+            let byte_index = i;
+
             constraints[0] += Term::from(is_binary_op) * Term::from(rs1_limbs[i]);
-            constraints[0] += Term::from(is_shift) * Term::from(rs1_limbs[i]);
+            constraints[0] += Term::from(is_shift) * Term::from(byte_index as u32);
 
             constraints[1] += Term::from(is_binary_op) * Term::from(rs2_limbs[i]);
-            constraints[1] += shift_amount_constraint.clone() * Term::from(is_shift);
+            constraints[1] += Term::from(is_shift) * Term::from(rs1_limbs[i]);
 
             constraints[2] += Term::from(is_binary_op) * Term::from(binary_ops_outputs[i]);
-            constraints[2] +=
+            constraints[2] += shift_amount_constraint.clone() * Term::from(is_shift);
+
+            constraints[3] +=
                 Term::from(is_shift) * Term::from(inputs.decoder_data.funct3.expect("is present"));
 
             let shift_outputs = shift_output_chunks[i];
 
             for j in 0..4 {
-                constraints[3 + j] += Term::from(is_shift) * Term::from(shift_outputs[j]);
+                constraints[4 + j] += Term::from(is_shift) * Term::from(shift_outputs[j]);
             }
 
             let input_vars: [Variable; TABLES_TOTAL_WIDTH] = constraints
@@ -321,11 +322,7 @@ fn apply_shift_binop_inner<F: PrimeField, CS: Circuit<F>>(
             let lookup_inputs = input_vars.map(|el| LookupInput::from(el));
 
             let table_id = {
-                let shift_table_id = if i == 3 {
-                    TableType::ShiftImplementationHighestByte
-                } else {
-                    TableType::ShiftImplementationNotHighestByte
-                };
+                let shift_table_id = TableType::ShiftImplementationOverBytes;
                 let mut table_id = Constraint::empty();
                 table_id += Term::from(is_shift)
                     * Term::from_field(F::from_u32(shift_table_id as u32).expect("must fit"));

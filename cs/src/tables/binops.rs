@@ -121,3 +121,25 @@ pub fn create_and_not_table<F: PrimeField>(id: u32) -> LookupTable<F> {
         id,
     )
 }
+
+pub fn create_sign_extension_byte_table<F: PrimeField>(id: u32) -> LookupTable<F> {
+    let keys = key_for_continuous_log2_range::<F, 1>(8);
+    const TABLE_NAME: &'static str = "Sign extension byte for binops immediate table";
+    LookupTable::create_table_from_key_and_pure_generation_fn(
+        &keys,
+        TABLE_NAME.to_string(),
+        1,
+        1,
+        |keys| {
+            let a = keys[0].as_u32_reduced();
+            let input_sign = (a >> 7) > 0;
+
+            let mut result = ArrayVec::new();
+            result.push(F::from_u32_unchecked((input_sign as u32) * 0xff));
+
+            (a as usize, result)
+        },
+        Some(first_key_index_gen_fn::<F>),
+        id,
+    )
+}
