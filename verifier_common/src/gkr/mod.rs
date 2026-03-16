@@ -1,6 +1,9 @@
 use core::mem::MaybeUninit;
 
-use blake2s_u32::{AlignedArray64, DelegatedBlake2sState, BLAKE2S_DIGEST_SIZE_U32_WORDS};
+use blake2s_u32::{
+    AlignedArray64, DelegatedBlake2sState, BLAKE2S_BLOCK_SIZE_U32_WORDS,
+    BLAKE2S_DIGEST_SIZE_U32_WORDS,
+};
 use cs::definitions::gkr_static_types::{
     OutputType, StaticGKRLayerDescription, StaticNoFieldGKRRelation,
     StaticNoFieldMaxQuadraticConstraintsGKRRelation,
@@ -136,8 +139,11 @@ where
 }
 
 #[inline(always)]
-fn draw_field_els_into<F: PrimeField, E: FieldExtension<F>>(seed: &mut Seed, dst: &mut [E])
-where
+fn draw_field_els_into<F: PrimeField, E: FieldExtension<F>>(
+    hasher: &mut DelegatedBlake2sState,
+    seed: &mut Seed,
+    dst: &mut [E],
+) where
     [(); E::DEGREE]: Sized,
 {
     use field::FixedArrayConvertible;
@@ -150,7 +156,7 @@ where
 
     unsafe {
         let dst = core::slice::from_raw_parts_mut(words.as_mut_ptr() as *mut u32, padded);
-        Blake2sTranscript::draw_randomness(seed, dst);
+        Blake2sTranscript::draw_randomness_using_hasher(hasher, seed, dst);
     }
 
     for (i, chunk) in words[..n * E::DEGREE]
@@ -167,12 +173,15 @@ where
 }
 
 #[inline(always)]
-fn draw_one_field_el<F: PrimeField, E: FieldExtension<F> + Field>(seed: &mut Seed) -> E
+fn draw_one_field_el<F: PrimeField, E: FieldExtension<F> + Field>(
+    hasher: &mut DelegatedBlake2sState,
+    seed: &mut Seed,
+) -> E
 where
     [(); E::DEGREE]: Sized,
 {
     let mut dst = [E::ZERO; 1];
-    draw_field_els_into::<F, E>(seed, &mut dst);
+    draw_field_els_into::<F, E>(hasher, seed, &mut dst);
     dst[0]
 }
 
@@ -198,15 +207,14 @@ fn dot_eq<E: Field>(values: &[E], eq: &[E]) -> E {
 fn eval_constraint_kernel<
     F: PrimeField,
     E: FieldExtension<F> + Field,
-    const ADDRS: usize,
     const MAX_POW: usize,
 >(
     rel: &StaticNoFieldMaxQuadraticConstraintsGKRRelation,
     challenge_powers: &[E; MAX_POW],
-    evals: &LazyVec<[E; 2], ADDRS>,
+    evals: &[[E; 2]],
     j: usize,
 ) -> E {
-    let get_value_at = |idx: usize| &evals.get(idx)[j];
+    let get_value_at = |idx: usize| unsafe { &evals.get_unchecked(idx)[j] };
 
     let mut result = E::ZERO;
 
@@ -253,11 +261,10 @@ fn eval_constraint_kernel<
 fn compute_standard_final_step_accumulator<
     F: PrimeField,
     E: FieldExtension<F> + Field,
-    const ADDRS: usize,
     const MAX_POW: usize,
 >(
     layer: &StaticGKRLayerDescription,
-    final_step_evaluations: &LazyVec<[E; 2], ADDRS>,
+    final_step_evaluations: &[[E; 2]],
     batching_challenge: E,
     lookup_additive_challenge: E,
     constraints_batch_challenge: E,
@@ -296,7 +303,7 @@ where
             Rel::EnforceConstraintsMaxQuadratic { input } => {
                 let bc = get_challenge();
                 for (j, acc_j) in acc.iter_mut().enumerate() {
-                    let val = eval_constraint_kernel::<F, E, ADDRS, MAX_POW>(
+                    let val = eval_constraint_kernel::<F, E, MAX_POW>(
                         input,
                         &challenge_powers,
                         final_step_evaluations,
@@ -313,7 +320,7 @@ where
             | Rel::MaskIntoIdentityProduct { .. } => {
                 let bc = get_challenge();
                 for (j, acc_j) in acc.iter_mut().enumerate() {
-                    let val = eval_single_output_relation::<F, E, ADDRS>(
+                    let val = eval_single_output_relation::<F, E>(
                         relation,
                         final_step_evaluations,
                         lookup_additive_challenge,
@@ -332,7 +339,7 @@ where
                 let bc0 = get_challenge();
                 let bc1 = get_challenge();
                 for (j, acc_j) in acc.iter_mut().enumerate() {
-                    let [out0, out1] = eval_two_output_relation::<F, E, ADDRS>(
+                    let [out0, out1] = eval_two_output_relation::<F, E>(
                         relation,
                         final_step_evaluations,
                         lookup_additive_challenge,
@@ -362,14 +369,14 @@ where
 }
 
 #[inline(always)]
-fn eval_single_output_relation<F: PrimeField, E: FieldExtension<F> + Field, const ADDRS: usize>(
+fn eval_single_output_relation<F: PrimeField, E: FieldExtension<F> + Field>(
     relation: &StaticNoFieldGKRRelation,
-    evals: &LazyVec<[E; 2], ADDRS>,
+    evals: &[[E; 2]],
     _lookup_additive_challenge: E,
     j: usize,
 ) -> E {
     use StaticNoFieldGKRRelation as Rel;
-    let get = |idx: usize| &evals.get(idx)[j];
+    let get = |idx: usize| unsafe { &evals.get_unchecked(idx)[j] };
 
     match relation {
         Rel::Copy { input, .. } => *get(*input),
@@ -392,14 +399,14 @@ fn eval_single_output_relation<F: PrimeField, E: FieldExtension<F> + Field, cons
 }
 
 #[inline(always)]
-fn eval_two_output_relation<F: PrimeField, E: FieldExtension<F> + Field, const ADDRS: usize>(
+fn eval_two_output_relation<F: PrimeField, E: FieldExtension<F> + Field>(
     relation: &StaticNoFieldGKRRelation,
-    evals: &LazyVec<[E; 2], ADDRS>,
+    evals: &[[E; 2]],
     lookup_additive_challenge: E,
     j: usize,
 ) -> [E; 2] {
     use StaticNoFieldGKRRelation as Rel;
-    let get = |idx: usize| &evals.get(idx)[j];
+    let get = |idx: usize| unsafe { &evals.get_unchecked(idx)[j] };
     let gamma = lookup_additive_challenge;
 
     match relation {
@@ -477,11 +484,10 @@ fn eval_two_output_relation<F: PrimeField, E: FieldExtension<F> + Field, const A
 fn compute_dim_reducing_final_step_accumulator<
     F: PrimeField,
     E: FieldExtension<F> + Field,
-    const ADDRS: usize,
 >(
     output_groups: &[GKROutputGroup],
     input_sorted_indices: &[usize],
-    final_step_evaluations: &LazyVec<[E; 4], ADDRS>,
+    final_step_evaluations: &[[E; 4]],
     batching_challenge: E,
 ) -> [E; 2]
 where
@@ -506,7 +512,7 @@ where
                     let sorted_idx = unsafe { *input_sorted_indices.get_unchecked(iter_idx) };
                     iter_idx += 1;
                     let bc = get_challenge();
-                    let evals = final_step_evaluations.get(sorted_idx);
+                    let evals = unsafe { final_step_evaluations.get_unchecked(sorted_idx) };
                     unsafe {
                         let mut v01 = *evals.get_unchecked(0);
                         v01.mul_assign(evals.get_unchecked(1));
@@ -528,8 +534,8 @@ where
                 let si0 = unsafe { *input_sorted_indices.get_unchecked(iter_idx) };
                 let si1 = unsafe { *input_sorted_indices.get_unchecked(iter_idx + 1) };
                 iter_idx += 2;
-                let v0 = final_step_evaluations.get(si0);
-                let v1 = final_step_evaluations.get(si1);
+                let v0 = unsafe { final_step_evaluations.get_unchecked(si0) };
+                let v1 = unsafe { final_step_evaluations.get_unchecked(si1) };
                 unsafe {
                     // j=0
                     let mut num0 = *v0.get_unchecked(0);
@@ -807,7 +813,7 @@ where
             &commit_buf,
             total_commit_words,
         );
-        let r_k = draw_one_field_el::<F, E>(seed);
+        let r_k = draw_one_field_el::<F, E>(&mut hasher, seed);
 
         // Fused eval_cubic_poly + eval_eq to share r_k in registers
         {
@@ -881,6 +887,7 @@ pub fn verify_gkr_sumcheck<
     const EVALS: usize,
     const TRANSCRIPT_U32: usize,
     const MAX_POW: usize,
+    const EVAL_BUF: usize,
 >(
     config: &'cfg GKRVerifierConfig,
 ) -> Result<GKRVerifierOutput<'cfg, E, ROUNDS, ADDRS>, GKRVerificationError>
@@ -895,10 +902,11 @@ where
         transcript_buf.push(I::read_word());
     }
     let mut seed = Blake2sTranscript::commit_initial(transcript_buf.as_slice());
+    let mut hasher = DelegatedBlake2sState::new();
 
     // init_challenges[0] is lookup_alpha for lookups preprocessing - not needed by the verifier
     let mut init_challenges = [E::ZERO; 3];
-    draw_field_els_into::<F, E>(&mut seed, &mut init_challenges);
+    draw_field_els_into::<F, E>(&mut hasher, &mut seed, &mut init_challenges);
     let lookup_additive_challenge = init_challenges[1];
     let constraints_batch_challenge = init_challenges[2];
 
@@ -930,7 +938,7 @@ where
 
     let num_challenges = config.final_trace_size_log_2 + 1;
     let mut all_challenges = [E::ZERO; ROUNDS + 1];
-    draw_field_els_into::<F, E>(&mut seed, &mut all_challenges[..num_challenges]);
+    draw_field_els_into::<F, E>(&mut hasher, &mut seed, &mut all_challenges[..num_challenges]);
     let mut batching_challenge = all_challenges[num_challenges - 1];
     let evaluation_point_len = config.final_trace_size_log_2;
 
@@ -1000,22 +1008,32 @@ where
                 circuit_layer_idx,
             )?;
 
-        let mut final_step_evals: LazyVec<[E; 4], ADDRS> = LazyVec::new();
-
         let num_input_addrs = layer_meta.sorted_dedup_input_addrs.len();
+        // 4 ext4 evals per addr = 4 * E::DEGREE u32 words per addr
+        let data_words = num_input_addrs * 4 * E::DEGREE;
+        let total_commit_words = BLAKE2S_DIGEST_SIZE_U32_WORDS + data_words;
 
-        for _ in 0..num_input_addrs {
-            let mut vals = [E::ZERO; 4];
-            read_field_els::<F, E, I>(&mut vals);
-            final_step_evals.push(vals);
+        // Read NDS directly into aligned buffer at offset 8 (leaving room for seed)
+        let mut eval_buf = AlignedArray64::<u32, EVAL_BUF>::new_uninit();
+        for i in 0..data_words {
+            eval_buf.write(BLAKE2S_DIGEST_SIZE_U32_WORDS + i, I::read_word());
         }
+        // Zero-pad the last block
+        let padded = total_commit_words.next_multiple_of(BLAKE2S_BLOCK_SIZE_U32_WORDS);
+        unsafe { eval_buf.zero_range(BLAKE2S_DIGEST_SIZE_U32_WORDS + data_words, padded) };
 
-        // final step consistency check
+        // Reinterpret data region as &[[E; 4]] for computation, then do all
+        // reads from eval_buf before writing the seed for the commit.
         {
-            let f = compute_dim_reducing_final_step_accumulator::<F, E, ADDRS>(
+            let final_step_evals: &[[E; 4]] = unsafe {
+                eval_buf.data_as_slice(BLAKE2S_DIGEST_SIZE_U32_WORDS, num_input_addrs)
+            };
+
+            // final step consistency check
+            let f = compute_dim_reducing_final_step_accumulator::<F, E>(
                 layer_meta.output_groups,
                 layer_meta.input_sorted_indices,
-                &final_step_evals,
+                final_step_evals,
                 batching_challenge,
             );
             debug_assert!(1 <= prev_point_len);
@@ -1028,17 +1046,17 @@ where
                 circuit_layer_idx,
             )?;
         }
+        // immutable borrow of eval_buf ends here
 
-        {
-            // all dim-reducing rows have exactly 4 evals, stored contiguously
-            let flat = final_step_evals.as_slice();
-            let flat_e =
-                unsafe { core::slice::from_raw_parts(flat.as_ptr() as *const E, flat.len() * 4) };
-            commit_field_els::<F, E>(&mut seed, flat_e);
-        }
+        // Write seed and commit from the same aligned buffer
+        eval_buf.copy_from_slice(0, &seed.0);
+        let eval_buf = unsafe { eval_buf.assume_init_ref() };
+        Blake2sTranscript::commit_with_seed_using_hasher_and_aligned_buffer(
+            &mut hasher, &mut seed, eval_buf, total_commit_words,
+        );
 
         let mut draw_buf = [E::ZERO; 3];
-        draw_field_els_into::<F, E>(&mut seed, &mut draw_buf);
+        draw_field_els_into::<F, E>(&mut hasher, &mut seed, &mut draw_buf);
         let r_before_last = draw_buf[0];
         let r_last = draw_buf[1];
         let next_batching = draw_buf[2];
@@ -1054,9 +1072,14 @@ where
         let mut eq4 = [E::ZERO; 4];
         make_eq_poly_last(&[r_before_last, r_last], &mut eq4);
 
+        // Reinterpret again for prev_claims computation (seed region was overwritten
+        // but data region at offset 8+ is unchanged)
+        let final_step_evals: &[[E; 4]] = unsafe {
+            eval_buf.data_as_slice(BLAKE2S_DIGEST_SIZE_U32_WORDS, num_input_addrs)
+        };
         prev_claims.clear();
         for i in 0..num_input_addrs {
-            let evals = final_step_evals.get(i);
+            let evals = unsafe { final_step_evals.get_unchecked(i) };
             let claim = dot_eq(evals, &eq4);
             prev_claims.push(claim);
         }
@@ -1089,18 +1112,26 @@ where
             )?;
 
         let num_dedup_addrs = layer_meta.sorted_dedup_input_addrs.len();
+        // 2 ext4 evals per addr = 2 * E::DEGREE u32 words per addr
+        let data_words = num_dedup_addrs * 2 * E::DEGREE;
+        let total_commit_words = BLAKE2S_DIGEST_SIZE_U32_WORDS + data_words;
 
-        let mut final_step_evals: LazyVec<[E; 2], ADDRS> = LazyVec::new();
-        for _ in 0..num_dedup_addrs {
-            let mut vals = [E::ZERO; 2];
-            read_field_els::<F, E, I>(&mut vals);
-            final_step_evals.push(vals);
+        // Read NDS directly into aligned buffer (reuse EVAL_BUF size)
+        let mut eval_buf = AlignedArray64::<u32, EVAL_BUF>::new_uninit();
+        for i in 0..data_words {
+            eval_buf.write(BLAKE2S_DIGEST_SIZE_U32_WORDS + i, I::read_word());
         }
+        let padded = total_commit_words.next_multiple_of(BLAKE2S_BLOCK_SIZE_U32_WORDS);
+        unsafe { eval_buf.zero_range(BLAKE2S_DIGEST_SIZE_U32_WORDS + data_words, padded) };
 
         {
-            let f = compute_standard_final_step_accumulator::<F, E, ADDRS, MAX_POW>(
+            let final_step_evals: &[[E; 2]] = unsafe {
+                eval_buf.data_as_slice(BLAKE2S_DIGEST_SIZE_U32_WORDS, num_dedup_addrs)
+            };
+
+            let f = compute_standard_final_step_accumulator::<F, E, MAX_POW>(
                 layer_desc,
-                &final_step_evals,
+                final_step_evals,
                 batching_challenge,
                 lookup_additive_challenge,
                 constraints_batch_challenge,
@@ -1117,16 +1148,15 @@ where
             )?;
         }
 
-        {
-            // Standard layers: 2 evals per addr, stored contiguously
-            let flat = final_step_evals.as_slice();
-            let flat_e =
-                unsafe { core::slice::from_raw_parts(flat.as_ptr() as *const E, flat.len() * 2) };
-            commit_field_els::<F, E>(&mut seed, flat_e);
-        }
+        // Write seed and commit from the same aligned buffer
+        eval_buf.copy_from_slice(0, &seed.0);
+        let eval_buf = unsafe { eval_buf.assume_init_ref() };
+        Blake2sTranscript::commit_with_seed_using_hasher_and_aligned_buffer(
+            &mut hasher, &mut seed, eval_buf, total_commit_words,
+        );
 
         let mut draw_buf = [E::ZERO; 2];
-        draw_field_els_into::<F, E>(&mut seed, &mut draw_buf);
+        draw_field_els_into::<F, E>(&mut hasher, &mut seed, &mut draw_buf);
         let last_r = draw_buf[0];
         let next_batching = draw_buf[1];
 
@@ -1134,9 +1164,13 @@ where
         unsafe { *folding_challenges.get_unchecked_mut(fc_len) = last_r };
         fc_len += 1;
 
+        // Reinterpret again for prev_claims (seed region overwritten but data region intact)
+        let final_step_evals: &[[E; 2]] = unsafe {
+            eval_buf.data_as_slice(BLAKE2S_DIGEST_SIZE_U32_WORDS, num_dedup_addrs)
+        };
         prev_claims.clear();
         for i in 0..num_dedup_addrs {
-            let evals = final_step_evals.get(i);
+            let evals = unsafe { final_step_evals.get_unchecked(i) };
             unsafe {
                 let f0 = *evals.get_unchecked(0);
                 let f1 = *evals.get_unchecked(1);
@@ -1156,7 +1190,7 @@ where
     let grand_product_accumulator: E = read_field_el::<F, E, I>();
     commit_field_els::<F, E>(&mut seed, &[grand_product_accumulator]);
 
-    let whir_batching_challenge = draw_one_field_el::<F, E>(&mut seed);
+    let whir_batching_challenge = draw_one_field_el::<F, E>(&mut hasher, &mut seed);
 
     let additional_base_layer_openings = config
         .layers

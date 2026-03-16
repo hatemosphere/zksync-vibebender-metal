@@ -832,6 +832,19 @@ where
         .sum();
     let max_evals = total_output_polys * (1usize << final_trace_size_log_2);
 
+    // Aligned buffer for final-step-eval commits: [seed(8) | data | zero-pad to 16-word block]
+    // Dim-reducing: 4 evals/addr × DEGREE u32 words; standard: 2 evals/addr × DEGREE
+    let degree = E::DEGREE;
+    let digest_words = prover::transcript::blake2s_u32::BLAKE2S_DIGEST_SIZE_U32_WORDS;
+    let block_words = prover::transcript::blake2s_u32::BLAKE2S_BLOCK_SIZE_U32_WORDS;
+    let dim_reducing_words_per_addr = 4 * degree;
+    let standard_words_per_addr = 2 * degree;
+    let max_data_words = (max_addrs * dim_reducing_words_per_addr)
+        .max(max_addrs * standard_words_per_addr)
+        .max(max_evals * degree);
+    let total = digest_words + max_data_words;
+    let eval_buf_size = (total + block_words - 1) / block_words * block_words;
+
     let (uses_linear, uses_single_lookup, uses_vector_lookup) =
         scan_used_relation_types(&compiled_circuit.layers);
 
@@ -894,6 +907,7 @@ where
         pub const GKR_EVALS: usize = #max_evals;
         pub const GKR_TRANSCRIPT_U32: usize = #initial_transcript_num_u32_words;
         pub const GKR_MAX_POW: usize = #max_pow;
+        pub const GKR_EVAL_BUF: usize = #eval_buf_size;
 
         #layer_desc_consts
 

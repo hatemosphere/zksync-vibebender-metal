@@ -34,6 +34,7 @@ unsafe fn workload() -> ! {
         GKR_EVALS,
         GKR_TRANSCRIPT_U32,
         GKR_MAX_POW,
+        GKR_EVAL_BUF,
     >(config);
 
     match result {

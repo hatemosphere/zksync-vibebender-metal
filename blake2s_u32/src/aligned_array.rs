@@ -1,5 +1,6 @@
 use core::fmt;
 use core::hash::Hash;
+use core::mem::MaybeUninit;
 use core::ops::{Deref, DerefMut};
 
 #[repr(C)]
@@ -31,10 +32,30 @@ impl<T, A, const N: usize> AlignedArray<T, A, N> {
             data: [value; N],
         }
     }
+    
+    #[inline(always)]
+    pub fn new_uninit() -> AlignedArray<MaybeUninit<T>, A, N> {
+        AlignedArray {
+            _aligner: [],
+            data: [const { MaybeUninit::uninit() }; N],
+        }
+    }
 
     #[inline(always)]
     pub const fn deref_mut_impl(&mut self) -> &mut [T; N] {
         &mut self.data
+    }
+
+    /// Reinterpret a region of the buffer starting at element `offset` as a
+    /// slice of `count` elements of type `U`.
+    ///
+    /// # Safety
+    /// The caller must ensure that the region is valid and that alignment/layout
+    /// of `U` is compatible with the underlying `T` data.
+    #[inline(always)]
+    pub unsafe fn data_as_slice<U>(&self, offset: usize, count: usize) -> &[U] {
+        let ptr = self.data.as_ptr().add(offset) as *const U;
+        core::slice::from_raw_parts(ptr, count)
     }
 }
 
@@ -53,6 +74,40 @@ impl<T, A> AlignedSlice<T, A> {
     #[inline(always)]
     pub const unsafe fn from_raw_parts<'a>(data: *const T, len: usize) -> &'a Self {
         &*(core::ptr::slice_from_raw_parts(data, len) as *const Self)
+    }
+}
+
+impl<T, A, const N: usize> AlignedArray<MaybeUninit<T>, A, N> {
+    #[inline(always)]
+    pub unsafe fn assume_init_ref(&self) -> &AlignedArray<T, A, N> {
+        &*(self as *const Self as *const AlignedArray<T, A, N>)
+    }
+
+    #[inline(always)]
+    pub fn write(&mut self, index: usize, value: T) {
+        self.data[index].write(value);
+    }
+
+    #[inline(always)]
+    pub fn copy_from_slice(&mut self, offset: usize, src: &[T])
+    where
+        T: Copy,
+    {
+        debug_assert!(offset + src.len() <= N);
+        unsafe {
+            core::ptr::copy_nonoverlapping(
+                src.as_ptr(),
+                self.data.as_mut_ptr().add(offset) as *mut T,
+                src.len(),
+            );
+        }
+    }
+
+    /// Zero-fill slots `start..end`.
+    #[inline(always)]
+    pub unsafe fn zero_range(&mut self, start: usize, end: usize) {
+        debug_assert!(end <= N);
+        core::ptr::write_bytes(self.data.as_mut_ptr().add(start), 0, end - start);
     }
 }
 

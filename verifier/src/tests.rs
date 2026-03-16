@@ -461,6 +461,7 @@ fn test_gkr_sumcheck_verify_with_generated_config() {
                 GKR_EVALS,
                 GKR_TRANSCRIPT_U32,
                 GKR_MAX_POW,
+                GKR_EVAL_BUF,
             >(config);
             match result {
                 Ok(output) => {
