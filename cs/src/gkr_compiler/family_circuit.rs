@@ -695,6 +695,7 @@ impl<F: PrimeField> GKRCompiler<F> {
         let mut range_check_16_multiplicity = None;
         let mut timestamp_multiplicity = None;
         let mut generic_lookup_multiplicity = None;
+        let mut num_generic_lookups = 0;
 
         // placing lookup is move involved
         {
@@ -731,6 +732,8 @@ impl<F: PrimeField> GKRCompiler<F> {
             }
 
             if generic_lookups.len() > 0 || decoder_lookup_pair.is_some() {
+                num_generic_lookups += decoder_lookup_pair.is_some() as usize;
+                num_generic_lookups += generic_lookups.len();
                 let (multiplicity, final_pair, final_rel) = layout_lookup_expressions::<F, false>(
                     &mut graph,
                     generic_lookups,
@@ -937,6 +940,20 @@ impl<F: PrimeField> GKRCompiler<F> {
             }
         };
 
+        let mut scratch_space_mapping = BTreeMap::new();
+        let mut scratch_space_mapping_rev = BTreeMap::new();
+        let mut scratch_space_counter = 0usize;
+        for (_var, pos) in placement_data.iter() {
+            match pos {
+                GKRAddress::InnerLayer { .. } => {
+                    scratch_space_mapping.insert(*pos, scratch_space_counter);
+                    scratch_space_mapping_rev.insert(scratch_space_counter, *pos);
+                    scratch_space_counter += 1;
+                }
+                _ => {}
+            }
+        }
+
         GKRCircuitArtifact {
             trace_len,
             table_offsets,
@@ -946,7 +963,8 @@ impl<F: PrimeField> GKRCompiler<F> {
             global_output_map,
             memory_layout,
             witness_layout,
-            // scratch_space_size,
+            scratch_space_size: scratch_space_counter,
+            num_generic_lookups,
             placement_data,
             generic_lookup_tables_width: generic_lookup_width,
             tables_ids_in_generic_lookups: expect_table_id_for_generic_lookup,
@@ -954,6 +972,8 @@ impl<F: PrimeField> GKRCompiler<F> {
             has_decoder_lookup: true,
 
             variable_names: BTreeMap::from_iter(variable_names.into_iter()),
+            scratch_space_mapping,
+            scratch_space_mapping_rev,
 
             aux_layout_data,
 

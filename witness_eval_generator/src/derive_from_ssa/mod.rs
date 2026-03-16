@@ -359,7 +359,7 @@ pub fn derive_from_gkr_ssa<F: PrimeField + ToTokens>(
     perform_assignments_to_memory: bool,
     field_name_str: &str,
 ) -> TokenStream {
-    let num_lookup_mappings = gkr_layout.witness_layout.generic_lookups.len();
+    let num_lookup_mappings = gkr_layout.num_generic_lookups;
 
     let witness_proxy_ident = Ident::new("witness_proxy", Span::call_site());
     let witness_placer_ident = Ident::new("W", Span::call_site());
@@ -372,6 +372,13 @@ pub fn derive_from_gkr_ssa<F: PrimeField + ToTokens>(
             }
             GKRAddress::BaseLayerWitness(offset) => {
                 layout.insert(*var, ColumnAddress::WitnessSubtree(*offset));
+            }
+            a @ GKRAddress::InnerLayer { .. } => {
+                let counter = gkr_layout
+                    .scratch_space_mapping
+                    .get(a)
+                    .expect("must know scratch space placement");
+                layout.insert(*var, ColumnAddress::OptimizedOut(*counter));
             }
             _ => {
                 unreachable!()
@@ -542,8 +549,8 @@ mod test {
 
         for prefix in [
             "add_sub_lui_auipc_mop_preprocessed",
-            // "jump_branch_slt_preprocessed",
-            // "shift_binop_csrrw_preprocessed",
+            "jump_branch_slt_preprocessed",
+            "shift_binop_preprocessed",
             // "load_store_preprocessed",
             // "word_only_load_store_preprocessed",
             // "subword_only_load_store_preprocessed",
@@ -552,17 +559,21 @@ mod test {
             // "inits_and_teardowns_preprocessed",
             // "reduced_machine_preprocessed",
         ] {
-            let compiled_circuit: GKRCircuitArtifact<BabyBearField> =
-                deserialize_from_file(&format!("../cs/{}_layout_gkr.json", prefix));
+            let compiled_circuit: GKRCircuitArtifact<BabyBearField> = deserialize_from_file(
+                &format!("../cs/compiled_circuits/{}_layout_gkr.json", prefix),
+            );
             let compiled_graph: Vec<Vec<RawExpression<BabyBearField>>> =
-                deserialize_from_file(&format!("../cs/{}_ssa_gkr.json", prefix));
+                deserialize_from_file(&format!("../cs/compiled_circuits/{}_ssa_gkr.json", prefix));
             let full_stream =
                 derive_from_gkr_ssa(&compiled_graph, &compiled_circuit, false, "BabyBearField");
 
-            std::fs::File::create(&format!("../prover/{}_generated_gkr.rs", prefix))
-                .unwrap()
-                .write_all(&full_stream.to_string().as_bytes())
-                .unwrap();
+            std::fs::File::create(&format!(
+                "../prover/compiled_circuits/{}_generated_gkr.rs",
+                prefix
+            ))
+            .unwrap()
+            .write_all(&full_stream.to_string().as_bytes())
+            .unwrap();
         }
     }
 }

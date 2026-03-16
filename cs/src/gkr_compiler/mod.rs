@@ -67,6 +67,7 @@ pub struct GKRCompiler<F: PrimeField> {
     _marker: std::marker::PhantomData<F>,
 }
 
+#[serde_with::serde_as]
 #[derive(Clone, Debug, Hash, serde::Serialize, serde::Deserialize)]
 pub struct GKRCircuitArtifact<F: PrimeField> {
     pub trace_len: usize,
@@ -79,7 +80,8 @@ pub struct GKRCircuitArtifact<F: PrimeField> {
 
     pub memory_layout: GKRMemoryLayout,
     pub witness_layout: GKRWitnessLayout,
-    // pub scratch_space_size: usize,
+    pub scratch_space_size: usize,
+    pub num_generic_lookups: usize,
     pub placement_data: BTreeMap<Variable, GKRAddress>,
     pub generic_lookup_tables_width: usize,
     pub decode_table_columns_mask: Vec<bool>,
@@ -88,6 +90,9 @@ pub struct GKRCircuitArtifact<F: PrimeField> {
     // pub degree_2_constraints: Vec<Degree2Constraint<F>>,
     // pub degree_1_constraints: Vec<Degree1Constraint<F>>,
     pub variable_names: BTreeMap<Variable, String>,
+    #[serde_as(as = "Vec<(_, _)>")]
+    pub scratch_space_mapping: BTreeMap<GKRAddress, usize>,
+    pub scratch_space_mapping_rev: BTreeMap<usize, GKRAddress>,
 
     pub aux_layout_data: GKRAuxLayoutData,
     _marker: core::marker::PhantomData<F>,

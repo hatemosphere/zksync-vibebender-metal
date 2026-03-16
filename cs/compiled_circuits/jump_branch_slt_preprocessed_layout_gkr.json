@@ -33,7 +33,6 @@
     262144,
     262144,
     262144,
-    262144,
     4456448,
     4456448,
     4456448,
@@ -656,7 +655,7 @@
                 },
                 {
                   "linear_terms": [],
-                  "constant": 44
+                  "constant": 43
                 }
               ],
               "lookup_set_index": 18446744073709551615
@@ -935,7 +934,7 @@
                 },
                 {
                   "linear_terms": [],
-                  "constant": 32
+                  "constant": 31
                 }
               ],
               "lookup_set_index": 2
@@ -4156,6 +4155,8 @@
     },
     "total_width": 27
   },
+  "scratch_space_size": 0,
+  "num_generic_lookups": 5,
   "placement_data": {
     "0": {
       "BaseLayerMemory": 18
@@ -4385,6 +4386,8 @@
     "51": "Multiplicity for timestamp range check",
     "52": "Multiplicity for generic lookup"
   },
+  "scratch_space_mapping": [],
+  "scratch_space_mapping_rev": {},
   "aux_layout_data": {
     "shuffle_ram_timestamp_comparison_aux_vars": [
       {
