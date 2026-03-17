@@ -115,7 +115,7 @@ impl<F: PrimeField, E: FieldExtension<F> + Field>
         ext_input: &[ExtensionFieldRepresentation<F, E>; 2],
         ctx: &RB::CollapseContext,
     ) -> [E; 2] {
-        // a/(b + gamma) - c/(d + gamma) -> (a * (d+gamma)*a - c*(b+gamma)), (b+gamma) * (d+gamma)
+        // a/(b + gamma) - c/(d + gamma) -> (a*(d+gamma) - c*(b+gamma)), (b+gamma) * (d+gamma)
         let [a, c] = input;
         let [b, d] = ext_input;
         let mut b = b.into_value();
@@ -139,7 +139,17 @@ impl<F: PrimeField, E: FieldExtension<F> + Field>
         ext_input: &[ExtensionFieldRepresentation<F, E>; 2],
         ctx: &RB::CollapseContext,
     ) -> [E; 2] {
-        self.pointwise_eval(input, ext_input, ctx)
+        // a/(b + gamma) - c/(d + gamma) -> (a*d - c*b), bd
+        let [a, c] = input;
+        let [b, d] = ext_input;
+
+        let mut ad = a.mul_by_ext::<true>(&d.value, ctx);
+        let cb = c.mul_by_ext::<true>(&b.value, ctx);
+        ad.sub_assign(&cb);
+        let mut den = b.into_value();
+        den.mul_assign(&d.value);
+
+        [ad, den]
     }
 
     fn pointwise_eval_by_ref<RB: EvaluationRepresentation<F, E>>(

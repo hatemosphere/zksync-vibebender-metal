@@ -354,7 +354,11 @@ where
             let mut sum = s0;
             sum.add_assign(&s1);
             sum.mul_assign(&eq_prefactor);
-            assert_eq!(sum, claim, "s(0) + s(1) != claim / eq_prefactor");
+            assert_eq!(
+                sum, claim,
+                "s(0) + s(1) != claim / eq_prefactor at folding step {}",
+                step
+            );
         }
 
         commit_field_els(seed, &coeffs);
@@ -402,7 +406,7 @@ where
 
             assert_eq!(
                 recomputed_claim, claim,
-                "s(0) + s(1) != claim / eq_prefactor"
+                "s(0) + s(1) != claim / eq_prefactor at explicit sumcheck verification"
             );
         }
     }
