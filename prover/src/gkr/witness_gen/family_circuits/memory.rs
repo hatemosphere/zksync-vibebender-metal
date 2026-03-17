@@ -377,7 +377,10 @@ pub(crate) unsafe fn gkr_process_shuffle_ram_accesses_in_executor_family<
                 );
             }
             RamWordRepresentation::U8Limbs(read_value) => {
-                todo!();
+                proxy.write_u32_placeholder_as_u8_chunks_into_columns::<true>(
+                    read_value,
+                    Placeholder::ShuffleRamReadValue(access_idx),
+                );
             }
         }
 
@@ -391,7 +394,10 @@ pub(crate) unsafe fn gkr_process_shuffle_ram_accesses_in_executor_family<
                     );
                 }
                 RamWordRepresentation::U8Limbs(write_value) => {
-                    todo!();
+                    proxy.write_u32_placeholder_as_u8_chunks_into_columns::<true>(
+                        write_value,
+                        Placeholder::ShuffleRamWriteValue(access_idx),
+                    );
                 }
             }
         }

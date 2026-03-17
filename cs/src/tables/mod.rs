@@ -438,7 +438,22 @@ impl<F: PrimeField> LookupTable<F> {
     #[track_caller]
     #[inline(always)]
     pub fn lookup_row(&self, key: &[F]) -> usize {
-        assert_eq!(key.len(), self.num_key_columns + self.num_value_columns);
+        let key = if key.len() >= self.width() {
+            for el in key[self.width()..].iter() {
+                assert!(el.is_zero());
+            }
+            &key[..self.width()]
+        } else {
+            // key is shorter than the table, that may happen in special case of zero entry
+            // table, and so we hardcode it blindly
+            assert_eq!(self.table_size(), 1);
+            for el in key.iter() {
+                assert!(el.is_zero());
+            }
+
+            return 0;
+        };
+
         match &self.quick_index_lookup_fn {
             IndexLookupFn::None => {
                 let mut keys = ArrayVec::<F, MAX_TABLE_WIDTH>::new();
@@ -449,9 +464,7 @@ impl<F: PrimeField> LookupTable<F> {
                     .expect("element must be present in the table")
             }
             IndexLookupFn::Pure(index_fn) => {
-                let mut keys = ArrayVec::<F, MAX_TABLE_WIDTH>::new();
-                keys.try_extend_from_slice(key).expect("must fit");
-                let index = (index_fn)(&keys);
+                let index = (index_fn)(key);
                 assert!(
                     index < self.table_size(),
                     "index {} is beyond table size {} for table {}",
@@ -463,14 +476,12 @@ impl<F: PrimeField> LookupTable<F> {
                 index
             }
             IndexLookupFn::ReuseGenerationFn(gen_fn) => {
-                let mut keys = ArrayVec::<F, MAX_TABLE_WIDTH>::new();
-                keys.try_extend_from_slice(key).expect("must fit");
                 // NOTE: generation functions do not use padding places, so we can feed as-is
-                let (index, values) = (gen_fn)(&keys);
+                let (index, values) = (gen_fn)(key);
                 // can self-check
                 assert_eq!(
                     &values[..self.num_value_columns],
-                    &key[self.num_key_columns..]
+                    &key[self.num_key_columns..][..self.num_key_columns]
                 );
                 assert!(
                     index < self.table_size(),
@@ -483,14 +494,12 @@ impl<F: PrimeField> LookupTable<F> {
                 index
             }
             IndexLookupFn::ReuseGenerationClosure(gen_closure) => {
-                let mut keys = ArrayVec::<F, MAX_TABLE_WIDTH>::new();
-                keys.try_extend_from_slice(key).expect("must fit");
                 // NOTE: generation functions do not use padding places, so we can feed as-is
-                let (index, values) = (gen_closure)(&keys);
+                let (index, values) = (gen_closure)(key);
                 // can self-check
                 assert_eq!(
                     &values[..self.num_value_columns],
-                    &key[self.num_key_columns..]
+                    &key[self.num_key_columns..][..self.num_key_columns]
                 );
                 assert!(
                     index < self.table_size(),
@@ -859,7 +868,7 @@ fn u8_chunks_index_gen_fn<F: PrimeField, const N: usize>(keys: &[F; N]) -> usize
 
 #[inline(always)]
 fn bit_chunks_slice_index_gen_fn<F: PrimeField, const WIDTH: usize>(keys: &[F]) -> usize {
-    assert_eq!(keys.len(), 2);
+    assert!(keys.len() >= 2);
     let a = keys[0].as_u32_reduced();
     let b = keys[1].as_u32_reduced();
 

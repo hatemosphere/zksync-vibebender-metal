@@ -7,7 +7,6 @@ use cs::gkr_circuits::materialize_flattened_decoder_table_with_bitmask;
 use cs::gkr_circuits::ExecutorFamilyDecoderData;
 use cs::tables::{TableDriver, TableType};
 use fft::{materialize_powers_serial_starting_with_one, GoodAllocator};
-use field::batch_inverse_checked;
 use std::sync::Arc;
 
 pub struct GKRSetup<F: PrimeField + TwoAdicField> {
@@ -133,7 +132,7 @@ impl<F: PrimeField + TwoAdicField> GKRSetup<F> {
             );
         }
 
-        self.preprocess_lookup_tables::<E, Global>(
+        self.preprocess_generic_lookup_tables::<E, Global>(
             compiled_circuit,
             lookup_alpha,
             trace_len,
@@ -141,7 +140,10 @@ impl<F: PrimeField + TwoAdicField> GKRSetup<F> {
         )
     }
 
-    pub(crate) fn preprocess_lookup_tables<E: FieldExtension<F> + Field, A: GoodAllocator>(
+    pub(crate) fn preprocess_generic_lookup_tables<
+        E: FieldExtension<F> + Field,
+        A: GoodAllocator,
+    >(
         &self,
         compiled_circuit: &GKRCircuitArtifact<F>,
         lookup_alpha: E,
@@ -162,47 +164,39 @@ impl<F: PrimeField + TwoAdicField> GKRSetup<F> {
             let mut dst = &mut generic_lookup_preprocessing.spare_capacity_mut()
                 [..generic_lookup_tables_size];
 
-            unsafe {
-                worker.scope(generic_lookup_tables_size, |scope, geometry| {
-                    for thread_idx in 0..geometry.len() {
-                        let chunk_size = geometry.get_chunk_size(thread_idx);
-                        let chunk_start = geometry.get_chunk_start_pos(thread_idx);
+            worker.scope(generic_lookup_tables_size, |scope, geometry| {
+                for thread_idx in 0..geometry.len() {
+                    let chunk_size = geometry.get_chunk_size(thread_idx);
+                    let chunk_start = geometry.get_chunk_start_pos(thread_idx);
 
-                        let (chunk, rest) = dst.split_at_mut(chunk_size);
-                        dst = rest;
-                        let challenge_powers_ref = &challenge_powers;
+                    let (chunk, rest) = dst.split_at_mut(chunk_size);
+                    dst = rest;
+                    let challenge_powers_ref = &challenge_powers;
 
-                        Worker::smart_spawn(scope, thread_idx == geometry.len() - 1, move |_| {
-                            let mut batch_inverse_buffer = vec![E::ZERO; chunk.len()];
-                            let mut buffer = vec![F::ZERO; compiled_circuit.generic_lookup_tables_width];
-                            for i in 0..chunk_size {
-                                buffer.fill(F::ZERO);
-                                let absolute_row_idx = chunk_start + i;
+                    Worker::smart_spawn(scope, thread_idx == geometry.len() - 1, move |_| {
+                        let mut buffer = vec![F::ZERO; compiled_circuit.generic_lookup_tables_width];
+                        for i in 0..chunk_size {
+                            buffer.fill(F::ZERO);
+                            let absolute_row_idx = chunk_start + i;
 
-                                for column in 0..compiled_circuit.generic_lookup_tables_width {
-                                    buffer[column] = self.hypercube_evals[2 + column][absolute_row_idx];
-                                }
-
-                                let denom = compute_aggregated_key_value_dyn(
-                                    buffer[0],
-                                    &buffer[1..],
-                                    &challenge_powers_ref[1..],
-                                    &E::ZERO,
-                                );
-
-                                chunk[i].write(denom);
+                            for column in 0..compiled_circuit.generic_lookup_tables_width {
+                                buffer[column] = self.hypercube_evals[2 + column][absolute_row_idx];
                             }
 
-                            // batch inverse
-                            let buffer = chunk.assume_init_mut();
-                            let all_nonzero = batch_inverse_checked(buffer, &mut batch_inverse_buffer);
-                            assert!(all_nonzero);
-                        });
-                    }
+                            let denom = compute_aggregated_key_value_dyn(
+                                buffer[0],
+                                &buffer[1..],
+                                &challenge_powers_ref[1..],
+                                &E::ZERO,
+                            );
 
-                    assert!(dst.is_empty(), "expected to process all elements, but got {} remaining. Work size is {}, num cores = {}", dst.len(), generic_lookup_tables_size, worker.get_num_cores());
-                });
-            }
+                            chunk[i].write(denom);
+                        }
+                    });
+                }
+
+                assert!(dst.is_empty(), "expected to process all elements, but got {} remaining. Work size is {}, num cores = {}", dst.len(), generic_lookup_tables_size, worker.get_num_cores());
+            });
 
             unsafe {
                 generic_lookup_preprocessing.set_len(generic_lookup_tables_size);

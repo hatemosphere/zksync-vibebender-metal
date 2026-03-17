@@ -106,6 +106,7 @@ fn evaluate_cache_relation<F: PrimeField, E: FieldExtension<F> + Field>(
                 let mut destination = Box::<[E], Global>::new_uninit_slice(trace_len);
                 let ext_destination = vec![&mut destination[..]];
                 let src_ref = &*gkr_storage;
+                let byte_shift = F::from_u32_unchecked(1u32 << 8);
                 apply_row_wise::<F, _>(
                     vec![],
                     ext_destination,
@@ -229,7 +230,31 @@ fn evaluate_cache_relation<F: PrimeField, E: FieldExtension<F> + Field>(
                                     }
                                 }
                                 RamWordRepresentation::U8Limbs(read_value_bytes) => {
-                                    todo!()
+                                    for (idx, offset_low, offset_high) in [
+                                        (
+                                            MEM_ARGUMENT_CHALLENGE_POWERS_VALUE_LOW_IDX,
+                                            read_value_bytes[0],
+                                            read_value_bytes[1],
+                                        ),
+                                        (
+                                            MEM_ARGUMENT_CHALLENGE_POWERS_VALUE_HIGH_IDX,
+                                            read_value_bytes[2],
+                                            read_value_bytes[3],
+                                        ),
+                                    ] {
+                                        let mut t = external_challenges
+                                            .permutation_argument_linearization_challenges[idx];
+                                        let el = src_ref
+                                            .get_base_layer_mem(offset_low)
+                                            .get_unchecked(chunk_start + i);
+                                        let mut recomposed = *src_ref
+                                            .get_base_layer_mem(offset_high)
+                                            .get_unchecked(chunk_start + i);
+                                        recomposed.mul_assign(&byte_shift);
+                                        recomposed.add_assign(el);
+                                        t.mul_assign_by_base(&recomposed);
+                                        result.add_assign(&t);
+                                    }
                                 }
                             }
 

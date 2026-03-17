@@ -132,6 +132,56 @@ impl<'a, O: Oracle<F> + 'a, F: PrimeField> ColumnMajorWitnessProxy<'a, O, F> {
     }
 
     #[inline]
+    pub(crate) fn write_u32_placeholder_as_u8_chunks_into_columns<const USE_MEMORY: bool>(
+        &mut self,
+        placeholder_columns: [usize; 4],
+        placeholder_type: Placeholder,
+    ) {
+        let value = Oracle::<F>::get_u32_witness_from_placeholder(
+            self.oracle,
+            placeholder_type,
+            self.absolute_row_idx,
+        );
+
+        self.write_u32_value_as_u8_chunks_into_columns::<USE_MEMORY>(placeholder_columns, value);
+    }
+
+    #[inline]
+    pub(crate) fn write_u32_value_as_u8_chunks_into_columns<const USE_MEMORY: bool>(
+        &mut self,
+        placeholder_columns: [usize; 4],
+        value: u32,
+    ) {
+        let bytes = value.to_le_bytes();
+
+        if USE_MEMORY {
+            for el in placeholder_columns.iter() {
+                debug_assert!(*el < self.memory_rows_starts.len());
+            }
+
+            for (value, offset) in bytes.into_iter().zip(placeholder_columns.into_iter()) {
+                unsafe {
+                    self.memory_rows_starts
+                        .get_unchecked_mut(offset)
+                        .write(F::from_u32_unchecked(value as u32));
+                }
+            }
+        } else {
+            for el in placeholder_columns.iter() {
+                debug_assert!(*el < self.witness_rows_starts.len());
+            }
+
+            for (value, offset) in bytes.into_iter().zip(placeholder_columns.into_iter()) {
+                unsafe {
+                    self.witness_rows_starts
+                        .get_unchecked_mut(offset)
+                        .write(F::from_u32_unchecked(value as u32));
+                }
+            }
+        }
+    }
+
+    #[inline]
     pub(crate) fn write_u16_placeholder_into_columns<const USE_MEMORY: bool>(
         &mut self,
         placeholder_columns: usize,
