@@ -12,7 +12,7 @@ use field::{Mersenne31Field, PrimeField};
 pub struct ColumnMajorWitnessProxy<'a, O: Oracle<F> + 'a, F: PrimeField = Mersenne31Field> {
     pub(crate) witness_rows_starts: Box<[*mut F]>,
     pub(crate) memory_rows_starts: Box<[*mut F]>,
-    pub(crate) scratch_space: Box<[F]>,
+    pub(crate) scratch_space: Box<[*mut F]>,
     pub(crate) table_driver: &'a TableDriver<F>,
     pub(crate) multiplicity_counting_scratch: &'a mut [u32],
     pub(crate) lookup_mapping_rows_starts: Box<[*mut u32]>,
@@ -31,10 +31,12 @@ impl<'a, O: Oracle<F> + 'a, F: PrimeField> ColumnMajorWitnessProxy<'a, O, F> {
         for el in self.witness_rows_starts.iter_mut() {
             *el = el.add(1);
         }
+        for el in self.scratch_space.iter_mut() {
+            *el = el.add(1);
+        }
         for el in self.lookup_mapping_rows_starts.iter_mut() {
             *el = el.add(1);
         }
-        self.scratch_space.fill(F::ZERO);
         self.absolute_row_idx += 1;
     }
 
@@ -301,7 +303,7 @@ impl<'a, O: Oracle<F> + 'a, F: PrimeField> WitnessProxy<F, ScalarWitnessTypeSet<
     #[inline(always)]
     fn get_scratch_place(&self, idx: usize) -> F {
         debug_assert!(idx < self.scratch_space.len());
-        unsafe { *self.scratch_space.get_unchecked(idx) }
+        unsafe { self.scratch_space.get_unchecked(idx).read() }
     }
 
     #[inline(always)]
@@ -362,9 +364,15 @@ impl<'a, O: Oracle<F> + 'a, F: PrimeField> WitnessProxy<F, ScalarWitnessTypeSet<
 
     #[inline(always)]
     fn set_scratch_place(&mut self, idx: usize, value: F) {
-        debug_assert!(idx < self.scratch_space.len());
+        debug_assert!(
+            idx < self.scratch_space.len(),
+            "trying to access scratch space column {}, while only {} columns exist",
+            idx,
+            self.scratch_space.len()
+        );
+
         unsafe {
-            *self.scratch_space.get_unchecked_mut(idx) = value;
+            self.scratch_space.get_unchecked_mut(idx).write(value);
         }
     }
 

@@ -30,7 +30,7 @@ pub(crate) fn nd_read<C: Counters, R: RAM, ND: NonDeterminismCSRSource>(
     };
     let (rd_old_value, rd_ts) = write_register_with_ts::<C, 2>(state, instr.rd, &mut rd);
 
-    if tracer.needs_tracing_data_for_circuit_family::<SHIFT_BINARY_CSR_CIRCUIT_FAMILY_IDX>() {
+    if tracer.needs_tracing_data_for_circuit_family::<ADD_SUB_LUI_AUIPC_MOP_CIRCUIT_FAMILY_IDX>() {
         let traced_data = NonMemoryOpcodeTracingDataWithTimestamp {
             opcode_data: NonMemoryOpcodeTracingData {
                 initial_pc: state.pc,
@@ -46,7 +46,8 @@ pub(crate) fn nd_read<C: Counters, R: RAM, ND: NonDeterminismCSRSource>(
             rd_read_timestamp: TimestampData::from_scalar(rd_ts),
             cycle_timestamp: TimestampData::from_scalar(state.timestamp),
         };
-        tracer.write_non_memory_family_data::<SHIFT_BINARY_CSR_CIRCUIT_FAMILY_IDX>(traced_data);
+        tracer
+            .write_non_memory_family_data::<ADD_SUB_LUI_AUIPC_MOP_CIRCUIT_FAMILY_IDX>(traced_data);
     }
     default_increase_pc::<C>(state);
 }
@@ -69,7 +70,7 @@ pub(crate) fn nd_write<C: Counters, R: RAM>(
     let rs2_ts = touch_x0_with_ts::<C, 1>(state);
     let rd_ts = touch_x0_with_ts::<C, 2>(state);
 
-    if tracer.needs_tracing_data_for_circuit_family::<SHIFT_BINARY_CSR_CIRCUIT_FAMILY_IDX>() {
+    if tracer.needs_tracing_data_for_circuit_family::<ADD_SUB_LUI_AUIPC_MOP_CIRCUIT_FAMILY_IDX>() {
         let traced_data = NonMemoryOpcodeTracingDataWithTimestamp {
             opcode_data: NonMemoryOpcodeTracingData {
                 initial_pc: state.pc,
@@ -85,7 +86,8 @@ pub(crate) fn nd_write<C: Counters, R: RAM>(
             rd_read_timestamp: TimestampData::from_scalar(rd_ts),
             cycle_timestamp: TimestampData::from_scalar(state.timestamp),
         };
-        tracer.write_non_memory_family_data::<SHIFT_BINARY_CSR_CIRCUIT_FAMILY_IDX>(traced_data);
+        tracer
+            .write_non_memory_family_data::<ADD_SUB_LUI_AUIPC_MOP_CIRCUIT_FAMILY_IDX>(traced_data);
     }
     default_increase_pc::<C>(state);
 }

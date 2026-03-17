@@ -16,8 +16,6 @@ use crate::gkr_compiler::layout::LookupOutput;
 // use crate::one_row_compiler::delegation::add_multiple_compiler_defined_variables;
 use crate::cs::circuit_output::CircuitOutput;
 use crate::definitions::LookupInput;
-use crate::tables::TableType;
-use crate::types::Boolean;
 
 impl<F: PrimeField> GKRCompiler<F> {
     pub fn compile_family_circuit(
@@ -697,6 +695,10 @@ impl<F: PrimeField> GKRCompiler<F> {
         let mut generic_lookup_multiplicity = None;
         let mut num_generic_lookups = 0;
 
+        let mut generic_lookups_compiled = vec![];
+        let mut range_check_16_lookups_compiled = vec![];
+        let mut timestamp_range_check_lookups_compiled = vec![];
+
         // placing lookup is move involved
         {
             if range_check_16_expressions.len() > 0 {
@@ -754,7 +756,8 @@ impl<F: PrimeField> GKRCompiler<F> {
         }
 
         // Place a gate for constraints batch eval
-        layout_constraints_at_layers(&mut graph, constraints, &layers_mapping);
+        let (degree_2_constraints, degree_1_constraints) =
+            layout_constraints_at_layers(&mut graph, constraints, &layers_mapping);
 
         // work out the outputs
         let lookup_outputs = BTreeMap::from_iter(
@@ -921,9 +924,6 @@ impl<F: PrimeField> GKRCompiler<F> {
             multiplicities_columns_for_timestamp_range_check,
             multiplicities_columns_for_generic_lookup: multiplicities_columns_for_generic_lookup
                 ..multiplicities_columns_for_generic_lookup + 1,
-            // generic_lookups: generic_lookups_compiled,
-            // range_check_16_lookup_expressions: range_check_16_lookups_compiled,
-            // timestamp_range_check_lookup_expressions: timestamp_range_check_lookups_compiled,
             total_width: graph.base_layer_witness.len(),
         };
 
@@ -954,6 +954,35 @@ impl<F: PrimeField> GKRCompiler<F> {
             }
         }
 
+        // We should remap lookups to reuse scratch space instead of layer/offset information
+        // for simplicity if witness evaluator
+
+        for rel in range_check_16_lookups_compiled
+            .iter_mut()
+            .map(|el: &mut NoFieldSingleColumnLookupRelation| &mut el.input)
+            .chain(
+                timestamp_range_check_lookups_compiled
+                    .iter_mut()
+                    .map(|el: &mut NoFieldSingleColumnLookupRelation| &mut el.input),
+            )
+            .chain(
+                generic_lookups_compiled
+                    .iter_mut()
+                    .map(|el: &mut NoFieldVectorLookupRelation| el.columns.iter_mut())
+                    .flatten(),
+            )
+        {
+            for (_, addr) in rel.linear_terms.iter_mut() {
+                let addr_copy = *addr;
+                if let GKRAddress::InnerLayer { .. } = addr_copy {
+                    let scratch_offset = *scratch_space_mapping
+                        .get(&addr_copy)
+                        .expect("must know scratch space index");
+                    *addr = GKRAddress::ScratchSpace(scratch_offset);
+                }
+            }
+        }
+
         GKRCircuitArtifact {
             trace_len,
             table_offsets,
@@ -970,6 +999,13 @@ impl<F: PrimeField> GKRCompiler<F> {
             tables_ids_in_generic_lookups: expect_table_id_for_generic_lookup,
             decode_table_columns_mask,
             has_decoder_lookup: true,
+
+            degree_2_constraints,
+            degree_1_constraints,
+
+            generic_lookups: generic_lookups_compiled,
+            range_check_16_lookup_expressions: range_check_16_lookups_compiled,
+            timestamp_range_check_lookup_expressions: timestamp_range_check_lookups_compiled,
 
             variable_names: BTreeMap::from_iter(variable_names.into_iter()),
             scratch_space_mapping,

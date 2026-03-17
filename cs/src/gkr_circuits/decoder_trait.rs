@@ -38,7 +38,6 @@ pub struct DecoderTableEntry<F: PrimeField> {
     pub rs1_index: F,
     pub rs2_index: F,
     pub rd_index: F,
-    pub rd_is_zero: F,
     pub imm: [F; REGISTER_SIZE],
     pub funct3: Option<F>,
     pub funct7: Option<F>,
@@ -46,20 +45,48 @@ pub struct DecoderTableEntry<F: PrimeField> {
 }
 
 impl<F: PrimeField> DecoderTableEntry<F> {
+    pub fn from_executor_family_data(pc: u32, executor_data: &ExecutorFamilyDecoderData) -> Self {
+        Self {
+            pc: [
+                F::from_u32_unchecked(pc as u16 as u32),
+                F::from_u32_unchecked(pc >> 16),
+            ],
+            rs1_index: F::from_u32_unchecked(executor_data.rs1_index as u32),
+            rs2_index: F::from_u32_unchecked(executor_data.rs2_index as u32),
+            rd_index: F::from_u32_unchecked(executor_data.rd_index as u32),
+            imm: [
+                F::from_u32_unchecked(executor_data.imm),
+                F::from_u32_unchecked(executor_data.imm >> 16),
+            ],
+            funct3: executor_data
+                .funct3
+                .map(|el| F::from_u32_unchecked(el as u32)),
+            funct7: None,
+            circuit_family_extra_mask: F::from_u32_unchecked(
+                executor_data.opcode_family_bits as u32,
+            ),
+        }
+    }
+
     pub fn flatten(&self) -> arrayvec::ArrayVec<F, EXECUTOR_FAMILY_CIRCUIT_DECODER_TABLE_WIDTH> {
-        todo!();
-        // [
-        //     self.pc[0],
-        //     self.pc[1],
-        //     self.rs1_index,
-        //     self.rs2_index,
-        //     self.rd_index,
-        //     self.rd_is_zero,
-        //     self.imm[0],
-        //     self.imm[1],
-        //     self.funct3,
-        //     self.circuit_family_extra_mask,
-        // ]
+        let mut result =
+            arrayvec::ArrayVec::<F, EXECUTOR_FAMILY_CIRCUIT_DECODER_TABLE_WIDTH>::new();
+        unsafe {
+            result.try_extend_from_slice(&self.pc).unwrap_unchecked();
+            result.try_push(self.rs1_index).unwrap_unchecked();
+            result.try_push(self.rs2_index).unwrap_unchecked();
+            result.try_push(self.rd_index).unwrap_unchecked();
+            result.try_extend_from_slice(&self.imm).unwrap_unchecked();
+            result
+                .try_push(self.funct3.unwrap_or(F::ZERO))
+                .unwrap_unchecked();
+            assert!(self.funct7.is_none(), "funct7 is unused");
+            result
+                .try_push(self.circuit_family_extra_mask)
+                .unwrap_unchecked();
+        }
+
+        result
     }
 }
 
@@ -217,17 +244,18 @@ pub fn materialize_flattened_decoder_table_with_bitmask<F: PrimeField>(
     // "unsupported" PC values must not be in the table
 
     let mut result = Vec::with_capacity(supported_entries_for_family.len());
-    for el in supported_entries_for_family.iter() {
+    for (idx, el) in supported_entries_for_family.iter().enumerate() {
+        let pc = idx * core::mem::size_of::<u32>();
         if let Some(supported) = el {
-            todo!();
-            // let row = supported.flatten();
-            // let mut selected_row = arrayvec::ArrayVec::new();
-            // for (mask, value) in fields_bitmask.iter().zip(row.into_iter()) {
-            //     if *mask {
-            //         selected_row.push(value);
-            //     }
-            // }
-            // result.push(selected_row);
+            let row =
+                DecoderTableEntry::<F>::from_executor_family_data(pc as u32, supported).flatten();
+            let mut selected_row = arrayvec::ArrayVec::new();
+            for (mask, value) in fields_bitmask.iter().zip(row.into_iter()) {
+                if *mask {
+                    selected_row.push(value);
+                }
+            }
+            result.push(selected_row);
         } else {
             // NOTE: we do not use 0 here, but instead some value that doesn't pass range check and so can not be
             // a valid PC

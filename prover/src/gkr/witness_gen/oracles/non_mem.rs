@@ -3,7 +3,7 @@ use cs::definitions::TimestampScalar;
 use cs::gkr_circuits::ExecutorFamilyDecoderData;
 use cs::oracle::*;
 use field::PrimeField;
-use risc_v_simulator::machine_mode_only_unrolled::NonMemoryOpcodeTracingDataWithTimestamp;
+use riscv_transpiler::witness::NonMemoryOpcodeTracingDataWithTimestamp;
 
 pub struct NonMemoryCircuitOracle<'a> {
     pub inner: &'a [NonMemoryOpcodeTracingDataWithTimestamp],
@@ -59,7 +59,7 @@ impl<'a, F: PrimeField> Oracle<F> for NonMemoryCircuitOracle<'a> {
                 }
             },
             Placeholder::ExternalOracle => {
-                if cycle_data.opcode_data.delegation_type == NON_DETERMINISM_CSR {
+                if cycle_data.opcode_data.delegation_type as u32 == NON_DETERMINISM_CSR {
                     cycle_data.opcode_data.rd_value
                 } else {
                     0
@@ -87,16 +87,16 @@ impl<'a, F: PrimeField> Oracle<F> for NonMemoryCircuitOracle<'a> {
                     unreachable!()
                 }
             },
-            Placeholder::DelegationType => {
-                if cycle_data.opcode_data.delegation_type != 0
-                    && cycle_data.opcode_data.delegation_type != NON_DETERMINISM_CSR
-                {
-                    cycle_data.opcode_data.delegation_type
-                } else {
-                    // It's just a convention - if we do not use delegation, then we put 0 into corresponding column
-                    0
-                }
-            }
+            // Placeholder::DelegationType => {
+            //     if cycle_data.opcode_data.delegation_type != 0
+            //         && cycle_data.opcode_data.delegation_type != NON_DETERMINISM_CSR
+            //     {
+            //         cycle_data.opcode_data.delegation_type
+            //     } else {
+            //         // It's just a convention - if we do not use delegation, then we put 0 into corresponding column
+            //         0
+            //     }
+            // }
             Placeholder::DelegationABIOffset => 0, // we do not use it anymore
 
             a @ _ => {
@@ -146,12 +146,12 @@ impl<'a, F: PrimeField> Oracle<F> for NonMemoryCircuitOracle<'a> {
                 }
             },
 
-            Placeholder::ExecuteDelegation => {
-                // NOTE: we use single field here to indicate both non-determinism
-                // CSR and delegation csrs, so we compare vs 0 and non-determinism CSR index
-                let delegation_type = cycle_data.opcode_data.delegation_type;
-                delegation_type != 0 && delegation_type != NON_DETERMINISM_CSR
-            }
+            // Placeholder::ExecuteDelegation => {
+            //     // NOTE: we use single field here to indicate both non-determinism
+            //     // CSR and delegation csrs, so we compare vs 0 and non-determinism CSR index
+            //     let delegation_type = cycle_data.opcode_data.delegation_type;
+            //     delegation_type != 0 && delegation_type != NON_DETERMINISM_CSR
+            // }
             Placeholder::ExecuteOpcodeFamilyCycle => true,
 
             a @ _ => {

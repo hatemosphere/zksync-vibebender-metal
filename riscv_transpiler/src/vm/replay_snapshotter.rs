@@ -69,7 +69,7 @@ impl Counters for DelegationsAndFamiliesCounters {
             self.add_sub_family += 1;
         } else if const { FAMILY == JUMP_BRANCH_SLT_CIRCUIT_FAMILY_IDX } {
             self.slt_branch_family += 1;
-        } else if const { FAMILY == SHIFT_BINARY_CSR_CIRCUIT_FAMILY_IDX } {
+        } else if const { FAMILY == SHIFT_BINARY_CIRCUIT_FAMILY_IDX } {
             self.binary_shift_csr_family += 1;
         } else if const { FAMILY == MUL_DIV_CIRCUIT_FAMILY_IDX } {
             self.mul_div_family += 1;
@@ -87,7 +87,7 @@ impl Counters for DelegationsAndFamiliesCounters {
             self.add_sub_family += num_calls;
         } else if const { FAMILY == JUMP_BRANCH_SLT_CIRCUIT_FAMILY_IDX } {
             self.slt_branch_family += num_calls;
-        } else if const { FAMILY == SHIFT_BINARY_CSR_CIRCUIT_FAMILY_IDX } {
+        } else if const { FAMILY == SHIFT_BINARY_CIRCUIT_FAMILY_IDX } {
             self.binary_shift_csr_family += num_calls;
         } else if const { FAMILY == MUL_DIV_CIRCUIT_FAMILY_IDX } {
             self.mul_div_family += num_calls;
@@ -105,7 +105,7 @@ impl Counters for DelegationsAndFamiliesCounters {
             self.add_sub_family
         } else if const { FAMILY == JUMP_BRANCH_SLT_CIRCUIT_FAMILY_IDX } {
             self.slt_branch_family
-        } else if const { FAMILY == SHIFT_BINARY_CSR_CIRCUIT_FAMILY_IDX } {
+        } else if const { FAMILY == SHIFT_BINARY_CIRCUIT_FAMILY_IDX } {
             self.binary_shift_csr_family
         } else if const { FAMILY == MUL_DIV_CIRCUIT_FAMILY_IDX } {
             self.mul_div_family
@@ -164,7 +164,7 @@ impl Counters for DelegationsAndUnifiedCounters {
             self.cycles += 1;
         } else if const { FAMILY == JUMP_BRANCH_SLT_CIRCUIT_FAMILY_IDX } {
             self.cycles += 1;
-        } else if const { FAMILY == SHIFT_BINARY_CSR_CIRCUIT_FAMILY_IDX } {
+        } else if const { FAMILY == SHIFT_BINARY_CIRCUIT_FAMILY_IDX } {
             self.cycles += 1;
         } else if const { FAMILY == MUL_DIV_CIRCUIT_FAMILY_IDX } {
             self.cycles += 1;
@@ -182,7 +182,7 @@ impl Counters for DelegationsAndUnifiedCounters {
             self.cycles += num_calls;
         } else if const { FAMILY == JUMP_BRANCH_SLT_CIRCUIT_FAMILY_IDX } {
             self.cycles += num_calls;
-        } else if const { FAMILY == SHIFT_BINARY_CSR_CIRCUIT_FAMILY_IDX } {
+        } else if const { FAMILY == SHIFT_BINARY_CIRCUIT_FAMILY_IDX } {
             self.cycles += num_calls;
         } else if const { FAMILY == MUL_DIV_CIRCUIT_FAMILY_IDX } {
             self.cycles += num_calls;

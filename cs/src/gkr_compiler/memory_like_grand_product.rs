@@ -1,7 +1,6 @@
 use super::*;
 use crate::cs::circuit_trait::{MemoryAccess, RegisterAccess, WordRepresentation};
 use crate::definitions::Variable;
-use crate::types::Boolean;
 
 #[derive(Clone, Hash, Debug, PartialEq, Eq)]
 pub enum GrandProductAccumulationStep {

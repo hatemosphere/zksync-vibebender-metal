@@ -1,6 +1,7 @@
 use super::*;
 use crate::gkr::sumcheck::access_and_fold::BaseFieldPoly;
 use crate::{cs::definitions::*, gkr::sumcheck::access_and_fold::ExtensionFieldPoly};
+use cs::definitions::gkr::RamWordRepresentation;
 use cs::gkr_compiler::{
     CompiledAddressSpaceRelationStrict, CompiledAddressStrict, NoFieldGKRRelation,
 };
@@ -202,18 +203,32 @@ fn evaluate_cache_relation<F: PrimeField, E: FieldExtension<F> + Field>(
                                 result.add_assign(&t);
                             }
                             // and values are simplified for now
-                            for (idx, offset) in [
-                                (MEM_ARGUMENT_CHALLENGE_POWERS_VALUE_LOW_IDX, rel.value[0]),
-                                (MEM_ARGUMENT_CHALLENGE_POWERS_VALUE_HIGH_IDX, rel.value[1]),
-                            ] {
-                                let mut t = external_challenges
-                                    .permutation_argument_linearization_challenges[idx];
-                                let el = src_ref
-                                    .get_base_layer_mem(offset)
-                                    .get_unchecked(chunk_start + i);
-                                t.mul_assign_by_base(el);
-                                result.add_assign(&t);
+                            match rel.value {
+                                RamWordRepresentation::U16Limbs(read_value) => {
+                                    for (idx, offset) in [
+                                        (
+                                            MEM_ARGUMENT_CHALLENGE_POWERS_VALUE_LOW_IDX,
+                                            read_value[0],
+                                        ),
+                                        (
+                                            MEM_ARGUMENT_CHALLENGE_POWERS_VALUE_HIGH_IDX,
+                                            read_value[1],
+                                        ),
+                                    ] {
+                                        let mut t = external_challenges
+                                            .permutation_argument_linearization_challenges[idx];
+                                        let el = src_ref
+                                            .get_base_layer_mem(offset)
+                                            .get_unchecked(chunk_start + i);
+                                        t.mul_assign_by_base(el);
+                                        result.add_assign(&t);
+                                    }
+                                }
+                                RamWordRepresentation::U8Limbs(read_value_bytes) => {
+                                    todo!()
+                                }
                             }
+
                             dest.get_unchecked_mut(i).write(result);
                         }
                     },
@@ -325,6 +340,27 @@ pub fn evaluate_layer<F: PrimeField, E: FieldExtension<F> + Field>(
                 BaseFieldPoly::new(poly.into_boxed_slice()),
             );
         }
+    } else {
+        // we can still get some intermediate polys
+        for (i, poly) in witness_trace
+            .column_major_scratch_space_trace
+            .iter_mut()
+            .enumerate()
+        {
+            if let Some(place) = compiled_circuit.scratch_space_mapping_rev.get(&i) {
+                if let GKRAddress::InnerLayer { layer, .. } = *place {
+                    if layer == layer_idx {
+                        assert!(poly.is_empty() == false);
+                        let poly = core::mem::replace(poly, vec![]);
+                        gkr_storage.insert_base_field_at_layer(
+                            layer_idx,
+                            *place,
+                            BaseFieldPoly::new(poly.into_boxed_slice()),
+                        );
+                    }
+                }
+            }
+        }
     }
 
     // first we compute caches
@@ -419,9 +455,6 @@ pub fn evaluate_layer<F: PrimeField, E: FieldExtension<F> + Field>(
             }
             NoFieldGKRRelation::EnforceConstraintsMaxQuadratic { .. } => {
                 // we do nothing as it should result in all zeroes in case if constraints are satisfied
-            }
-            NoFieldGKRRelation::LookupFromBaseInputsWithSetup { .. } => {
-                unimplemented!("not used");
             }
             NoFieldGKRRelation::LookupFromMaterializedBaseInputWithSetup {
                 input,

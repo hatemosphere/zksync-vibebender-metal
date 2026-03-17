@@ -2,7 +2,7 @@ use cs::definitions::TimestampScalar;
 use cs::gkr_circuits::ExecutorFamilyDecoderData;
 use cs::oracle::*;
 use field::PrimeField;
-use risc_v_simulator::machine_mode_only_unrolled::{
+use riscv_transpiler::witness::{
     MemoryOpcodeTracingDataWithTimestamp, MEM_LOAD_TRACE_DATA_MARKER, MEM_STORE_TRACE_DATA_MARKER,
 };
 

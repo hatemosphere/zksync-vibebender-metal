@@ -39,8 +39,8 @@ mod range_check_exprs;
 mod utils;
 
 pub use self::compiled_constraint::*;
-pub use self::layout_utils::*;
-pub use self::lookup::*;
+pub(crate) use self::layout_utils::*;
+pub(crate) use self::lookup::*;
 pub(crate) use self::utils::*;
 
 #[derive(
@@ -87,8 +87,15 @@ pub struct GKRCircuitArtifact<F: PrimeField> {
     pub decode_table_columns_mask: Vec<bool>,
     pub tables_ids_in_generic_lookups: bool,
 
-    // pub degree_2_constraints: Vec<Degree2Constraint<F>>,
-    // pub degree_1_constraints: Vec<Degree1Constraint<F>>,
+    // for satisfiability checks
+    pub degree_2_constraints: Vec<Degree2Constraint<F>>,
+    pub degree_1_constraints: Vec<Degree1Constraint<F>>,
+
+    // for witness evaluation and multiplicity counting
+    pub generic_lookups: Vec<NoFieldVectorLookupRelation>,
+    pub range_check_16_lookup_expressions: Vec<NoFieldSingleColumnLookupRelation>,
+    pub timestamp_range_check_lookup_expressions: Vec<NoFieldSingleColumnLookupRelation>,
+
     pub variable_names: BTreeMap<Variable, String>,
     #[serde_as(as = "Vec<(_, _)>")]
     pub scratch_space_mapping: BTreeMap<GKRAddress, usize>,

@@ -58,9 +58,7 @@
     {
       "Integer": {
         "U32OracleValue": {
-          "placeholder": {
-            "DelegationNondeterminismAccess": 0
-          }
+          "placeholder": "ExternalOracle"
         }
       }
     },

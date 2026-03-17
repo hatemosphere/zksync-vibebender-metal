@@ -447,7 +447,7 @@ impl<F: PrimeField, E: FieldExtension<F> + Field> GKRStorage<F, E> {
                     .push(BaseFieldPolySource::<F>::empty());
             } else {
                 let layer = match *input {
-                    GKRAddress::OptimizedOut(..) => {
+                    GKRAddress::ScratchSpace(..) => {
                         unreachable!()
                     }
                     GKRAddress::Cached { layer, .. } => {
@@ -473,7 +473,7 @@ impl<F: PrimeField, E: FieldExtension<F> + Field> GKRStorage<F, E> {
                     .push(ExtensionFieldPolyInitialSource::empty());
             } else {
                 let layer = match *input {
-                    GKRAddress::OptimizedOut(..) => {
+                    GKRAddress::ScratchSpace(..) => {
                         unreachable!()
                     }
                     GKRAddress::Cached { layer, .. } => {
@@ -500,7 +500,7 @@ impl<F: PrimeField, E: FieldExtension<F> + Field> GKRStorage<F, E> {
                     .push(ExtensionFieldPolyInitialSource::empty());
             } else {
                 let layer = match *output {
-                    GKRAddress::OptimizedOut(..)
+                    GKRAddress::ScratchSpace(..)
                     | GKRAddress::BaseLayerMemory(..)
                     | GKRAddress::BaseLayerWitness(..)
                     | GKRAddress::Setup(..) => {

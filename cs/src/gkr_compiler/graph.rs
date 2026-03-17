@@ -1,11 +1,11 @@
 use crate::constraint::Constraint;
 use crate::definitions::{GKRAddress, Variable};
 use crate::gkr_compiler::{
-    GKRGate, GKRRelation, LookupType, NoFieldGKRCacheRelation, NoFieldGKRRelation,
+    GKRGate, LookupType, NoFieldGKRCacheRelation, NoFieldGKRRelation,
 };
 use field::PrimeField;
 use std::collections::HashMap;
-use std::collections::{BTreeSet, HashSet};
+use std::collections::BTreeSet;
 use std::{collections::BTreeMap, hash::Hash};
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Hash, serde::Serialize, serde::Deserialize)]

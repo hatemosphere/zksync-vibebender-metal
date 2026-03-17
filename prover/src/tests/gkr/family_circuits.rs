@@ -14,6 +14,9 @@ use ::field::baby_bear::ext4::BabyBearExt4;
 use common_constants::TIMESTAMP_STEP;
 use cs::definitions::INITIAL_TIMESTAMP;
 use cs::definitions::*;
+use cs::gkr_circuits::opcodes_for_full_machine_with_unsigned_mul_div_only_with_mem_word_access_specialization;
+use cs::gkr_circuits::process_binary_into_separate_tables_ext;
+use cs::gkr_compiler::compile_unrolled_circuit_state_transition_into_gkr;
 use cs::tables::TableDriver;
 use fft::materialize_powers_serial_starting_with_elem;
 use fft::Twiddles;
@@ -26,7 +29,6 @@ use std::alloc::Global;
 use std::collections::BTreeSet;
 use worker::Worker;
 
-const SUPPORT_SIGNED: bool = false;
 const INITIAL_PC: u32 = 0;
 const NUM_INIT_AND_TEARDOWN_SETS: usize = 8;
 const NUM_DELEGATION_CYCLES: usize = 1 << 20;
@@ -98,7 +100,7 @@ pub fn gkr_run_basic_unrolled_test_impl(
     let mut snapshotter = SimpleSnapshotter::<CountersT, {common_constants::ROM_SECOND_WORD_BITS}>::new_with_cycle_limit(cycles_bound, state);
     let mut non_determinism = QuasiUARTSource::new_with_reads(vec![15, 1]);
 
-    let is_program_finished = VM::<CountersT>::run_basic_unrolled::<_, _, _>(
+    let is_program_finished = VM::<CountersT>::run_basic_unrolled::<_, _, _, BabyBearField>(
         &mut state,
         &mut ram,
         &mut snapshotter,
@@ -178,7 +180,7 @@ pub fn gkr_run_basic_unrolled_test_impl(
         .try_into()
         .unwrap();
 
-    let external_challenges = GKRExternalChallenges {
+    let external_challenges = GKRExternalChallenges::<BabyBearField, BabyBearExt4> {
         permutation_argument_linearization_challenges,
         permutation_argument_additive_part,
         _marker: std::marker::PhantomData,
@@ -186,31 +188,22 @@ pub fn gkr_run_basic_unrolled_test_impl(
 
     // evaluate memory witness
 
-    let preprocessing_data = if SUPPORT_SIGNED {
-        process_binary_into_separate_tables_ext::<BabyBearField, true, Global>(
-            &text_section,
-            &opcodes_for_full_machine_with_mem_word_access_specialization(),
-            1 << 20,
-            &[
-                NON_DETERMINISM_CSR as u16,
-                BLAKE2S_DELEGATION_CSR_REGISTER as u16,
-                BIGINT_OPS_WITH_CONTROL_CSR_REGISTER as u16,
-                KECCAK_SPECIAL5_CSR_REGISTER as u16,
-            ],
-        )
-    } else {
-        process_binary_into_separate_tables_ext::<BabyBearField, true, Global>(
-            &text_section,
-            &opcodes_for_full_machine_with_unsigned_mul_div_only_with_mem_word_access_specialization(),
-            1 << 20,
-            &[
-                NON_DETERMINISM_CSR as u16,
-                BLAKE2S_DELEGATION_CSR_REGISTER as u16,
-                BIGINT_OPS_WITH_CONTROL_CSR_REGISTER as u16,
-                KECCAK_SPECIAL5_CSR_REGISTER as u16
-            ],
-        )
-    };
+    let preprocessing_data = process_binary_into_separate_tables_ext::<
+        BabyBearField,
+        FullUnsignedMachineDecoderConfig,
+        true,
+        Global,
+    >(
+        &text_section,
+        &opcodes_for_full_machine_with_unsigned_mul_div_only_with_mem_word_access_specialization(),
+        1 << 20,
+        &[
+            NON_DETERMINISM_CSR as u16,
+            BLAKE2S_DELEGATION_CSR_REGISTER as u16,
+            BIGINT_OPS_WITH_CONTROL_CSR_REGISTER as u16,
+            KECCAK_SPECIAL5_CSR_REGISTER as u16,
+        ],
+    );
 
     // let mut permutation_argument_accumulator = produce_pc_into_permutation_accumulator_raw(
     //     INITIAL_PC,
@@ -261,7 +254,7 @@ pub fn gkr_run_basic_unrolled_test_impl(
             < NUM_CYCLES_PER_CHUNK
     );
     assert!(
-        counters.get_calls_to_circuit_family::<SHIFT_BINARY_CSR_CIRCUIT_FAMILY_IDX>()
+        counters.get_calls_to_circuit_family::<SHIFT_BINARY_CIRCUIT_FAMILY_IDX>()
             < NUM_CYCLES_PER_CHUNK
     );
     assert!(
@@ -283,13 +276,9 @@ pub fn gkr_run_basic_unrolled_test_impl(
     if true {
         println!("Will try to prove ADD/SUB/LUI/AUIPC/MOP circuit");
 
-        let add_sub_circuit = {
-            use crate::cs::machine::ops::unrolled::add_sub_lui_auipc_mop::*;
-            compile_unrolled_circuit_state_transition_into_gkr::<BabyBearField>(
-                &|cs| add_sub_lui_auipc_mop_table_addition_fn(cs),
-                &|cs| add_sub_lui_auipc_mop_circuit_with_preprocessed_bytecode_for_gkr(cs),
-                1 << 20,
-                TRACE_LEN_LOG2,
+        let add_sub_circuit: GKRCircuitArtifact<BabyBearField> = {
+            deserialize_from_file(
+                "../cs/compiled_circuits/add_sub_lui_auipc_mop_preprocessed_layout_gkr.json",
             )
         };
 
@@ -313,7 +302,7 @@ pub fn gkr_run_basic_unrolled_test_impl(
             buffers: &mut buffers[..],
         };
 
-        ReplayerVM::<CountersT>::replay_basic_unrolled::<_, _>(
+        ReplayerVM::<CountersT>::replay_basic_unrolled::<_, _, BabyBearField>(
             &mut state,
             &mut ram,
             &tape,
@@ -323,16 +312,19 @@ pub fn gkr_run_basic_unrolled_test_impl(
         );
         assert_eq!(expected_final_state, state);
 
-        let (decoder_table_data, witness_gen_data) =
-            &preprocessing_data[&ADD_SUB_LUI_AUIPC_MOP_CIRCUIT_FAMILY_IDX];
+        let decoder_table_data = &preprocessing_data[&ADD_SUB_LUI_AUIPC_MOP_CIRCUIT_FAMILY_IDX];
+        let witness_gen_data = decoder_table_data
+            .iter()
+            .map(|el| el.unwrap_or(Default::default()))
+            .collect::<Vec<_>>();
 
-        // let row = 6;
+        // let row = 401;
         // dbg!(buffer[row]);
         // dbg!(witness_gen_data[(buffer[row].opcode_data.initial_pc / 4) as usize]);
 
         let oracle = NonMemoryCircuitOracle {
             inner: &buffer[..],
-            decoder_table: witness_gen_data,
+            decoder_table: &witness_gen_data,
             default_pc_value_in_padding: 4,
         };
 
@@ -375,96 +367,96 @@ pub fn gkr_run_basic_unrolled_test_impl(
         //     &mut memory_read_set,
         // );
 
-        if CHECK_MEMORY_PERMUTATION_ONLY == false {
-            // println!("Will check constraints satisfiability");
-            // let is_satisfied = check_satisfied(&add_sub_circuit, &full_trace);
-            // assert!(is_satisfied);
+        println!("Will check constraints satisfiability");
+        let is_satisfied = check_satisfied(&add_sub_circuit, &full_trace);
+        assert!(is_satisfied);
 
-            println!("Preparing twiddles");
-            let twiddles: Twiddles<_, Global> = Twiddles::new(trace_len, &worker);
-            // let lde_precomputations =
-            //     LdePrecomputations::new(trace_len, lde_factor, &[0, 1], &worker);
-            println!("Preparing setup");
-            let setup = GKRSetup::construct(
-                &TableDriver::new(),
-                &decoder_table_data,
-                trace_len,
-                &add_sub_circuit,
-            );
+        // if CHECK_MEMORY_PERMUTATION_ONLY == false {
+        //     println!("Preparing twiddles");
+        //     let twiddles: Twiddles<_, Global> = Twiddles::new(trace_len, &worker);
+        //     // let lde_precomputations =
+        //     //     LdePrecomputations::new(trace_len, lde_factor, &[0, 1], &worker);
+        //     println!("Preparing setup");
+        //     let setup = GKRSetup::construct(
+        //         &TableDriver::new(),
+        //         &decoder_table_data,
+        //         trace_len,
+        //         &add_sub_circuit,
+        //     );
 
-            let setup_commitment = setup.commit(
-                &twiddles,
-                2,
-                1,
-                tree_cap_size,
-                trace_len.trailing_zeros() as usize,
-                &worker,
-            );
+        //     let setup_commitment = setup.commit(
+        //         &twiddles,
+        //         2,
+        //         1,
+        //         tree_cap_size,
+        //         trace_len.trailing_zeros() as usize,
+        //         &worker,
+        //     );
 
-            // let lookup_mapping_for_gpu = if maybe_gpu_unrolled_comparison_hook.is_some() {
-            //     Some(full_trace.lookup_mapping.clone())
-            // } else {
-            //     None
-            // };
+        //     // let lookup_mapping_for_gpu = if maybe_gpu_unrolled_comparison_hook.is_some() {
+        //     //     Some(full_trace.lookup_mapping.clone())
+        //     // } else {
+        //     //     None
+        //     // };
 
-            let whir_schedule = WhirSchedule::default_for_tests_80_bits();
+        //     let whir_schedule = WhirSchedule::default_for_tests_80_bits();
 
-            println!("Trying to prove");
+        //     println!("Trying to prove");
 
-            let now = std::time::Instant::now();
-            let proof =
-                prove_configured_with_gkr::<BabyBearField, BabyBearExt4, DefaultTreeConstructor>(
-                    &add_sub_circuit,
-                    &external_challenges,
-                    full_trace,
-                    &setup,
-                    &setup_commitment,
-                    &twiddles,
-                    &whir_schedule,
-                    None,
-                    trace_len,
-                    &worker,
-                );
-            println!("Proving time is {:?}", now.elapsed());
+        //     let now = std::time::Instant::now();
+        //     let proof =
+        //         prove_configured_with_gkr::<BabyBearField, BabyBearExt4, DefaultTreeConstructor>(
+        //             &add_sub_circuit,
+        //             &external_challenges,
+        //             full_trace,
+        //             &setup,
+        //             &setup_commitment,
+        //             &twiddles,
+        //             &whir_schedule,
+        //             None,
+        //             trace_len,
+        //             &worker,
+        //         );
+        //     println!("Proving time is {:?}", now.elapsed());
 
-            println!(
-                "Estimated proof size without compression is {} bytes",
-                proof.estimate_size()
-            );
+        //     println!(
+        //         "Estimated proof size without compression is {} bytes",
+        //         proof.estimate_size()
+        //     );
 
-            if is_empty {
-                assert_eq!(proof.grand_product_accumulator_computed, BabyBearExt4::ONE);
-            }
+        //     if is_empty {
+        //         assert_eq!(proof.grand_product_accumulator_computed, BabyBearExt4::ONE);
+        //     }
 
-            serialize_to_file(&proof, "add_sub_lui_auipc_mop_gkr_proof.json");
+        //     serialize_to_file(&proof, "add_sub_lui_auipc_mop_gkr_proof.json");
 
-            // serialize_to_file_if_not_gpu_comparison(
-            //     &proof,
-            //     "add_sub_lui_auipc_mop_unrolled_proof.json",
-            // );
+        //     // serialize_to_file_if_not_gpu_comparison(
+        //     //     &proof,
+        //     //     "add_sub_lui_auipc_mop_unrolled_proof.json",
+        //     // );
 
-            // if let Some(ref gpu_comparison_hook) = maybe_gpu_unrolled_comparison_hook {
-            //     let gpu_comparison_args = GpuComparisonArgs {
-            //         circuit: &add_sub_circuit,
-            //         setup: &setup,
-            //         external_challenges: &external_challenges,
-            //         aux_boundary_values: &[],
-            //         public_inputs: &vec![],
-            //         twiddles: &twiddles,
-            //         lde_precomputations: &lde_precomputations,
-            //         lookup_mapping: lookup_mapping_for_gpu.unwrap(),
-            //         log_n: TRACE_LEN_LOG2,
-            //         circuit_sequence: None,
-            //         delegation_processing_type: None,
-            //         is_unrolled: true,
-            //         prover_data: &prover_data,
-            //     };
-            //     gpu_comparison_hook(&gpu_comparison_args);
-            // }
+        //     // if let Some(ref gpu_comparison_hook) = maybe_gpu_unrolled_comparison_hook {
+        //     //     let gpu_comparison_args = GpuComparisonArgs {
+        //     //         circuit: &add_sub_circuit,
+        //     //         setup: &setup,
+        //     //         external_challenges: &external_challenges,
+        //     //         aux_boundary_values: &[],
+        //     //         public_inputs: &vec![],
+        //     //         twiddles: &twiddles,
+        //     //         lde_precomputations: &lde_precomputations,
+        //     //         lookup_mapping: lookup_mapping_for_gpu.unwrap(),
+        //     //         log_n: TRACE_LEN_LOG2,
+        //     //         circuit_sequence: None,
+        //     //         delegation_processing_type: None,
+        //     //         is_unrolled: true,
+        //     //         prover_data: &prover_data,
+        //     //     };
+        //     //     gpu_comparison_hook(&gpu_comparison_args);
+        //     // }
 
-            // permutation_argument_accumulator
-            //     .mul_assign(&proof.permutation_grand_product_accumulator);
-        }
+        //     // permutation_argument_accumulator
+        //     //     .mul_assign(&proof.permutation_grand_product_accumulator);
+        // }
     }
 
     // if true {

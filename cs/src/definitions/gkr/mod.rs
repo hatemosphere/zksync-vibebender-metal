@@ -56,8 +56,5 @@ pub struct GKRWitnessLayout {
     pub multiplicities_columns_for_range_check_16: usize,
     pub multiplicities_columns_for_timestamp_range_check: usize,
     pub multiplicities_columns_for_generic_lookup: core::ops::Range<usize>,
-    // pub generic_lookups: Vec<NoFieldVectorLookupRelation>,
-    // pub range_check_16_lookup_expressions: Vec<NoFieldSingleColumnLookupRelation>,
-    // pub timestamp_range_check_lookup_expressions: Vec<NoFieldSingleColumnLookupRelation>,
     pub total_width: usize,
 }

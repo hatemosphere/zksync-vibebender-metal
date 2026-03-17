@@ -524,18 +524,27 @@ impl<F: PrimeField> LookupTable<F> {
         &self.data[row][..]
     }
 
-    // pub fn dump_into<const M: usize>(&self, dst: &mut Vec<[F; M]>, id: Option<u32>) {
-    //     let required_len = N + id.is_some() as usize;
-    //     assert!(M >= required_len);
-    //     for row in self.data.iter() {
-    //         let mut assembled_row = [F::ZERO; M];
-    //         assembled_row[..N].copy_from_slice(&row[..]);
-    //         if let Some(id) = id {
-    //             assembled_row[N] = F::from_u32_unchecked(id as u32);
-    //         }
-    //         dst.push(assembled_row);
-    //     }
-    // }
+    pub fn dump_into(
+        &self,
+        dst: &mut Vec<ArrayVec<F, MAX_TABLE_WIDTH>>,
+        id: Option<u32>,
+        total_width_without_id: usize,
+    ) {
+        assert!(self.width() <= total_width_without_id);
+        let required_len = self.width() + id.is_some() as usize;
+        assert!(required_len <= MAX_TABLE_WIDTH);
+        for row in self.data.iter() {
+            let mut assembled_row = row.clone();
+            assert_eq!(row.len(), self.width());
+            for _ in self.width()..total_width_without_id {
+                assembled_row.push(F::ZERO);
+            }
+            if let Some(id) = id {
+                assembled_row.push(F::from_u32_unchecked(id as u32));
+            }
+            dst.push(assembled_row);
+        }
+    }
 
     // pub fn dump_limited_columns<const M: usize>(&self, dst: &mut Vec<[F; M]>) {
     //     for row in self.data.iter() {
@@ -625,12 +634,17 @@ impl<F: PrimeField> LookupWrapper<F> {
     //     }
     // }
 
-    // pub fn dump_into(&self, dst: &mut Vec<ArrayVec<F, MAX_TABLE_WIDTH>>, id: Option<u32>) {
-    //     match self {
-    //         Self::Initialized(inner) => inner.dump_into(dst, id),
-    //         Self::Uninitialized => {}
-    //     }
-    // }
+    pub fn dump_into(
+        &self,
+        dst: &mut Vec<ArrayVec<F, MAX_TABLE_WIDTH>>,
+        id: Option<u32>,
+        total_width_without_id: usize,
+    ) {
+        match self {
+            Self::Initialized(inner) => inner.dump_into(dst, id, total_width_without_id),
+            Self::Uninitialized => {}
+        }
+    }
 
     // pub fn dump_limited_columns<const N: usize>(&self, dst: &mut Vec<ArrayVec<F, MAX_TABLE_WIDTH>>) {
     //     match self {
@@ -1049,65 +1063,55 @@ impl<F: PrimeField> TableDriver<F> {
     //     values
     // }
 
-    // #[track_caller]
-    // #[inline(always)]
-    // pub fn lookup_values_and_get_absolute_index(
-    //     &self,
-    //     keys: &[F],
-    //     id: u32,
-    // ) -> (usize, ArrayVec<F, MAX_TABLE_WIDTH>) {
-    //     let offset = self.get_start_table_offset(id);
-    //     let table = &self.tables[id as usize];
-    //     assert!(
-    //         table.is_initialized(),
-    //         "table with id = {:?} is not initialized",
-    //         id
-    //     );
-    //     // debug_assert!(
-    //     //     table.is_initialized(),
-    //     //     "table with id = {:?} is not initialized",
-    //     //     id
-    //     // );
-    //     let (mut index, values) = table.lookup_values_and_get_index(keys);
-    //     index += offset;
+    #[track_caller]
+    #[inline(always)]
+    pub fn lookup_values_and_get_absolute_index<const N: usize>(
+        &self,
+        keys: &[F],
+        id: u32,
+    ) -> (usize, [F; N]) {
+        let offset = self.get_start_table_offset(id);
+        let table = &self.tables[id as usize];
+        assert!(
+            table.is_initialized(),
+            "table with id = {:?} is not initialized",
+            id
+        );
+        let (mut index, values) = table.lookup_values_and_get_index(keys);
+        index += offset;
 
-    //     (index, values)
-    // }
+        (index, values)
+    }
 
-    // #[track_caller]
-    // #[inline(always)]
-    // pub fn enforce_values_and_get_absolute_index<const N: usize>(
-    //     &self,
-    //     keys: &[F; N],
-    //     id: u32,
-    // ) -> usize {
-    //     let offset = self.get_start_table_offset(id);
-    //     let table = &self.tables[id as usize];
-    //     assert!(
-    //         table.is_initialized(),
-    //         "table with id = {:?} is not initialized",
-    //         id
-    //     );
-    //     // debug_assert!(
-    //     //     table.is_initialized(),
-    //     //     "table with id = {:?} is not initialized",
-    //     //     id
-    //     // );
-    //     let mut index = table.lookup_row(keys);
-    //     index += offset;
+    #[track_caller]
+    #[inline(always)]
+    pub fn enforce_values_and_get_absolute_index<const N: usize>(
+        &self,
+        keys: &[F; N],
+        id: u32,
+    ) -> usize {
+        let offset = self.get_start_table_offset(id);
+        let table = &self.tables[id as usize];
+        assert!(
+            table.is_initialized(),
+            "table with id = {:?} is not initialized",
+            id
+        );
+        let mut index = table.lookup_row(keys);
+        index += offset;
 
-    //     index
-    // }
+        index
+    }
 
     // // #[inline(always)]
     // // pub fn lookup_row(&self, row: &[F], id: u32) -> bool {
     // //     self.tables[id as usize].lookup_row(row).is_some()
     // // }
 
-    // #[inline(always)]
-    // pub fn get_start_table_offset(&self, id: u32) -> usize {
-    //     self.offsets_for_multiplicities[id as usize]
-    // }
+    #[inline(always)]
+    pub fn get_start_table_offset(&self, id: u32) -> usize {
+        self.offsets_for_multiplicities[id as usize]
+    }
 
     pub fn table_starts_offsets(&self) -> [usize; TABLE_TYPES_UPPER_BOUNDS] {
         self.offsets_for_multiplicities
@@ -1123,18 +1127,18 @@ impl<F: PrimeField> TableDriver<F> {
     //     &self.tables[id as usize]
     // }
 
-    // pub fn dump_tables(&self) -> Vec<ArrayVec<F, MAX_TABLE_WIDTH>> {
-    //     let mut result = Vec::with_capacity(self.total_tables_len);
-    //     for table in self.tables.iter() {
-    //         if table.get_size() == 0 {
-    //             continue;
-    //         }
-    //         let id = table.get_table_id();
-    //         table.dump_into(&mut result, Some(id));
-    //     }
+    pub fn dump_tables(&self, total_width_without_id: usize) -> Vec<ArrayVec<F, MAX_TABLE_WIDTH>> {
+        let mut result = Vec::with_capacity(self.total_tables_len);
+        for table in self.tables.iter() {
+            if table.get_size() == 0 {
+                continue;
+            }
+            let id = table.get_table_id();
+            table.dump_into(&mut result, Some(id), total_width_without_id);
+        }
 
-    //     result
-    // }
+        result
+    }
 }
 
 // #[cfg(test)]

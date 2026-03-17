@@ -79,7 +79,6 @@ impl OpcodeFamilyDecoder for JumpSltBranchDecoder {
                 }
             }
             InstructionName::Jalr => {
-                assert_ne!(preprocessed_opcode.rs1, 0);
                 assert_eq!(preprocessed_opcode.rs2, 0);
 
                 rs1_index = preprocessed_opcode.rs1;
@@ -92,9 +91,6 @@ impl OpcodeFamilyDecoder for JumpSltBranchDecoder {
                 }
             }
             InstructionName::Branch => {
-                assert_ne!(preprocessed_opcode.rs1, 0);
-                assert_ne!(preprocessed_opcode.rs2, 0);
-
                 rs1_index = preprocessed_opcode.rs1;
                 rs2_index = preprocessed_opcode.rs2 as u16;
                 imm = preprocessed_opcode.imm;

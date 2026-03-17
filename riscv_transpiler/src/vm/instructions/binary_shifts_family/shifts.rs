@@ -20,7 +20,7 @@ pub(crate) fn sll<C: Counters, S: Snapshotter<C>, R: RAM>(
     let mut rd = rs1_value.wrapping_shl(rs2_value);
     write_register::<C, 2>(state, instr.rd, &mut rd);
     default_increase_pc::<C>(state);
-    increment_family_counter::<C, SHIFT_BINARY_CSR_CIRCUIT_FAMILY_IDX>(state);
+    increment_family_counter::<C, SHIFT_BINARY_CIRCUIT_FAMILY_IDX>(state);
 }
 
 #[inline(always)]
@@ -43,7 +43,7 @@ pub(crate) fn srl<C: Counters, S: Snapshotter<C>, R: RAM>(
     let mut rd = rs1_value.wrapping_shr(rs2_value);
     write_register::<C, 2>(state, instr.rd, &mut rd);
     default_increase_pc::<C>(state);
-    increment_family_counter::<C, SHIFT_BINARY_CSR_CIRCUIT_FAMILY_IDX>(state);
+    increment_family_counter::<C, SHIFT_BINARY_CIRCUIT_FAMILY_IDX>(state);
 }
 
 #[inline(always)]
@@ -66,5 +66,5 @@ pub(crate) fn sra<C: Counters, S: Snapshotter<C>, R: RAM>(
     let mut rd = (rs1_value as i32).wrapping_shr(rs2_value) as u32;
     write_register::<C, 2>(state, instr.rd, &mut rd);
     default_increase_pc::<C>(state);
-    increment_family_counter::<C, SHIFT_BINARY_CSR_CIRCUIT_FAMILY_IDX>(state);
+    increment_family_counter::<C, SHIFT_BINARY_CIRCUIT_FAMILY_IDX>(state);
 }

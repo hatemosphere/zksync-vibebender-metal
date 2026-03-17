@@ -1,9 +1,7 @@
 use super::*;
-use crate::cs::circuit::LookupQueryTableType;
 use crate::definitions::gkr::NoFieldSingleColumnLookupRelation;
-use crate::definitions::LookupInput;
-use crate::definitions::{Degree1Constraint, GKRAddress, Variable};
-use crate::gkr_compiler::graph::{CopyNode, GKRGraph, GraphHolder, NodeIndex};
+use crate::definitions::{Degree1Constraint, GKRAddress};
+use crate::gkr_compiler::graph::GraphHolder;
 
 #[derive(Clone, Hash, Debug, PartialEq, Eq, serde::Serialize, serde::Deserialize)]
 pub enum LookupNumerator {

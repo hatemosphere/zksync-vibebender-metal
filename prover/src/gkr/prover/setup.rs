@@ -4,7 +4,7 @@ use crate::utils::compute_aggregated_key_value_dyn;
 use common_constants::TIMESTAMP_COLUMNS_NUM_BITS;
 use cs::definitions::GKRAddress;
 use cs::gkr_circuits::materialize_flattened_decoder_table_with_bitmask;
-use cs::gkr_circuits::DecoderTableEntry;
+use cs::gkr_circuits::ExecutorFamilyDecoderData;
 use cs::tables::{TableDriver, TableType};
 use fft::{materialize_powers_serial_starting_with_one, GoodAllocator};
 use field::batch_inverse_checked;
@@ -17,7 +17,7 @@ pub struct GKRSetup<F: PrimeField + TwoAdicField> {
 impl<F: PrimeField + TwoAdicField> GKRSetup<F> {
     pub fn construct(
         table_driver: &TableDriver<F>,
-        decoder_table: &[Option<DecoderTableEntry<F>>],
+        decoder_table: &[Option<ExecutorFamilyDecoderData>],
         trace_len: usize,
         compiled_circuit: &GKRCircuitArtifact<F>,
     ) -> Self {
@@ -44,7 +44,8 @@ impl<F: PrimeField + TwoAdicField> GKRSetup<F> {
         assert_eq!(num_table_subsets, 1);
 
         // dump tables
-        let all_generic_tables = table_driver.dump_tables();
+        let all_generic_tables =
+            table_driver.dump_tables(compiled_circuit.generic_lookup_tables_width);
 
         let range_check_16_table_content: Vec<_> = (0..(1 << 16))
             .map(|el| F::from_u32_unchecked(el as u32))

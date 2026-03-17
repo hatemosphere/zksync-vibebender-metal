@@ -12,6 +12,11 @@ fn serialize_to_file<T: serde::Serialize>(el: &T, filename: &str) {
     serde_json::to_writer_pretty(&mut dst, el).unwrap();
 }
 
+fn deserialize_from_file<T: serde::de::DeserializeOwned>(filename: &str) -> T {
+    let mut src = std::fs::File::open(filename).unwrap();
+    serde_json::from_reader(src).unwrap()
+}
+
 mod family_circuits;
 
 pub(crate) fn ensure_memory_trace_consistency<F: PrimeField>(
@@ -259,7 +264,8 @@ pub fn check_satisfied_row<F: PrimeField, A: GoodAllocator, B: GoodAllocator>(
 
 mod add_sub_lui_auipc_mod {
     use crate::gkr::witness_gen::column_major_proxy::ColumnMajorWitnessProxy;
-    use crate::unrolled::NonMemoryCircuitOracle;
+    use crate::gkr::witness_gen::oracles::NonMemoryCircuitOracle;
+    use crate::gkr::witness_gen::witness_proxy::WitnessProxy;
     use ::cs::oracle::Placeholder;
     use ::cs::witness_placer::WitnessTypeSet;
     use ::cs::witness_placer::{
@@ -270,7 +276,7 @@ mod add_sub_lui_auipc_mod {
     use ::field::baby_bear::base::BabyBearField;
     use cs::witness_placer::scalar_witness_type_set::ScalarWitnessTypeSet;
 
-    include!("../../../add_sub_lui_auipc_mop_preprocessed_generated_gkr.rs");
+    include!("../../../compiled_circuits/add_sub_lui_auipc_mop_preprocessed_generated_gkr.rs");
 
     pub fn witness_eval_fn<'a, 'b>(
         proxy: &'_ mut ColumnMajorWitnessProxy<'a, NonMemoryCircuitOracle<'b>, BabyBearField>,

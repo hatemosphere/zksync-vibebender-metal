@@ -17,6 +17,7 @@ unsafe impl Send for QuasiCell<u16> {}
 pub struct GKRFullWitnessTrace<F: PrimeField, A: Allocator + Clone, B: Allocator + Clone> {
     pub column_major_memory_trace: Vec<Vec<F, A>, B>,
     pub column_major_witness_trace: Vec<Vec<F, A>, B>,
+    pub column_major_scratch_space_trace: Vec<Vec<F, A>, B>,
     // we will use it for stage 2 - we can map (for free) every lookup tuple into the
     // corresponding index of the lookup tables (and more precisely - in the concatenation of all the tables)
     pub generic_lookup_mapping: Vec<Vec<u32, A>, B>,
@@ -46,6 +47,7 @@ impl<F: PrimeField, A: Allocator + Clone, B: Allocator + Clone> GKRFullWitnessTr
         trace_len: usize,
         num_memory_columns: usize,
         num_witness_columns: usize,
+        scratch_space_size: usize,
         num_generic_lookups: usize,
         num_range_check_16_lookups: usize,
         num_timestamp_range_check_lookups: usize,
@@ -64,6 +66,12 @@ impl<F: PrimeField, A: Allocator + Clone, B: Allocator + Clone> GKRFullWitnessTr
         let column_major_witness_trace = make_vec_vec(
             trace_len,
             num_witness_columns,
+            inner_allocator.clone(),
+            outer_allocator.clone(),
+        );
+        let column_major_scratch_space_trace = make_vec_vec(
+            trace_len,
+            scratch_space_size,
             inner_allocator.clone(),
             outer_allocator.clone(),
         );
@@ -90,6 +98,7 @@ impl<F: PrimeField, A: Allocator + Clone, B: Allocator + Clone> GKRFullWitnessTr
         Self {
             column_major_memory_trace,
             column_major_witness_trace,
+            column_major_scratch_space_trace,
             generic_lookup_mapping,
             range_check_16_lookup_mapping,
             timestamp_range_check_lookup_mapping,
@@ -125,6 +134,12 @@ impl<F: PrimeField, A: Allocator + Clone, B: Allocator + Clone> GKRFullWitnessTr
             .map(|el| el.as_mut_ptr())
             .collect();
 
+        let mut column_major_scratch_space_start_ptrs: Vec<_> = self
+            .column_major_scratch_space_trace
+            .iter_mut()
+            .map(|el| el.as_mut_ptr())
+            .collect();
+
         let mut generic_lookup_mapping_start_ptrs: Vec<_> = self
             .generic_lookup_mapping
             .iter_mut()
@@ -152,7 +167,9 @@ impl<F: PrimeField, A: Allocator + Clone, B: Allocator + Clone> GKRFullWitnessTr
                 memory_rows_starts: column_major_memory_trace_start_ptrs
                     .clone()
                     .into_boxed_slice(),
-                scratch_space: vec![F::ZERO; scratch_space_size].into_boxed_slice(),
+                scratch_space: column_major_scratch_space_start_ptrs
+                    .clone()
+                    .into_boxed_slice(),
                 table_driver,
                 multiplicity_counting_scratch: &mut [],
                 lookup_mapping_rows_starts: generic_lookup_mapping_start_ptrs
@@ -305,16 +322,12 @@ pub fn evaluate_gkr_witness_for_executor_family<
 
     let num_memory_columns = compiled_circuit.memory_layout.total_width;
     let num_witness_columns = compiled_circuit.witness_layout.total_width;
-    let mut num_generic_lookups = compiled_circuit.witness_layout.generic_lookups.len();
+    let mut num_generic_lookups = compiled_circuit.generic_lookups.len();
     if compiled_circuit.has_decoder_lookup {
         num_generic_lookups += 1;
     }
-    let num_range_check_16_lookups = compiled_circuit
-        .witness_layout
-        .range_check_16_lookup_expressions
-        .len();
+    let num_range_check_16_lookups = compiled_circuit.range_check_16_lookup_expressions.len();
     let num_timestamp_range_check_lookups = compiled_circuit
-        .witness_layout
         .timestamp_range_check_lookup_expressions
         .len();
 
@@ -330,6 +343,7 @@ pub fn evaluate_gkr_witness_for_executor_family<
         trace_len,
         num_memory_columns,
         num_witness_columns,
+        compiled_circuit.scratch_space_size,
         num_generic_lookups,
         num_range_check_16_lookups,
         num_timestamp_range_check_lookups,
@@ -588,7 +602,6 @@ pub(crate) unsafe fn gkr_count_special_multiplicities_for_executor_family<
     let t = std::time::Instant::now();
 
     for (idx, range_check_expression) in compiled_circuit
-        .witness_layout
         .range_check_16_lookup_expressions
         .iter()
         .enumerate()
@@ -633,9 +646,8 @@ pub(crate) unsafe fn gkr_count_special_multiplicities_for_executor_family<
 
     // now timestamp related relations - all are non-trivial
 
-    let timestamp_range_check_relations = &compiled_circuit
-        .witness_layout
-        .timestamp_range_check_lookup_expressions;
+    let timestamp_range_check_relations =
+        &compiled_circuit.timestamp_range_check_lookup_expressions;
     assert!(timestamp_range_check_relations.len() % 2 == 0);
 
     for (idx, range_check_expression) in timestamp_range_check_relations.iter().enumerate() {

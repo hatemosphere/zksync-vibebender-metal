@@ -295,9 +295,10 @@ impl<F: PrimeField, E: FieldExtension<F> + Field> KernelVariant<F, E> {
             NoFieldGKRRelation::MaterializeSingleLookupInput { .. } => todo!(),
             NoFieldGKRRelation::MaterializedVectorLookupInput { .. } => todo!(),
             NoFieldGKRRelation::LookupPairFromBaseInputs { .. } => todo!(),
-            NoFieldGKRRelation::LookupUnbalancedPairWithBaseInputs { .. } => todo!(),
-            NoFieldGKRRelation::LookupFromBaseInputsWithSetup { .. } => todo!(),
             NoFieldGKRRelation::LookupPairFromVectorInputs { .. } => todo!(),
+            a @ _ => {
+                todo!()
+            }
         }
     }
 }

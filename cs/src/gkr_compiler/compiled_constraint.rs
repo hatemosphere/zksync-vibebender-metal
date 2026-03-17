@@ -378,9 +378,11 @@ pub(crate) fn layout_constraints_at_layers<F: PrimeField>(
     graph: &mut GKRGraph,
     constraints: Vec<(Constraint<F>, bool)>,
     layers_mapping: &HashMap<Variable, usize>,
-) {
+) -> (Vec<Degree2Constraint<F>>, Vec<Degree1Constraint<F>>) {
     // sort constraints by layers
     let mut layers = BTreeMap::new();
+    let mut compiled_quadratic = vec![];
+    let mut compiled_linear = vec![];
 
     for (c, _) in constraints.into_iter() {
         let all_vars = c.stable_variable_set();
@@ -401,9 +403,6 @@ pub(crate) fn layout_constraints_at_layers<F: PrimeField>(
         let mut quadratic_parts = vec![];
         let mut linear_parts = vec![];
         let mut constant_parts = vec![];
-
-        let mut compiled_quadratic = vec![];
-        let mut compiled_linear = vec![];
 
         for c in constraints.into_iter() {
             let (q, l, c) = c.split_max_quadratic();
@@ -440,6 +439,8 @@ pub(crate) fn layout_constraints_at_layers<F: PrimeField>(
 
         node.add_at_layer(graph, input_layer + 1);
     }
+
+    (compiled_quadratic, compiled_linear)
 }
 
 impl<F: PrimeField> GKRGate for OneStepConstraintsEvaluationNode<F> {

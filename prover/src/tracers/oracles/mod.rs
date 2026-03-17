@@ -6,7 +6,7 @@ use cs::definitions::{TimestampData, TimestampScalar};
 use fft::GoodAllocator;
 use worker::Worker;
 
-pub mod delegation_oracle;
+// pub mod delegation_oracle;
 // pub mod main_risc_v_circuit;
 pub mod transpiler_oracles;
 
