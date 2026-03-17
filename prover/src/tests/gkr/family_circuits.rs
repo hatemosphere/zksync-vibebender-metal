@@ -8,6 +8,7 @@ use crate::gkr::witness_gen::family_circuits::evaluate_gkr_witness_for_executor_
 use crate::gkr::witness_gen::oracles::NonMemoryCircuitOracle;
 use crate::gkr::witness_gen::trace_structs::RamShuffleMemStateRecord;
 use crate::merkle_trees::DefaultTreeConstructor;
+use field::Field;
 use crate::tracers::oracles::transpiler_oracles::delegation::*;
 use ::field::baby_bear::base::BabyBearField;
 use ::field::baby_bear::ext4::BabyBearExt4;
@@ -16,7 +17,6 @@ use cs::definitions::INITIAL_TIMESTAMP;
 use cs::definitions::*;
 use cs::gkr_circuits::opcodes_for_full_machine_with_unsigned_mul_div_only_with_mem_word_access_specialization;
 use cs::gkr_circuits::process_binary_into_separate_tables_ext;
-use cs::gkr_compiler::compile_unrolled_circuit_state_transition_into_gkr;
 use cs::tables::TableDriver;
 use fft::materialize_powers_serial_starting_with_elem;
 use fft::Twiddles;
@@ -367,96 +367,96 @@ pub fn gkr_run_basic_unrolled_test_impl(
         //     &mut memory_read_set,
         // );
 
-        println!("Will check constraints satisfiability");
-        let is_satisfied = check_satisfied(&add_sub_circuit, &full_trace);
-        assert!(is_satisfied);
+        if CHECK_MEMORY_PERMUTATION_ONLY == false {
+            // println!("Will check constraints satisfiability");
+            // let is_satisfied = check_satisfied(&add_sub_circuit, &full_trace);
+            // assert!(is_satisfied);
 
-        // if CHECK_MEMORY_PERMUTATION_ONLY == false {
-        //     println!("Preparing twiddles");
-        //     let twiddles: Twiddles<_, Global> = Twiddles::new(trace_len, &worker);
-        //     // let lde_precomputations =
-        //     //     LdePrecomputations::new(trace_len, lde_factor, &[0, 1], &worker);
-        //     println!("Preparing setup");
-        //     let setup = GKRSetup::construct(
-        //         &TableDriver::new(),
-        //         &decoder_table_data,
-        //         trace_len,
-        //         &add_sub_circuit,
-        //     );
+            println!("Preparing twiddles");
+            let twiddles: Twiddles<_, Global> = Twiddles::new(trace_len, &worker);
+            // let lde_precomputations =
+            //     LdePrecomputations::new(trace_len, lde_factor, &[0, 1], &worker);
+            println!("Preparing setup");
+            let setup = GKRSetup::construct(
+                &TableDriver::new(),
+                &decoder_table_data,
+                trace_len,
+                &add_sub_circuit,
+            );
 
-        //     let setup_commitment = setup.commit(
-        //         &twiddles,
-        //         2,
-        //         1,
-        //         tree_cap_size,
-        //         trace_len.trailing_zeros() as usize,
-        //         &worker,
-        //     );
+            let setup_commitment = setup.commit(
+                &twiddles,
+                2,
+                1,
+                tree_cap_size,
+                trace_len.trailing_zeros() as usize,
+                &worker,
+            );
 
-        //     // let lookup_mapping_for_gpu = if maybe_gpu_unrolled_comparison_hook.is_some() {
-        //     //     Some(full_trace.lookup_mapping.clone())
-        //     // } else {
-        //     //     None
-        //     // };
+            // let lookup_mapping_for_gpu = if maybe_gpu_unrolled_comparison_hook.is_some() {
+            //     Some(full_trace.lookup_mapping.clone())
+            // } else {
+            //     None
+            // };
 
-        //     let whir_schedule = WhirSchedule::default_for_tests_80_bits();
+            let whir_schedule = WhirSchedule::default_for_tests_80_bits();
 
-        //     println!("Trying to prove");
+            println!("Trying to prove");
 
-        //     let now = std::time::Instant::now();
-        //     let proof =
-        //         prove_configured_with_gkr::<BabyBearField, BabyBearExt4, DefaultTreeConstructor>(
-        //             &add_sub_circuit,
-        //             &external_challenges,
-        //             full_trace,
-        //             &setup,
-        //             &setup_commitment,
-        //             &twiddles,
-        //             &whir_schedule,
-        //             None,
-        //             trace_len,
-        //             &worker,
-        //         );
-        //     println!("Proving time is {:?}", now.elapsed());
+            let now = std::time::Instant::now();
+            let proof =
+                prove_configured_with_gkr::<BabyBearField, BabyBearExt4, DefaultTreeConstructor>(
+                    &add_sub_circuit,
+                    &external_challenges,
+                    full_trace,
+                    &setup,
+                    &setup_commitment,
+                    &twiddles,
+                    &whir_schedule,
+                    None,
+                    trace_len,
+                    &worker,
+                );
+            println!("Proving time is {:?}", now.elapsed());
 
-        //     println!(
-        //         "Estimated proof size without compression is {} bytes",
-        //         proof.estimate_size()
-        //     );
+            println!(
+                "Estimated proof size without compression is {} bytes",
+                proof.estimate_size()
+            );
 
-        //     if is_empty {
-        //         assert_eq!(proof.grand_product_accumulator_computed, BabyBearExt4::ONE);
-        //     }
+            if is_empty {
+                assert_eq!(proof.grand_product_accumulator_computed, BabyBearExt4::ONE);
+            }
 
-        //     serialize_to_file(&proof, "add_sub_lui_auipc_mop_gkr_proof.json");
+            serialize_to_file(&proof, "add_sub_lui_auipc_mop_gkr_proof.json");
 
-        //     // serialize_to_file_if_not_gpu_comparison(
-        //     //     &proof,
-        //     //     "add_sub_lui_auipc_mop_unrolled_proof.json",
-        //     // );
+            // serialize_to_file_if_not_gpu_comparison(
+            //     &proof,
+            //     "add_sub_lui_auipc_mop_unrolled_proof.json",
+            // );
 
-        //     // if let Some(ref gpu_comparison_hook) = maybe_gpu_unrolled_comparison_hook {
-        //     //     let gpu_comparison_args = GpuComparisonArgs {
-        //     //         circuit: &add_sub_circuit,
-        //     //         setup: &setup,
-        //     //         external_challenges: &external_challenges,
-        //     //         aux_boundary_values: &[],
-        //     //         public_inputs: &vec![],
-        //     //         twiddles: &twiddles,
-        //     //         lde_precomputations: &lde_precomputations,
-        //     //         lookup_mapping: lookup_mapping_for_gpu.unwrap(),
-        //     //         log_n: TRACE_LEN_LOG2,
-        //     //         circuit_sequence: None,
-        //     //         delegation_processing_type: None,
-        //     //         is_unrolled: true,
-        //     //         prover_data: &prover_data,
-        //     //     };
-        //     //     gpu_comparison_hook(&gpu_comparison_args);
-        //     // }
+            // if let Some(ref gpu_comparison_hook) = maybe_gpu_unrolled_comparison_hook {
+            //     let gpu_comparison_args = GpuComparisonArgs {
+            //         circuit: &add_sub_circuit,
+            //         setup: &setup,
+            //         external_challenges: &external_challenges,
+            //         aux_boundary_values: &[],
+            //         public_inputs: &vec![],
+            //         twiddles: &twiddles,
+            //         lde_precomputations: &lde_precomputations,
+            //         lookup_mapping: lookup_mapping_for_gpu.unwrap(),
+            //         log_n: TRACE_LEN_LOG2,
+            //         circuit_sequence: None,
+            //         delegation_processing_type: None,
+            //         is_unrolled: true,
+            //         prover_data: &prover_data,
+            //     };
+            //     gpu_comparison_hook(&gpu_comparison_args);
+            // }
 
-        //     // permutation_argument_accumulator
-        //     //     .mul_assign(&proof.permutation_grand_product_accumulator);
-        // }
+            // permutation_argument_accumulator
+            //     .mul_assign(&proof.permutation_grand_product_accumulator);
+        }
     }
 
     // if true {

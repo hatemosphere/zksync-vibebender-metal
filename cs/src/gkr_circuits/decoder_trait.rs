@@ -55,7 +55,7 @@ impl<F: PrimeField> DecoderTableEntry<F> {
             rs2_index: F::from_u32_unchecked(executor_data.rs2_index as u32),
             rd_index: F::from_u32_unchecked(executor_data.rd_index as u32),
             imm: [
-                F::from_u32_unchecked(executor_data.imm),
+                F::from_u32_unchecked(executor_data.imm as u16 as u32),
                 F::from_u32_unchecked(executor_data.imm >> 16),
             ],
             funct3: executor_data

@@ -71,12 +71,14 @@ impl<F: PrimeField + TwoAdicField> GKRSetup<F> {
         }
 
         for row_idx in 0..all_generic_tables.len() {
-            for column in 0..3 {
+            let row = &all_generic_tables[row_idx];
+            assert_eq!(row.len(), compiled_circuit.generic_lookup_tables_width);
+            for column in 0..compiled_circuit.generic_lookup_tables_width {
                 result[2 + column][row_idx] = all_generic_tables[row_idx][column];
             }
-            if compiled_circuit.tables_ids_in_generic_lookups {
-                result.last_mut().unwrap()[row_idx] = all_generic_tables[row_idx][3];
-            }
+            // if compiled_circuit.tables_ids_in_generic_lookups {
+            //     result.last_mut().unwrap()[row_idx] = all_generic_tables[row_idx][3];
+            // }
         }
         let offset = compiled_circuit.offset_for_decoder_table;
 
