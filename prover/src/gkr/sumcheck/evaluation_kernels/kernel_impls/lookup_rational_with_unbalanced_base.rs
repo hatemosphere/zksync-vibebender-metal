@@ -267,7 +267,7 @@ fn pointwise_eval_impl<
     ctx: &RB::CollapseContext,
     lookup_additive_challenge: &E,
 ) -> [E; 2] {
-    // a/b + 1/d -> (ad + b), bd
+    // a/b + 1/(d+gamma) -> (a*(d+gamam) + b), b*(d+gamma)
     let [d] = input;
     let [a, b] = ext_input;
     let d = d.add_with_ext::<true>(lookup_additive_challenge, ctx);
@@ -291,7 +291,7 @@ fn pointwise_eval_quadratic_only_impl<
     ext_input: &[ExtensionFieldRepresentation<F, E>; 2],
     ctx: &RB::CollapseContext,
 ) -> [E; 2] {
-    // a/b + 1/(d+constant) -> (ad), bd
+    // a/b + 1/(d+gamma) -> ad, bd
     let [d] = input;
     let [a, b] = ext_input;
     let num = d.mul_by_ext::<true>(&a.value, ctx);

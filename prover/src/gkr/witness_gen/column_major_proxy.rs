@@ -387,8 +387,18 @@ impl<'a, O: Oracle<F> + 'a, F: PrimeField> WitnessProxy<F, ScalarWitnessTypeSet<
             .table_driver
             .lookup_values_and_get_absolute_index::<N>(inputs, table_id as u32);
 
-        debug_assert!(self.multiplicity_counting_scratch.len() < absolute_index);
-        debug_assert!(self.lookup_mapping_rows_starts.len() < lookup_mapping_idx);
+        debug_assert!(
+            absolute_index < self.multiplicity_counting_scratch.len(),
+            "absolute table index from lookup is {}, but total expected tables length is {}",
+            absolute_index,
+            self.multiplicity_counting_scratch.len()
+        );
+        debug_assert!(
+            lookup_mapping_idx < self.lookup_mapping_rows_starts.len(),
+            "lookup mapping idx is {}, but in total only {} lookup mappings exist",
+            lookup_mapping_idx,
+            self.lookup_mapping_rows_starts.len()
+        );
 
         unsafe {
             *self
@@ -432,8 +442,18 @@ impl<'a, O: Oracle<F> + 'a, F: PrimeField> WitnessProxy<F, ScalarWitnessTypeSet<
             .table_driver
             .enforce_values_and_get_absolute_index::<M>(inputs, table_id as u32);
 
-        debug_assert!(self.multiplicity_counting_scratch.len() < absolute_index);
-        debug_assert!(self.lookup_mapping_rows_starts.len() < lookup_mapping_idx);
+        debug_assert!(
+            absolute_index < self.multiplicity_counting_scratch.len(),
+            "absolute table index from lookup is {}, but total expected tables length is {}",
+            absolute_index,
+            self.multiplicity_counting_scratch.len()
+        );
+        debug_assert!(
+            lookup_mapping_idx < self.lookup_mapping_rows_starts.len(),
+            "lookup mapping idx is {}, but in total only {} lookup mappings exist",
+            lookup_mapping_idx,
+            self.lookup_mapping_rows_starts.len()
+        );
 
         unsafe {
             *self

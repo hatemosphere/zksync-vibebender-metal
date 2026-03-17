@@ -293,15 +293,12 @@ where
 
     let mut gkr_storage = GKRStorage::<F, E>::default();
 
-    // Now we can use lookup challenges to preprocess tables into values like (column_0 + alpha * column_1 + ... + additive_part)
-    let (
-        preprocessed_range_check_16,
-        preprocessed_timestamp_range_checks,
-        preprocessed_generic_lookup,
-    ) = setup.preprocess_lookups(
+    // Now we can use lookup challenges to preprocess tables into values like (column_0 + alpha * column_1 + ...),
+    // but without(!) additive term, so we can use the same values for both cached and copied values,
+    // and other gates (like non-vectorized lookups)
+    let preprocessed_generic_lookup = setup.preprocess_generic_lookups(
         compiled_circuit,
         lookup_alpha,
-        lookup_additive_part,
         trace_len,
         &mut gkr_storage,
         worker,
@@ -548,8 +545,6 @@ where
         external_challenges,
     ));
 
-    drop(preprocessed_range_check_16);
-    drop(preprocessed_timestamp_range_checks);
     drop(preprocessed_generic_lookup);
 
     let mut mem_polys_claims = Vec::with_capacity(compiled_circuit.memory_layout.total_width);

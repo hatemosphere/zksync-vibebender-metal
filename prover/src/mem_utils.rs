@@ -3,8 +3,6 @@ use cs::definitions::*;
 use fft::GoodAllocator;
 use trace_holder::RowMajorTrace;
 
-const NUM_REGISTERS: usize = 32;
-
 use super::*;
 
 #[inline(always)]

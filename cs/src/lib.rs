@@ -1,7 +1,5 @@
 #![cfg_attr(not(feature = "compiler"), no_std)]
 #![allow(type_alias_bounds)]
-#![feature(iter_advance_by)]
-#![feature(option_zip)]
 #![feature(allocator_api)]
 
 pub mod definitions;

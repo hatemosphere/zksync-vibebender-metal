@@ -702,55 +702,63 @@ impl<F: PrimeField> GKRCompiler<F> {
         // placing lookup is move involved
         {
             if range_check_16_expressions.len() > 0 {
-                let (multiplicity, final_pair, final_rel) = layout_width_1_lookup_expressions(
-                    &mut graph,
-                    range_check_16_expressions,
-                    &mut num_variables,
-                    &mut all_variables_to_place,
-                    &mut variable_names,
-                    &mut layers_mapping,
-                    "range check 16",
-                    LookupType::RangeCheck16,
-                );
+                let (multiplicity, final_pair, final_rel, rels_for_witness_eval) =
+                    layout_width_1_lookup_expressions(
+                        &mut graph,
+                        range_check_16_expressions,
+                        &mut num_variables,
+                        &mut all_variables_to_place,
+                        &mut variable_names,
+                        &mut layers_mapping,
+                        "range check 16",
+                        LookupType::RangeCheck16,
+                    );
                 range_check_16_multiplicity = Some(multiplicity);
-
+                range_check_16_lookups_compiled = rels_for_witness_eval;
                 lookup_outputs.insert(LookupType::RangeCheck16, (final_pair, final_rel));
             }
 
             if timestamp_range_check_expressions_to_compile.len() > 0 {
-                let (multiplicity, final_pair, final_rel) = layout_width_1_lookup_expressions(
-                    &mut graph,
-                    timestamp_range_check_expressions_to_compile,
-                    &mut num_variables,
-                    &mut all_variables_to_place,
-                    &mut variable_names,
-                    &mut layers_mapping,
-                    "timestamp range check",
-                    LookupType::TimestampRangeCheck,
-                );
+                let (multiplicity, final_pair, final_rel, rels_for_witness_eval) =
+                    layout_width_1_lookup_expressions(
+                        &mut graph,
+                        timestamp_range_check_expressions_to_compile,
+                        &mut num_variables,
+                        &mut all_variables_to_place,
+                        &mut variable_names,
+                        &mut layers_mapping,
+                        "timestamp range check",
+                        LookupType::TimestampRangeCheck,
+                    );
                 timestamp_multiplicity = Some(multiplicity);
-
+                timestamp_range_check_lookups_compiled = rels_for_witness_eval;
                 lookup_outputs.insert(LookupType::TimestampRangeCheck, (final_pair, final_rel));
             }
 
             if generic_lookups.len() > 0 || decoder_lookup_pair.is_some() {
-                num_generic_lookups += decoder_lookup_pair.is_some() as usize;
+                let decoder_lookup_is_present = decoder_lookup_pair.is_some();
+                num_generic_lookups += decoder_lookup_is_present as usize;
                 num_generic_lookups += generic_lookups.len();
-                let (multiplicity, final_pair, final_rel) = layout_lookup_expressions::<F, false>(
-                    &mut graph,
-                    generic_lookups,
-                    &mut num_variables,
-                    &mut all_variables_to_place,
-                    &mut variable_names,
-                    &mut layers_mapping,
-                    "generic lookup",
-                    decoder_lookup_pair,
-                    LookupType::Generic,
-                    generic_lookup_width,
-                    expect_table_id_for_generic_lookup,
-                );
+                let (multiplicity, final_pair, final_rel, rels_for_witness_eval) =
+                    layout_lookup_expressions::<F, false>(
+                        &mut graph,
+                        generic_lookups,
+                        &mut num_variables,
+                        &mut all_variables_to_place,
+                        &mut variable_names,
+                        &mut layers_mapping,
+                        "generic lookup",
+                        decoder_lookup_pair,
+                        LookupType::Generic,
+                        generic_lookup_width,
+                        expect_table_id_for_generic_lookup,
+                    );
                 generic_lookup_multiplicity = Some(multiplicity);
-
+                generic_lookups_compiled = rels_for_witness_eval;
+                assert_eq!(
+                    generic_lookups_compiled.len() + (decoder_lookup_is_present as usize),
+                    num_generic_lookups
+                );
                 lookup_outputs.insert(LookupType::Generic, (final_pair, final_rel));
             }
         }

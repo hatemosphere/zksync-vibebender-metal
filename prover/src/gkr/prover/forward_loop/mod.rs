@@ -95,8 +95,12 @@ fn evaluate_cache_relation<F: PrimeField, E: FieldExtension<F> + Field>(
                 };
 
                 let destination = destination.assume_init();
-                assert_eq!(layer_idx, 0);
-                gkr_storage.insert_base_field_at_layer(0, address, BaseFieldPoly::new(destination));
+                address.assert_as_layer(layer_idx);
+                gkr_storage.insert_base_field_at_layer(
+                    layer_idx,
+                    address,
+                    BaseFieldPoly::new(destination),
+                );
             }
             NoFieldGKRCacheRelation::MemoryTuple(rel) => {
                 let mut destination = Box::<[E], Global>::new_uninit_slice(trace_len);
@@ -235,8 +239,9 @@ fn evaluate_cache_relation<F: PrimeField, E: FieldExtension<F> + Field>(
                 );
                 let destination = destination.assume_init();
                 assert_eq!(layer_idx, 0);
+                address.assert_as_layer(layer_idx);
                 gkr_storage.insert_extension_at_layer(
-                    0,
+                    layer_idx,
                     address,
                     ExtensionFieldPoly::new(destination),
                 );
@@ -274,9 +279,9 @@ fn evaluate_cache_relation<F: PrimeField, E: FieldExtension<F> + Field>(
                     },
                 );
                 let destination = destination.assume_init();
-                assert_eq!(layer_idx, 0);
+                address.assert_as_layer(layer_idx);
                 gkr_storage.insert_extension_at_layer(
-                    0,
+                    layer_idx,
                     address,
                     ExtensionFieldPoly::new(destination),
                 );
@@ -285,8 +290,7 @@ fn evaluate_cache_relation<F: PrimeField, E: FieldExtension<F> + Field>(
                 let mut destination = Box::<[E], Global>::new_uninit_slice(trace_len);
                 destination[..preprocessed_generic_lookup.len()]
                     .write_copy_of_slice(preprocessed_generic_lookup);
-                let _ = destination[preprocessed_generic_lookup.len()..]
-                    .write_filled(lookup_challenges_additive_part);
+                let _ = destination[preprocessed_generic_lookup.len()..].write_filled(E::ZERO);
                 let destination = destination.assume_init();
                 assert_eq!(layer_idx, 0);
                 gkr_storage.insert_extension_at_layer(
@@ -491,9 +495,9 @@ pub fn evaluate_layer<F: PrimeField, E: FieldExtension<F> + Field>(
                 output,
             } => {
                 // println!("Should evaluate {:?}", &gate.enforced_relation);
-                lookup_from_vector_inputs::forward_evaluate_masked_lookup_from_vector_inputs_with_setup(*input, *setup, *output, gkr_storage, expected_output_layer, trace_len, worker);
+                lookup_from_vector_inputs::forward_evaluate_masked_lookup_from_vector_inputs_with_setup(*input, *setup, *output, gkr_storage, expected_output_layer, trace_len, lookup_challenges_additive_part, worker);
             }
-            NoFieldGKRRelation::LookupPair { input, output } => {
+            NoFieldGKRRelation::AggregateLookupRationalPair { input, output } => {
                 // println!("Should evaluate {:?}", &gate.enforced_relation);
                 lookup_pair::forward_evaluate_lookup_pair(
                     *input,
@@ -521,8 +525,20 @@ pub fn evaluate_layer<F: PrimeField, E: FieldExtension<F> + Field>(
                     worker,
                 );
             }
+            NoFieldGKRRelation::LookupPairFromMaterializedVectorInputs { input, output } => {
+                // println!("Should evaluate {:?}", &gate.enforced_relation);
+                lookup_from_vector_inputs::forward_evaluate_lookup_from_vector_inputs_pair(
+                    *input,
+                    *output,
+                    gkr_storage,
+                    expected_output_layer,
+                    trace_len,
+                    lookup_challenges_additive_part,
+                    worker,
+                );
+            }
             rel @ _ => {
-                println!("Should evaluate {:?}", rel);
+                panic!("Should evaluate {:?}", rel);
             }
         }
         // println!(

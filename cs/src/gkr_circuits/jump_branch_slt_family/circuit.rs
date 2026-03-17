@@ -423,6 +423,7 @@ fn apply_jump_branch_slt_inner<F: PrimeField, CS: Circuit<F>>(
         &[should_jump_or_slt_value],
         cs::circuit::LookupQueryTableType::Constant(TableType::ConditionalJmpBranchSlt),
     );
+    let should_jump_if_branch = cs.add_named_variable("should jump if BRANCH opcode");
 
     // now we can compute next PC, as well as PC that will be placed into RD for JAL/JALR
     // NOTE: if branch is NOT taken then we treat it as jump by constant offset of 4
@@ -436,10 +437,10 @@ fn apply_jump_branch_slt_inner<F: PrimeField, CS: Circuit<F>>(
         ];
         let rs1_vars = rs1_limbs;
 
-        let is_branch_taken_var = should_jump_or_slt_value;
         let is_slt_var = is_slt.get_variable().unwrap();
         let is_jal_var = is_jal.get_variable().unwrap();
         let is_jalr_var = is_jalr.get_variable().unwrap();
+        let is_branch_var = is_branch.get_variable().unwrap();
 
         let value_fn = move |placer: &mut CS::WitnessPlacer| {
             // NOTE: it is UNCONDITIONAL assignment, even though we select across multiple variants
@@ -450,6 +451,15 @@ fn apply_jump_branch_slt_inner<F: PrimeField, CS: Circuit<F>>(
             let rs1_u32 = placer.get_u32_from_u16_parts(rs1_vars);
             let pc_low = placer.get_u16(pc_in_vars[0]);
             let pc_u32 = placer.get_u32_from_u16_parts(pc_in_vars);
+
+            // easy case for extra var if jump
+            let should_jump = {
+                let is_branch = placer.get_boolean(is_branch_var);
+                let jump_resolution = placer.get_boolean(should_jump_or_slt_value);
+
+                is_branch.and(&jump_resolution)
+            };
+            placer.assign_mask(should_jump_if_branch, &should_jump);
 
             // NOTE: in case of padding our default case matches "branch not taken" case, so we use different defaults
             let (mut out_value, mut intermedaite_of_value, mut of_value) = {
@@ -473,21 +483,20 @@ fn apply_jump_branch_slt_inner<F: PrimeField, CS: Circuit<F>>(
 
             {
                 // Branch taken(!)
-                let is_branch_taken = placer.get_boolean(is_branch_taken_var);
                 let (next_pc, of) = pc_u32.overflowing_add(&imm);
                 out_value = <CS::WitnessPlacer as WitnessTypeSet<F>>::U32::select(
-                    &is_branch_taken,
+                    &should_jump,
                     &next_pc,
                     &out_value,
                 );
                 of_value = <CS::WitnessPlacer as WitnessTypeSet<F>>::Mask::select(
-                    &is_branch_taken,
+                    &should_jump,
                     &of,
                     &of_value,
                 );
                 update_intermediate_carry_value::<F, CS::WitnessPlacer, false>(
                     &mut intermedaite_of_value,
-                    &is_branch_taken,
+                    &should_jump,
                     &pc_low,
                     &imm_low,
                     None,
@@ -559,24 +568,30 @@ fn apply_jump_branch_slt_inner<F: PrimeField, CS: Circuit<F>>(
         cs.set_values(value_fn);
     }
 
+    // enforce the jump if branch value
+    cs.add_constraint(
+        Term::from(is_branch) * Term::from(should_jump_or_slt_value)
+            - Term::from(should_jump_if_branch),
+    );
+
     // and the corresponding constraint
+    // NOTE: if we have branch opcode, then `should_jump_or_slt_value` will indicate whether to branch or not,
+    // and if we have `should_jump_or_slt_value` it'll indicate the value,
+    // but not the presence of jump. That's why we added extra variable above
     {
         let mut add_like_low_constraint = Constraint::empty();
         // first addend - default case
-        add_like_low_constraint += Term::from(inputs.cycle_start_state.pc[0]);
+        add_like_low_constraint += Term::from(is_jal) * Term::from(inputs.cycle_start_state.pc[0]);
         add_like_low_constraint += Term::from(is_jalr) * Term::from(rs1_limbs[0]);
         add_like_low_constraint +=
-            Term::from(should_jump_or_slt_value) * Term::from(inputs.cycle_start_state.pc[0]);
-        add_like_low_constraint += (Term::from(1u32) - Term::from(should_jump_or_slt_value))
-            * Term::from(inputs.cycle_start_state.pc[0]);
+            Term::from(is_branch) * Term::from(inputs.cycle_start_state.pc[0]);
         add_like_low_constraint += Term::from(is_slt) * Term::from(inputs.cycle_start_state.pc[0]);
         // second addend
         add_like_low_constraint += Term::from(is_jal) * Term::from(inputs.decoder_data.imm[0]);
         add_like_low_constraint += Term::from(is_jalr) * Term::from(inputs.decoder_data.imm[0]);
-        add_like_low_constraint +=
-            Term::from(should_jump_or_slt_value) * Term::from(inputs.decoder_data.imm[0]);
-        add_like_low_constraint +=
-            (Term::from(1u32) - Term::from(should_jump_or_slt_value)) * Term::from(4u32);
+        add_like_low_constraint += Term::from(is_branch) * Term::from(4u32);
+        add_like_low_constraint += Term::from(should_jump_if_branch)
+            * (Term::from(inputs.decoder_data.imm[0]) - Term::from(4u32));
         add_like_low_constraint += Term::from(is_slt) * Term::from(4u32);
         // out-like var
         add_like_low_constraint -=
@@ -584,9 +599,7 @@ fn apply_jump_branch_slt_inner<F: PrimeField, CS: Circuit<F>>(
         add_like_low_constraint -=
             Term::from(is_jalr) * Term::from(pc_intermediate_addition_tmp_low);
         add_like_low_constraint -=
-            Term::from(should_jump_or_slt_value) * Term::from(pc_intermediate_addition_tmp_low);
-        add_like_low_constraint -= (Term::from(1u32) - Term::from(should_jump_or_slt_value))
-            * Term::from(pc_intermediate_addition_tmp_low);
+            Term::from(is_branch) * Term::from(pc_intermediate_addition_tmp_low);
         add_like_low_constraint -=
             Term::from(is_slt) * Term::from(pc_intermediate_addition_tmp_low);
 
@@ -595,10 +608,8 @@ fn apply_jump_branch_slt_inner<F: PrimeField, CS: Circuit<F>>(
             Term::from(is_jal) * Term::from((carry_shift, add_rel_1_intermediate_of_var));
         add_like_low_constraint -=
             Term::from(is_jalr) * Term::from((carry_shift, add_rel_1_intermediate_of_var));
-        add_like_low_constraint -= Term::from(should_jump_or_slt_value)
-            * Term::from((carry_shift, add_rel_1_intermediate_of_var));
-        add_like_low_constraint -= (Term::from(1u32) - Term::from(should_jump_or_slt_value))
-            * Term::from((carry_shift, add_rel_1_intermediate_of_var));
+        add_like_low_constraint -=
+            Term::from(is_branch) * Term::from((carry_shift, add_rel_1_intermediate_of_var));
         add_like_low_constraint -=
             Term::from(is_slt) * Term::from((carry_shift, add_rel_1_intermediate_of_var));
         cs.add_constraint(add_like_low_constraint);
@@ -609,40 +620,32 @@ fn apply_jump_branch_slt_inner<F: PrimeField, CS: Circuit<F>>(
         add_like_high_constraint += Term::from(is_jal) * Term::from(add_rel_1_intermediate_of_var);
         add_like_high_constraint += Term::from(is_jalr) * Term::from(add_rel_1_intermediate_of_var);
         add_like_high_constraint +=
-            Term::from(should_jump_or_slt_value) * Term::from(add_rel_1_intermediate_of_var);
-        add_like_high_constraint += (Term::from(1u32) - Term::from(should_jump_or_slt_value))
-            * Term::from(add_rel_1_intermediate_of_var);
+            Term::from(is_branch) * Term::from(add_rel_1_intermediate_of_var);
         add_like_high_constraint += Term::from(is_slt) * Term::from(add_rel_1_intermediate_of_var);
         // first addend
         add_like_high_constraint += Term::from(is_jal) * Term::from(inputs.cycle_start_state.pc[1]);
         add_like_high_constraint += Term::from(is_jalr) * Term::from(rs1_limbs[1]);
         add_like_high_constraint +=
-            Term::from(should_jump_or_slt_value) * Term::from(inputs.cycle_start_state.pc[1]);
-        add_like_high_constraint += (Term::from(1u32) - Term::from(should_jump_or_slt_value))
-            * Term::from(inputs.cycle_start_state.pc[1]);
+            Term::from(is_branch) * Term::from(inputs.cycle_start_state.pc[1]);
         add_like_high_constraint += Term::from(is_slt) * Term::from(inputs.cycle_start_state.pc[1]);
         // second addend
         add_like_high_constraint += Term::from(is_jal) * Term::from(inputs.decoder_data.imm[1]);
         add_like_high_constraint += Term::from(is_jalr) * Term::from(inputs.decoder_data.imm[1]);
         add_like_high_constraint +=
-            Term::from(should_jump_or_slt_value) * Term::from(inputs.decoder_data.imm[1]);
+            Term::from(should_jump_if_branch) * Term::from(inputs.decoder_data.imm[1]);
         // out-like
         add_like_high_constraint -= Term::from(is_jal) * Term::from(inputs.cycle_end_state.pc[1]);
         add_like_high_constraint -= Term::from(is_jalr) * Term::from(inputs.cycle_end_state.pc[1]);
         add_like_high_constraint -=
-            Term::from(should_jump_or_slt_value) * Term::from(inputs.cycle_end_state.pc[1]);
-        add_like_high_constraint -= (Term::from(1u32) - Term::from(should_jump_or_slt_value))
-            * Term::from(inputs.cycle_end_state.pc[1]);
+            Term::from(is_branch) * Term::from(inputs.cycle_end_state.pc[1]);
         add_like_high_constraint -= Term::from(is_slt) * Term::from(inputs.cycle_end_state.pc[1]);
         // final carry
         add_like_high_constraint -=
             Term::from(is_jal) * Term::from((carry_shift, add_rel_1_final_of_var));
         add_like_high_constraint -=
             Term::from(is_jalr) * Term::from((carry_shift, add_rel_1_final_of_var));
-        add_like_high_constraint -= Term::from(should_jump_or_slt_value)
-            * Term::from((carry_shift, add_rel_1_final_of_var));
-        add_like_high_constraint -= (Term::from(1u32) - Term::from(should_jump_or_slt_value))
-            * Term::from((carry_shift, add_rel_1_final_of_var));
+        add_like_high_constraint -=
+            Term::from(is_branch) * Term::from((carry_shift, add_rel_1_final_of_var));
         add_like_high_constraint -=
             Term::from(is_slt) * Term::from((carry_shift, add_rel_1_final_of_var));
         cs.add_constraint(add_like_high_constraint);
@@ -659,7 +662,7 @@ fn apply_jump_branch_slt_inner<F: PrimeField, CS: Circuit<F>>(
     // unaligned jump is unprovable, and we only need to check bit number 1, as jump offset is always 0 mod 2,
     // and PC is 0 mod 4
     cs.add_constraint(
-        (Constraint::from(is_jal) + Term::from(is_jalr) + Term::from(should_jump_or_slt_value))
+        (Constraint::from(is_jal) + Term::from(is_jalr) + Term::from(should_jump_if_branch))
             * Term::from(next_pc_bit_1),
     );
 

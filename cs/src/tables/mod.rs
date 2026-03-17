@@ -528,15 +528,22 @@ impl<F: PrimeField> LookupTable<F> {
         &self,
         dst: &mut Vec<ArrayVec<F, MAX_TABLE_WIDTH>>,
         id: Option<u32>,
-        total_width_without_id: usize,
+        total_width_including_id: usize,
     ) {
-        assert!(self.width() <= total_width_without_id);
+        assert!(total_width_including_id > 0);
+        assert!(self.width() < total_width_including_id);
         let required_len = self.width() + id.is_some() as usize;
+        assert!(required_len <= total_width_including_id);
         assert!(required_len <= MAX_TABLE_WIDTH);
+        let padding_width = if id.is_some() {
+            total_width_including_id - 1
+        } else {
+            total_width_including_id
+        };
         for row in self.data.iter() {
             let mut assembled_row = row.clone();
             assert_eq!(row.len(), self.width());
-            for _ in self.width()..total_width_without_id {
+            for _ in self.width()..padding_width {
                 assembled_row.push(F::ZERO);
             }
             if let Some(id) = id {
@@ -638,10 +645,10 @@ impl<F: PrimeField> LookupWrapper<F> {
         &self,
         dst: &mut Vec<ArrayVec<F, MAX_TABLE_WIDTH>>,
         id: Option<u32>,
-        total_width_without_id: usize,
+        total_width_including_id: usize,
     ) {
         match self {
-            Self::Initialized(inner) => inner.dump_into(dst, id, total_width_without_id),
+            Self::Initialized(inner) => inner.dump_into(dst, id, total_width_including_id),
             Self::Uninitialized => {}
         }
     }
@@ -1044,24 +1051,19 @@ impl<F: PrimeField> TableDriver<F> {
         self.add_table_with_content(table_type, table);
     }
 
-    // #[track_caller]
-    // #[inline(always)]
-    // pub fn lookup_values(&self, keys: &[F], id: u32) -> ArrayVec<F, MAX_TABLE_WIDTH> {
-    //     let table = &self.tables[id as usize];
-    //     assert!(
-    //         table.is_initialized(),
-    //         "table with id = {:?} is not initialized",
-    //         id
-    //     );
-    //     // debug_assert!(
-    //     //     table.is_initialized(),
-    //     //     "table with id = {:?} is not initialized",
-    //     //     id
-    //     // );
-    //     let values = table.lookup_value(keys);
+    #[track_caller]
+    #[inline(always)]
+    pub fn lookup_values<const N: usize>(&self, keys: &[F], id: u32) -> [F; N] {
+        let table = &self.tables[id as usize];
+        assert!(
+            table.is_initialized(),
+            "table with id = {:?} is not initialized",
+            id
+        );
+        let values = table.lookup_value(keys);
 
-    //     values
-    // }
+        values
+    }
 
     #[track_caller]
     #[inline(always)]
@@ -1127,14 +1129,17 @@ impl<F: PrimeField> TableDriver<F> {
     //     &self.tables[id as usize]
     // }
 
-    pub fn dump_tables(&self, total_width_without_id: usize) -> Vec<ArrayVec<F, MAX_TABLE_WIDTH>> {
+    pub fn dump_tables(
+        &self,
+        total_width_including_id: usize,
+    ) -> Vec<ArrayVec<F, MAX_TABLE_WIDTH>> {
         let mut result = Vec::with_capacity(self.total_tables_len);
         for table in self.tables.iter() {
             if table.get_size() == 0 {
                 continue;
             }
             let id = table.get_table_id();
-            table.dump_into(&mut result, Some(id), total_width_without_id);
+            table.dump_into(&mut result, Some(id), total_width_including_id);
         }
 
         result

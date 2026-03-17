@@ -110,7 +110,6 @@ impl<F: PrimeField, A: Allocator + Clone, B: Allocator + Clone> GKRFullWitnessTr
         oracle: &'a O,
         geometry: WorkerGeometry,
         table_driver: &'a TableDriver<F>,
-        scratch_space_size: usize,
         trace_len: usize,
     ) -> (
         Vec<ColumnMajorWitnessProxy<'a, O, F>>,
@@ -201,6 +200,12 @@ impl<F: PrimeField, A: Allocator + Clone, B: Allocator + Clone> GKRFullWitnessTr
                     *el = el.add(chunk_size);
                 }
             }
+            for el in column_major_scratch_space_start_ptrs.iter_mut() {
+                unsafe {
+                    *el = el.add(chunk_size);
+                }
+            }
+
             for el in generic_lookup_mapping_start_ptrs.iter_mut() {
                 unsafe {
                     *el = el.add(chunk_size);
@@ -364,11 +369,6 @@ pub fn evaluate_gkr_witness_for_executor_family<
 
     let generic_lookup_multiplicities_total_len = compiled_circuit.total_tables_size;
 
-    assert_eq!(
-        compiled_circuit.offset_for_decoder_table,
-        table_driver.total_tables_len
-    );
-
     let geometry = worker.get_geometry(num_cycles);
     let mut range_16_multiplicity_subcounters = vec![vec![]; geometry.len()];
     let mut timestamp_range_check_multiplicity_subcounters = vec![vec![]; geometry.len()];
@@ -380,14 +380,8 @@ pub fn evaluate_gkr_witness_for_executor_family<
     // NOTE: we walk over full trace length (as we have to compute multiplicities even on padding rows)
     unsafe {
         worker.scope(trace_len, |scope, geometry| {
-            let (proxies, range_check_16_mappings, timestamp_range_check_mappings) = full_trace
-                .make_proxies_for_geometry(
-                    oracle,
-                    geometry,
-                    &table_driver,
-                    compiled_circuit.scratch_space_size,
-                    trace_len,
-                );
+            let (proxies, range_check_16_mappings, timestamp_range_check_mappings) =
+                full_trace.make_proxies_for_geometry(oracle, geometry, &table_driver, trace_len);
 
             let mut range_16_multiplicity_subcounters_chunks = range_16_multiplicity_subcounters
                 .as_chunks_mut::<1>()
@@ -443,6 +437,7 @@ pub fn evaluate_gkr_witness_for_executor_family<
                         vec![0u32; 1 << TIMESTAMP_COLUMNS_NUM_BITS];
                     let mut generic_lookup_multiplicities =
                         vec![0u32; generic_lookup_multiplicities_total_len];
+                    proxy.multiplicity_counting_scratch = &mut generic_lookup_multiplicities;
 
                     gkr_evaluate_witness_for_executor_family_inner(
                         &mut proxy,
@@ -453,7 +448,6 @@ pub fn evaluate_gkr_witness_for_executor_family<
                         compiled_circuit,
                         &mut range_check_16_multiplicities,
                         &mut timestamp_range_check_multiplicities,
-                        &mut generic_lookup_multiplicities,
                         trace_len,
                     );
 
@@ -506,7 +500,6 @@ unsafe fn gkr_evaluate_witness_for_executor_family_inner<'a, F: PrimeField, O: O
     compiled_circuit: &GKRCircuitArtifact<F>,
     range_check_16_multiplicieties: &mut [u32],
     timestamp_range_check_multiplicieties: &mut [u32],
-    generic_lookup_multiplicieties: &mut [u32],
     trace_len: usize,
 ) {
     for absolute_row_idx in range {
@@ -515,11 +508,7 @@ unsafe fn gkr_evaluate_witness_for_executor_family_inner<'a, F: PrimeField, O: O
         #[cfg(feature = "profiling")]
         let t = std::time::Instant::now();
 
-        gkr_evaluate_witness_static_work_for_executor_family(
-            proxy,
-            compiled_circuit,
-            generic_lookup_multiplicieties,
-        );
+        gkr_evaluate_witness_static_work_for_executor_family(proxy, compiled_circuit);
 
         #[cfg(feature = "profiling")]
         PROFILING_TABLE.with_borrow_mut(|el| {
@@ -570,15 +559,10 @@ pub(crate) unsafe fn gkr_evaluate_witness_static_work_for_executor_family<
 >(
     proxy: &mut ColumnMajorWitnessProxy<'a, O, F>,
     compiled_circuit: &GKRCircuitArtifact<F>,
-    generic_lookup_multiplicieties: &mut [u32],
 ) {
     use crate::gkr::witness_gen::family_circuits::memory::*;
 
-    gkr_process_machine_state_assuming_preprocessed_decoder::<F, O, true>(
-        proxy,
-        compiled_circuit,
-        generic_lookup_multiplicieties,
-    );
+    gkr_process_machine_state_assuming_preprocessed_decoder::<F, O, true>(proxy, compiled_circuit);
 
     gkr_process_shuffle_ram_accesses_in_executor_family::<F, O, true>(proxy, compiled_circuit);
 }

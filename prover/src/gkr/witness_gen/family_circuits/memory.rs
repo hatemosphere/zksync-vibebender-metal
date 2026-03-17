@@ -174,7 +174,6 @@ pub(crate) unsafe fn gkr_process_machine_state_assuming_preprocessed_decoder<
 >(
     proxy: &mut ColumnMajorWitnessProxy<'a, O, F>,
     compiled_circuit: &GKRCircuitArtifact<F>,
-    generic_lookup_multiplicities: &mut [u32],
 ) {
     #[cfg(feature = "profiling")]
     let t = std::time::Instant::now();
@@ -258,8 +257,13 @@ pub(crate) unsafe fn gkr_process_machine_state_assuming_preprocessed_decoder<
             // these variables are for sure in witness
             proxy.write_u32_value_into_columns::<false>(decoder_input.imm, decoder_data.imm);
             if let Some(funct3) = decoder_input.funct3 {
-                let funct3_value = decoder_data.funct3.expect("funct3 from decoder");
-                proxy.write_u8_value_into_columns::<false>(funct3, funct3_value);
+                if let Some(funct3_value) = decoder_data.funct3 {
+                    proxy.write_u8_value_into_columns::<false>(funct3, funct3_value);
+                } else {
+                    // it should be unsupported and not executed
+                    assert!(execute == false, "missing funct3 on the executed row");
+                    proxy.write_u8_value_into_columns::<false>(funct3, 0);
+                }
             }
 
             // and count multiplicity right away
@@ -272,7 +276,8 @@ pub(crate) unsafe fn gkr_process_machine_state_assuming_preprocessed_decoder<
                     .last_mut()
                     .expect("must exist")
                     .write((idx + compiled_circuit.offset_for_decoder_table) as u32);
-                generic_lookup_multiplicities[idx + compiled_circuit.offset_for_decoder_table] += 1;
+                proxy.multiplicity_counting_scratch
+                    [idx + compiled_circuit.offset_for_decoder_table] += 1;
             }
         } else {
             todo!();
@@ -438,11 +443,7 @@ pub(crate) unsafe fn evaluate_memory_witness_for_executor_family_inner<
     proxy: &mut ColumnMajorWitnessProxy<'a, O, F>,
     compiled_circuit: &GKRCircuitArtifact<F>,
 ) {
-    gkr_process_machine_state_assuming_preprocessed_decoder::<F, O, false>(
-        proxy,
-        compiled_circuit,
-        &mut [],
-    );
+    gkr_process_machine_state_assuming_preprocessed_decoder::<F, O, false>(proxy, compiled_circuit);
 
     gkr_process_shuffle_ram_accesses_in_executor_family::<F, O, false>(proxy, compiled_circuit);
 

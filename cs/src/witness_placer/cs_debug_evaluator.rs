@@ -251,9 +251,8 @@ impl<F: PrimeField> WitnessPlacer<F> for CSDebugWitnessEvaluator<F> {
         inputs: &[Self::Field; M],
         table_id: &Self::U16,
     ) -> [Self::Field; N] {
-        todo!()
-        // self.table_driver
-        //     .lookup_values::<N>(inputs, *table_id as u32)
+        self.table_driver
+            .lookup_values::<N>(inputs, *table_id as u32)
     }
 
     #[inline(always)]

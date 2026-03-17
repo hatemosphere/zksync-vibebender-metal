@@ -73,14 +73,6 @@ impl GKRGate for MaterializeSingleInputNode {
 
             (output, relation)
         }
-
-        // let relation = NoFieldGKRRelation::MaterializedSingleLookupInput {
-        //     input: self.0.clone(),
-        //     output,
-        // };
-        // graph.add_enforced_relation(relation.clone(), output_layer);
-
-        // (output, relation)
     }
 }
 
@@ -268,7 +260,7 @@ impl GKRGate for LookupExplicitPairAggregationNode {
     ) -> (Self::Output, NoFieldGKRRelation) {
         let output = [(); 2].map(|_| graph.add_intermediate_variable_at_layer(output_layer));
 
-        let relation = NoFieldGKRRelation::LookupPair {
+        let relation = NoFieldGKRRelation::AggregateLookupRationalPair {
             input: [[self.lhs_num, self.lhs_den], [self.rhs_num, self.rhs_den]],
             output,
         };
@@ -390,7 +382,7 @@ impl GKRGate for VectorLookupWitnessPairAggregationFromCachesNode {
             cached_input
         });
 
-        let relation = NoFieldGKRRelation::LookupPairFromMaterializedBaseInputs { input, output };
+        let relation = NoFieldGKRRelation::LookupPairFromMaterializedVectorInputs { input, output };
 
         graph.add_enforced_relation(relation.clone(), output_layer);
 

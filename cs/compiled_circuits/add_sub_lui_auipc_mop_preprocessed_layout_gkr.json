@@ -3039,7 +3039,7 @@
         {
           "output_layer": 2,
           "enforced_relation": {
-            "LookupPair": {
+            "AggregateLookupRationalPair": {
               "input": [
                 [
                   {
@@ -3131,7 +3131,7 @@
         {
           "output_layer": 2,
           "enforced_relation": {
-            "LookupPair": {
+            "AggregateLookupRationalPair": {
               "input": [
                 [
                   {
@@ -3316,7 +3316,7 @@
         {
           "output_layer": 3,
           "enforced_relation": {
-            "LookupPair": {
+            "AggregateLookupRationalPair": {
               "input": [
                 [
                   {
@@ -3367,7 +3367,7 @@
         {
           "output_layer": 3,
           "enforced_relation": {
-            "LookupPair": {
+            "AggregateLookupRationalPair": {
               "input": [
                 [
                   {
@@ -3500,7 +3500,7 @@
         {
           "output_layer": 4,
           "enforced_relation": {
-            "LookupPair": {
+            "AggregateLookupRationalPair": {
               "input": [
                 [
                   {
@@ -4886,8 +4886,278 @@
     }
   ],
   "generic_lookups": [],
-  "range_check_16_lookup_expressions": [],
-  "timestamp_range_check_lookup_expressions": [],
+  "range_check_16_lookup_expressions": [
+    {
+      "input": {
+        "linear_terms": [
+          [
+            1,
+            {
+              "BaseLayerWitness": 10
+            }
+          ]
+        ],
+        "constant": 0
+      },
+      "lookup_set_index": 0
+    },
+    {
+      "input": {
+        "linear_terms": [
+          [
+            1,
+            {
+              "BaseLayerWitness": 11
+            }
+          ]
+        ],
+        "constant": 0
+      },
+      "lookup_set_index": 1
+    },
+    {
+      "input": {
+        "linear_terms": [
+          [
+            1,
+            {
+              "BaseLayerMemory": 15
+            }
+          ]
+        ],
+        "constant": 0
+      },
+      "lookup_set_index": 2
+    },
+    {
+      "input": {
+        "linear_terms": [
+          [
+            1,
+            {
+              "BaseLayerMemory": 16
+            }
+          ]
+        ],
+        "constant": 0
+      },
+      "lookup_set_index": 3
+    },
+    {
+      "input": {
+        "linear_terms": [
+          [
+            1,
+            {
+              "BaseLayerMemory": 22
+            }
+          ]
+        ],
+        "constant": 0
+      },
+      "lookup_set_index": 4
+    },
+    {
+      "input": {
+        "linear_terms": [
+          [
+            1,
+            {
+              "BaseLayerMemory": 23
+            }
+          ]
+        ],
+        "constant": 0
+      },
+      "lookup_set_index": 5
+    }
+  ],
+  "timestamp_range_check_lookup_expressions": [
+    {
+      "input": {
+        "linear_terms": [
+          [
+            1,
+            {
+              "BaseLayerMemory": 24
+            }
+          ]
+        ],
+        "constant": 0
+      },
+      "lookup_set_index": 0
+    },
+    {
+      "input": {
+        "linear_terms": [
+          [
+            1,
+            {
+              "BaseLayerMemory": 25
+            }
+          ]
+        ],
+        "constant": 0
+      },
+      "lookup_set_index": 1
+    },
+    {
+      "input": {
+        "linear_terms": [
+          [
+            2013265920,
+            {
+              "BaseLayerMemory": 20
+            }
+          ],
+          [
+            1,
+            {
+              "BaseLayerMemory": 0
+            }
+          ],
+          [
+            524288,
+            {
+              "BaseLayerWitness": 15
+            }
+          ]
+        ],
+        "constant": 0
+      },
+      "lookup_set_index": 2
+    },
+    {
+      "input": {
+        "linear_terms": [
+          [
+            2013265920,
+            {
+              "BaseLayerMemory": 21
+            }
+          ],
+          [
+            1,
+            {
+              "BaseLayerMemory": 1
+            }
+          ],
+          [
+            2013265920,
+            {
+              "BaseLayerWitness": 15
+            }
+          ]
+        ],
+        "constant": 524288
+      },
+      "lookup_set_index": 3
+    },
+    {
+      "input": {
+        "linear_terms": [
+          [
+            2013265920,
+            {
+              "BaseLayerMemory": 20
+            }
+          ],
+          [
+            1,
+            {
+              "BaseLayerMemory": 5
+            }
+          ],
+          [
+            524288,
+            {
+              "BaseLayerWitness": 16
+            }
+          ]
+        ],
+        "constant": 2013265920
+      },
+      "lookup_set_index": 4
+    },
+    {
+      "input": {
+        "linear_terms": [
+          [
+            2013265920,
+            {
+              "BaseLayerMemory": 21
+            }
+          ],
+          [
+            1,
+            {
+              "BaseLayerMemory": 6
+            }
+          ],
+          [
+            2013265920,
+            {
+              "BaseLayerWitness": 16
+            }
+          ]
+        ],
+        "constant": 524288
+      },
+      "lookup_set_index": 5
+    },
+    {
+      "input": {
+        "linear_terms": [
+          [
+            2013265920,
+            {
+              "BaseLayerMemory": 20
+            }
+          ],
+          [
+            1,
+            {
+              "BaseLayerMemory": 10
+            }
+          ],
+          [
+            524288,
+            {
+              "BaseLayerWitness": 17
+            }
+          ]
+        ],
+        "constant": 2013265919
+      },
+      "lookup_set_index": 6
+    },
+    {
+      "input": {
+        "linear_terms": [
+          [
+            2013265920,
+            {
+              "BaseLayerMemory": 21
+            }
+          ],
+          [
+            1,
+            {
+              "BaseLayerMemory": 11
+            }
+          ],
+          [
+            2013265920,
+            {
+              "BaseLayerWitness": 17
+            }
+          ]
+        ],
+        "constant": 524288
+      },
+      "lookup_set_index": 7
+    }
+  ],
   "variable_names": {
     "0": "initial_pc[0]",
     "1": "initial_pc[1]",

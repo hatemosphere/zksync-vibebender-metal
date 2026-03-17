@@ -129,6 +129,8 @@ impl OpcodeFamilyDecoder for JumpSltBranchDecoder {
             }
         }
 
+        assert!(funct3.is_some());
+
         let decoded = ExecutorFamilyDecoderData {
             imm,
             rs1_index,

@@ -415,6 +415,12 @@ pub enum NoFieldGKRRelation {
     },
 
     // 1/(a+gamma) + 1/(b + gamma) where a, b are in in extension already due to vector nature (no caching)
+    LookupPairFromMaterializedVectorInputs {
+        input: [GKRAddress; 2],
+        output: [GKRAddress; 2],
+    },
+
+    // 1/(a+gamma) + 1/(b + gamma) where a, b are in in extension already due to vector nature (no caching)
     LookupPairFromCachedVectorInputs {
         input: [GKRAddress; 2],
         output: [GKRAddress; 2],
@@ -428,7 +434,7 @@ pub enum NoFieldGKRRelation {
     },
 
     // a/b + c/d -> (num, den)
-    LookupPair {
+    AggregateLookupRationalPair {
         input: [[GKRAddress; 2]; 2],
         output: [GKRAddress; 2],
     },
@@ -552,6 +558,16 @@ impl NoFieldGKRRelation {
             Self::LookupPairFromVectorInputs { input, output } => {
                 vec![]
             }
+            Self::LookupPairFromMaterializedVectorInputs { input, output } => {
+                let mut result = vec![];
+                for inp in input {
+                    if inp.is_cache() {
+                        result.push(inp);
+                    }
+                }
+
+                input.to_vec()
+            }
             Self::LookupPairFromCachedVectorInputs { input, output } => {
                 assert!(input[0].is_cache());
                 assert!(input[1].is_cache());
@@ -572,16 +588,10 @@ impl NoFieldGKRRelation {
                     vec![]
                 }
             }
-            Self::LookupPair { input, output } => {
+            Self::AggregateLookupRationalPair { input, output } => {
                 vec![]
             }
         }
-    }
-
-    pub fn expected_input_claims(&self) -> Vec<GKRAddress> {
-        // they are also the outputs
-
-        todo!()
     }
 
     pub fn created_claims(&self) -> Vec<GKRAddress> {
@@ -716,8 +726,11 @@ impl NoFieldGKRRelation {
                 }
                 result.into_iter().collect()
             }
+            Self::LookupPairFromMaterializedVectorInputs { input, output } => input.to_vec(),
             Self::LookupPairFromCachedVectorInputs { input, output } => input.to_vec(),
-            Self::LookupPair { input, output } => input.iter().flatten().copied().collect(),
+            Self::AggregateLookupRationalPair { input, output } => {
+                input.iter().flatten().copied().collect()
+            }
             _ => {
                 todo!();
             }

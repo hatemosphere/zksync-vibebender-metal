@@ -1,11 +1,9 @@
 use crate::constraint::Constraint;
 use crate::definitions::{GKRAddress, Variable};
-use crate::gkr_compiler::{
-    GKRGate, LookupType, NoFieldGKRCacheRelation, NoFieldGKRRelation,
-};
+use crate::gkr_compiler::{GKRGate, LookupType, NoFieldGKRCacheRelation, NoFieldGKRRelation};
 use field::PrimeField;
-use std::collections::HashMap;
 use std::collections::BTreeSet;
+use std::collections::HashMap;
 use std::{collections::BTreeMap, hash::Hash};
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Hash, serde::Serialize, serde::Deserialize)]
@@ -289,6 +287,7 @@ impl GraphHolder for GKRGraph {
         entry.push(relation);
     }
 
+    #[track_caller]
     fn add_cached_relation(
         &mut self,
         relation: NoFieldGKRCacheRelation,
@@ -304,10 +303,18 @@ impl GraphHolder for GKRGraph {
             let offset = entry.len();
             entry.push(relation);
 
-            GKRAddress::Cached {
+            let rel = GKRAddress::Cached {
                 layer: output_layer,
                 offset,
-            }
+            };
+
+            println!(
+                "Adding cache relation {:?} at {:?}",
+                rel,
+                core::panic::Location::caller()
+            );
+
+            rel
         }
     }
 

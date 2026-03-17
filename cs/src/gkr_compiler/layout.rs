@@ -168,10 +168,6 @@ impl GKRGraph {
         // all relations without splitting
 
         for layer in (1..(1 + total_layers)).rev() {
-            if layer != 1 {
-                assert!(self.cached_relations.get(&layer).is_none());
-            }
-
             let mut descr = GKRLayerDescription {
                 layer,
                 gates_with_external_connections: vec![],

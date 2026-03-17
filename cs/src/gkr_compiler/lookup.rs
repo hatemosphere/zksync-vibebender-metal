@@ -17,11 +17,12 @@ pub(crate) fn layout_width_1_lookup_expressions<F: PrimeField>(
     lookup_type: &str,
     lookup: LookupType,
 ) -> (
-    Variable,           // multiplicity var
-    [GKRAddress; 2],    // final num/den pair
-    NoFieldGKRRelation, // relation that gives rise to final pair
+    Variable,                               // multiplicity var
+    [GKRAddress; 2],                        // final num/den pair
+    NoFieldGKRRelation,                     // relation that gives rise to final pair
+    Vec<NoFieldSingleColumnLookupRelation>, // all lookup relations for witness evaluation and multiplicity counting
 ) {
-    layout_lookup_expressions::<F, true>(
+    let (a, b, c, rels) = layout_lookup_expressions::<F, true>(
         graph,
         expressions
             .into_iter()
@@ -41,7 +42,21 @@ pub(crate) fn layout_width_1_lookup_expressions<F: PrimeField>(
         lookup,
         1,
         false,
-    )
+    );
+
+    let rels = rels
+        .into_iter()
+        .map(|el| {
+            assert_eq!(el.columns.len(), 1);
+
+            NoFieldSingleColumnLookupRelation {
+                input: el.columns[0].clone(),
+                lookup_set_index: el.lookup_set_index,
+            }
+        })
+        .collect();
+
+    (a, b, c, rels)
 }
 
 fn input_layer_for_lookup_expression<F: PrimeField, const SINGLE_COLUMN: bool>(
@@ -221,10 +236,12 @@ pub(crate) fn layout_lookup_expressions<F: PrimeField, const SINGLE_COLUMN: bool
     total_width: usize,
     expect_table_id: bool,
 ) -> (
-    Variable,           // multiplicity var
-    [GKRAddress; 2],    // final num/den pair
-    NoFieldGKRRelation, // relation that gives rise to final pair
+    Variable,                         // multiplicity var
+    [GKRAddress; 2],                  // final num/den pair
+    NoFieldGKRRelation,               // relation that gives rise to final pair
+    Vec<NoFieldVectorLookupRelation>, // all lookup relations for witness evaluation and multiplicity counting
 ) {
+    let mut all_relations_for_witness_eval = vec![];
     // sanity checks
     for (expr, table_type) in expressions.iter() {
         if SINGLE_COLUMN {
@@ -316,6 +333,7 @@ pub(crate) fn layout_lookup_expressions<F: PrimeField, const SINGLE_COLUMN: bool
             &mut inputs_at_layers,
             &mut logup_intermediate_output_values_at_layers,
             &mut relations_map,
+            &mut all_relations_for_witness_eval,
         );
 
         input_layer += 1;
@@ -340,7 +358,12 @@ pub(crate) fn layout_lookup_expressions<F: PrimeField, const SINGLE_COLUMN: bool
                             .get(&[num, den])
                             .expect("final relation")
                             .clone();
-                        return (multiplicity_var, [num, den], relation);
+                        return (
+                            multiplicity_var,
+                            [num, den],
+                            relation,
+                            all_relations_for_witness_eval,
+                        );
                     }
                     _ => {
                         unreachable!()
@@ -372,6 +395,7 @@ fn drive_lookup_placement<F: PrimeField, const SINGLE_COLUMN: bool>(
     >,
     intermediate_values: &mut BTreeMap<usize, Vec<(LookupNumerator, LookupDenominator)>>,
     relations_map: &mut BTreeMap<[GKRAddress; 2], NoFieldGKRRelation>,
+    all_relations_for_witness_eval: &mut Vec<NoFieldVectorLookupRelation>,
 ) {
     if decoder_lookup.is_some() || multiplicity.is_some() {
         assert_eq!(input_layer, 0);
@@ -422,6 +446,8 @@ fn drive_lookup_placement<F: PrimeField, const SINGLE_COLUMN: bool>(
                 total_width,
                 &*graph,
             );
+            // NOTE: we do not put it into relations for witness eval, as it's
+            // special
             assert_eq!(input.columns.len(), graph.setup_addresses(lookup).len());
             assert!(SINGLE_COLUMN == false);
 
@@ -429,7 +455,7 @@ fn drive_lookup_placement<F: PrimeField, const SINGLE_COLUMN: bool>(
             use crate::gkr_compiler::lookup_nodes::LookupMaskedWitnessMinusSetupInputNode;
             let node = LookupMaskedWitnessMinusSetupInputNode {
                 mask: decoder_predicate,
-                input,
+                input: input,
                 multiplicity,
                 setup,
             };
@@ -470,6 +496,7 @@ fn drive_lookup_placement<F: PrimeField, const SINGLE_COLUMN: bool>(
 
                 let key = *inputs.keys().next().unwrap();
                 let (_, rel) = inputs.remove(&key).unwrap();
+                all_relations_for_witness_eval.push(rel.clone());
                 assert_eq!(rel.columns.len(), 1);
                 let input = NoFieldSingleColumnLookupRelation {
                     input: rel.columns[0].clone(),
@@ -478,7 +505,7 @@ fn drive_lookup_placement<F: PrimeField, const SINGLE_COLUMN: bool>(
 
                 use crate::gkr_compiler::lookup_nodes::LookupSingleColumnWitnessMinusSetupInputNode;
                 let node = LookupSingleColumnWitnessMinusSetupInputNode {
-                    input,
+                    input: input,
                     multiplicity,
                     setup: setup[0],
                     range_check_width: single_columns_lookup_width.unwrap(),
@@ -520,6 +547,7 @@ fn drive_lookup_placement<F: PrimeField, const SINGLE_COLUMN: bool>(
             inputs,
             intermediate_values,
             relations_map,
+            all_relations_for_witness_eval,
         );
         assert_eq!(inputs.len() + 2, t);
     }
@@ -570,6 +598,8 @@ fn drive_lookup_placement<F: PrimeField, const SINGLE_COLUMN: bool>(
         let intermediate_inputs = intermediate_values.entry(input_layer).or_insert(vec![]);
         let (num, den) = intermediate_inputs.pop().unwrap();
 
+        all_relations_for_witness_eval.push(input_rel.clone());
+
         if SINGLE_COLUMN {
             assert_eq!(input_rel.columns.len(), 1);
             let rel = NoFieldSingleColumnLookupRelation {
@@ -614,6 +644,7 @@ fn drive_lookup_placement<F: PrimeField, const SINGLE_COLUMN: bool>(
     if inputs.len() == 1 {
         let key = *inputs.keys().next().unwrap();
         let (_, rel) = inputs.remove(&key).unwrap();
+        all_relations_for_witness_eval.push(rel.clone());
 
         if SINGLE_COLUMN {
             let setup = graph.setup_addresses(lookup);
@@ -627,7 +658,7 @@ fn drive_lookup_placement<F: PrimeField, const SINGLE_COLUMN: bool>(
 
             use crate::gkr_compiler::lookup_nodes::MaterializeSingleInputNode;
             let node = MaterializeSingleInputNode {
-                input,
+                input: input.clone(),
                 range_check_width: single_columns_lookup_width.unwrap(),
             };
             let (den_without_additive_constant, _) = node.add_at_layer(graph, input_layer + 1);
@@ -731,6 +762,7 @@ fn merge_lookup_inputs_pair<F: PrimeField, const SINGLE_COLUMN: bool>(
     >,
     intermediate_values: &mut BTreeMap<usize, Vec<(LookupNumerator, LookupDenominator)>>,
     relations_map: &mut BTreeMap<[GKRAddress; 2], NoFieldGKRRelation>,
+    all_relations_for_witness_eval: &mut Vec<NoFieldVectorLookupRelation>,
 ) {
     let single_columns_lookup_width = match lookup {
         LookupType::RangeCheck16 => Some(16),
@@ -743,6 +775,8 @@ fn merge_lookup_inputs_pair<F: PrimeField, const SINGLE_COLUMN: bool>(
     let k1 = *keys.next().unwrap();
     let (_input_0, rel_0) = inputs.remove(&k0).unwrap();
     let (_input_1, rel_1) = inputs.remove(&k1).unwrap();
+    all_relations_for_witness_eval.push(rel_0.clone());
+    all_relations_for_witness_eval.push(rel_1.clone());
 
     if SINGLE_COLUMN {
         use crate::gkr_compiler::lookup_nodes::LookupSingleColumnWitnessPairAggregationNode;

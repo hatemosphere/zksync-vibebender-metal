@@ -51,6 +51,7 @@ pub(crate) fn check_logup_identity<F: PrimeField, E: FieldExtension<F> + Field>(
                 sum.add_assign(&term);
             }
             if !sum.is_zero() {
+                println!("LogUp relation diverged for lookup type {:?}", output_type);
                 return false;
             }
         }

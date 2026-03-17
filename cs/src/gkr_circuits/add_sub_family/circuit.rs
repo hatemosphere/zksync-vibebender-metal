@@ -365,8 +365,7 @@ fn apply_add_sub_lui_auipc_mop_inner<F: PrimeField, CS: Circuit<F>>(
             // non-determinism
             {
                 let is_non_determinism_read = placer.get_boolean(is_non_determinism_read_var);
-                let oracle_value =
-                    placer.get_oracle_u32(Placeholder::ExternalOracle);
+                let oracle_value = placer.get_oracle_u32(Placeholder::ExternalOracle);
                 out_value = <CS::WitnessPlacer as WitnessTypeSet<F>>::U32::select(
                     &is_non_determinism_read,
                     &oracle_value,

@@ -4260,7 +4260,7 @@
         {
           "output_layer": 2,
           "enforced_relation": {
-            "LookupPair": {
+            "AggregateLookupRationalPair": {
               "input": [
                 [
                   {
@@ -4349,7 +4349,7 @@
         {
           "output_layer": 2,
           "enforced_relation": {
-            "LookupPairFromMaterializedBaseInputs": {
+            "LookupPairFromMaterializedVectorInputs": {
               "input": [
                 {
                   "Cached": {
@@ -4384,7 +4384,7 @@
         {
           "output_layer": 2,
           "enforced_relation": {
-            "LookupPairFromMaterializedBaseInputs": {
+            "LookupPairFromMaterializedVectorInputs": {
               "input": [
                 {
                   "Cached": {
@@ -4518,7 +4518,7 @@
         {
           "output_layer": 3,
           "enforced_relation": {
-            "LookupPair": {
+            "AggregateLookupRationalPair": {
               "input": [
                 [
                   {
@@ -4607,7 +4607,7 @@
         {
           "output_layer": 3,
           "enforced_relation": {
-            "LookupPair": {
+            "AggregateLookupRationalPair": {
               "input": [
                 [
                   {
@@ -4740,7 +4740,7 @@
         {
           "output_layer": 4,
           "enforced_relation": {
-            "LookupPair": {
+            "AggregateLookupRationalPair": {
               "input": [
                 [
                   {
@@ -4791,7 +4791,7 @@
         {
           "output_layer": 4,
           "enforced_relation": {
-            "LookupPair": {
+            "AggregateLookupRationalPair": {
               "input": [
                 [
                   {
@@ -5865,9 +5865,729 @@
       "constant_term": 2013233153
     }
   ],
-  "generic_lookups": [],
-  "range_check_16_lookup_expressions": [],
-  "timestamp_range_check_lookup_expressions": [],
+  "generic_lookups": [
+    {
+      "columns": [
+        {
+          "linear_terms": [
+            [
+              1,
+              {
+                "ScratchSpace": 0
+              }
+            ]
+          ],
+          "constant": 0
+        },
+        {
+          "linear_terms": [
+            [
+              1,
+              {
+                "ScratchSpace": 1
+              }
+            ]
+          ],
+          "constant": 0
+        },
+        {
+          "linear_terms": [
+            [
+              1,
+              {
+                "ScratchSpace": 2
+              }
+            ]
+          ],
+          "constant": 0
+        },
+        {
+          "linear_terms": [],
+          "constant": 0
+        },
+        {
+          "linear_terms": [],
+          "constant": 0
+        },
+        {
+          "linear_terms": [],
+          "constant": 0
+        },
+        {
+          "linear_terms": [],
+          "constant": 0
+        },
+        {
+          "linear_terms": [],
+          "constant": 0
+        },
+        {
+          "linear_terms": [],
+          "constant": 0
+        },
+        {
+          "linear_terms": [
+            [
+              1,
+              {
+                "ScratchSpace": 3
+              }
+            ]
+          ],
+          "constant": 0
+        }
+      ],
+      "lookup_set_index": 0
+    },
+    {
+      "columns": [
+        {
+          "linear_terms": [
+            [
+              1,
+              {
+                "ScratchSpace": 4
+              }
+            ]
+          ],
+          "constant": 0
+        },
+        {
+          "linear_terms": [
+            [
+              1,
+              {
+                "ScratchSpace": 5
+              }
+            ]
+          ],
+          "constant": 0
+        },
+        {
+          "linear_terms": [
+            [
+              1,
+              {
+                "ScratchSpace": 6
+              }
+            ]
+          ],
+          "constant": 0
+        },
+        {
+          "linear_terms": [
+            [
+              1,
+              {
+                "ScratchSpace": 7
+              }
+            ]
+          ],
+          "constant": 0
+        },
+        {
+          "linear_terms": [
+            [
+              1,
+              {
+                "ScratchSpace": 8
+              }
+            ]
+          ],
+          "constant": 0
+        },
+        {
+          "linear_terms": [
+            [
+              1,
+              {
+                "ScratchSpace": 9
+              }
+            ]
+          ],
+          "constant": 0
+        },
+        {
+          "linear_terms": [
+            [
+              1,
+              {
+                "ScratchSpace": 10
+              }
+            ]
+          ],
+          "constant": 0
+        },
+        {
+          "linear_terms": [
+            [
+              1,
+              {
+                "ScratchSpace": 11
+              }
+            ]
+          ],
+          "constant": 0
+        },
+        {
+          "linear_terms": [],
+          "constant": 0
+        },
+        {
+          "linear_terms": [
+            [
+              1,
+              {
+                "ScratchSpace": 12
+              }
+            ]
+          ],
+          "constant": 0
+        }
+      ],
+      "lookup_set_index": 1
+    },
+    {
+      "columns": [
+        {
+          "linear_terms": [
+            [
+              1,
+              {
+                "ScratchSpace": 13
+              }
+            ]
+          ],
+          "constant": 0
+        },
+        {
+          "linear_terms": [
+            [
+              1,
+              {
+                "ScratchSpace": 14
+              }
+            ]
+          ],
+          "constant": 0
+        },
+        {
+          "linear_terms": [
+            [
+              1,
+              {
+                "ScratchSpace": 15
+              }
+            ]
+          ],
+          "constant": 0
+        },
+        {
+          "linear_terms": [
+            [
+              1,
+              {
+                "ScratchSpace": 16
+              }
+            ]
+          ],
+          "constant": 0
+        },
+        {
+          "linear_terms": [
+            [
+              1,
+              {
+                "ScratchSpace": 17
+              }
+            ]
+          ],
+          "constant": 0
+        },
+        {
+          "linear_terms": [
+            [
+              1,
+              {
+                "ScratchSpace": 18
+              }
+            ]
+          ],
+          "constant": 0
+        },
+        {
+          "linear_terms": [
+            [
+              1,
+              {
+                "ScratchSpace": 19
+              }
+            ]
+          ],
+          "constant": 0
+        },
+        {
+          "linear_terms": [
+            [
+              1,
+              {
+                "ScratchSpace": 20
+              }
+            ]
+          ],
+          "constant": 0
+        },
+        {
+          "linear_terms": [],
+          "constant": 0
+        },
+        {
+          "linear_terms": [
+            [
+              1,
+              {
+                "ScratchSpace": 21
+              }
+            ]
+          ],
+          "constant": 0
+        }
+      ],
+      "lookup_set_index": 2
+    },
+    {
+      "columns": [
+        {
+          "linear_terms": [
+            [
+              1,
+              {
+                "ScratchSpace": 22
+              }
+            ]
+          ],
+          "constant": 0
+        },
+        {
+          "linear_terms": [
+            [
+              1,
+              {
+                "ScratchSpace": 23
+              }
+            ]
+          ],
+          "constant": 0
+        },
+        {
+          "linear_terms": [
+            [
+              1,
+              {
+                "ScratchSpace": 24
+              }
+            ]
+          ],
+          "constant": 0
+        },
+        {
+          "linear_terms": [
+            [
+              1,
+              {
+                "ScratchSpace": 25
+              }
+            ]
+          ],
+          "constant": 0
+        },
+        {
+          "linear_terms": [
+            [
+              1,
+              {
+                "ScratchSpace": 26
+              }
+            ]
+          ],
+          "constant": 0
+        },
+        {
+          "linear_terms": [
+            [
+              1,
+              {
+                "ScratchSpace": 27
+              }
+            ]
+          ],
+          "constant": 0
+        },
+        {
+          "linear_terms": [
+            [
+              1,
+              {
+                "ScratchSpace": 28
+              }
+            ]
+          ],
+          "constant": 0
+        },
+        {
+          "linear_terms": [
+            [
+              1,
+              {
+                "ScratchSpace": 29
+              }
+            ]
+          ],
+          "constant": 0
+        },
+        {
+          "linear_terms": [],
+          "constant": 0
+        },
+        {
+          "linear_terms": [
+            [
+              1,
+              {
+                "ScratchSpace": 30
+              }
+            ]
+          ],
+          "constant": 0
+        }
+      ],
+      "lookup_set_index": 3
+    },
+    {
+      "columns": [
+        {
+          "linear_terms": [
+            [
+              1,
+              {
+                "ScratchSpace": 31
+              }
+            ]
+          ],
+          "constant": 0
+        },
+        {
+          "linear_terms": [
+            [
+              1,
+              {
+                "ScratchSpace": 32
+              }
+            ]
+          ],
+          "constant": 0
+        },
+        {
+          "linear_terms": [
+            [
+              1,
+              {
+                "ScratchSpace": 33
+              }
+            ]
+          ],
+          "constant": 0
+        },
+        {
+          "linear_terms": [
+            [
+              1,
+              {
+                "ScratchSpace": 34
+              }
+            ]
+          ],
+          "constant": 0
+        },
+        {
+          "linear_terms": [
+            [
+              1,
+              {
+                "ScratchSpace": 35
+              }
+            ]
+          ],
+          "constant": 0
+        },
+        {
+          "linear_terms": [
+            [
+              1,
+              {
+                "ScratchSpace": 36
+              }
+            ]
+          ],
+          "constant": 0
+        },
+        {
+          "linear_terms": [
+            [
+              1,
+              {
+                "ScratchSpace": 37
+              }
+            ]
+          ],
+          "constant": 0
+        },
+        {
+          "linear_terms": [
+            [
+              1,
+              {
+                "ScratchSpace": 38
+              }
+            ]
+          ],
+          "constant": 0
+        },
+        {
+          "linear_terms": [],
+          "constant": 0
+        },
+        {
+          "linear_terms": [
+            [
+              1,
+              {
+                "ScratchSpace": 39
+              }
+            ]
+          ],
+          "constant": 0
+        }
+      ],
+      "lookup_set_index": 4
+    }
+  ],
+  "range_check_16_lookup_expressions": [
+    {
+      "input": {
+        "linear_terms": [
+          [
+            1,
+            {
+              "BaseLayerMemory": 26
+            }
+          ]
+        ],
+        "constant": 0
+      },
+      "lookup_set_index": 0
+    },
+    {
+      "input": {
+        "linear_terms": [
+          [
+            1,
+            {
+              "BaseLayerMemory": 27
+            }
+          ]
+        ],
+        "constant": 0
+      },
+      "lookup_set_index": 1
+    }
+  ],
+  "timestamp_range_check_lookup_expressions": [
+    {
+      "input": {
+        "linear_terms": [
+          [
+            1,
+            {
+              "BaseLayerMemory": 28
+            }
+          ]
+        ],
+        "constant": 0
+      },
+      "lookup_set_index": 0
+    },
+    {
+      "input": {
+        "linear_terms": [
+          [
+            1,
+            {
+              "BaseLayerMemory": 29
+            }
+          ]
+        ],
+        "constant": 0
+      },
+      "lookup_set_index": 1
+    },
+    {
+      "input": {
+        "linear_terms": [
+          [
+            2013265920,
+            {
+              "BaseLayerMemory": 24
+            }
+          ],
+          [
+            1,
+            {
+              "BaseLayerMemory": 0
+            }
+          ],
+          [
+            524288,
+            {
+              "BaseLayerWitness": 22
+            }
+          ]
+        ],
+        "constant": 0
+      },
+      "lookup_set_index": 2
+    },
+    {
+      "input": {
+        "linear_terms": [
+          [
+            2013265920,
+            {
+              "BaseLayerMemory": 25
+            }
+          ],
+          [
+            1,
+            {
+              "BaseLayerMemory": 1
+            }
+          ],
+          [
+            2013265920,
+            {
+              "BaseLayerWitness": 22
+            }
+          ]
+        ],
+        "constant": 524288
+      },
+      "lookup_set_index": 3
+    },
+    {
+      "input": {
+        "linear_terms": [
+          [
+            2013265920,
+            {
+              "BaseLayerMemory": 24
+            }
+          ],
+          [
+            1,
+            {
+              "BaseLayerMemory": 7
+            }
+          ],
+          [
+            524288,
+            {
+              "BaseLayerWitness": 23
+            }
+          ]
+        ],
+        "constant": 2013265920
+      },
+      "lookup_set_index": 4
+    },
+    {
+      "input": {
+        "linear_terms": [
+          [
+            2013265920,
+            {
+              "BaseLayerMemory": 25
+            }
+          ],
+          [
+            1,
+            {
+              "BaseLayerMemory": 8
+            }
+          ],
+          [
+            2013265920,
+            {
+              "BaseLayerWitness": 23
+            }
+          ]
+        ],
+        "constant": 524288
+      },
+      "lookup_set_index": 5
+    },
+    {
+      "input": {
+        "linear_terms": [
+          [
+            2013265920,
+            {
+              "BaseLayerMemory": 24
+            }
+          ],
+          [
+            1,
+            {
+              "BaseLayerMemory": 14
+            }
+          ],
+          [
+            524288,
+            {
+              "BaseLayerWitness": 24
+            }
+          ]
+        ],
+        "constant": 2013265919
+      },
+      "lookup_set_index": 6
+    },
+    {
+      "input": {
+        "linear_terms": [
+          [
+            2013265920,
+            {
+              "BaseLayerMemory": 25
+            }
+          ],
+          [
+            1,
+            {
+              "BaseLayerMemory": 15
+            }
+          ],
+          [
+            2013265920,
+            {
+              "BaseLayerWitness": 24
+            }
+          ]
+        ],
+        "constant": 524288
+      },
+      "lookup_set_index": 7
+    }
+  ],
   "variable_names": {
     "0": "initial_pc[0]",
     "1": "initial_pc[1]",

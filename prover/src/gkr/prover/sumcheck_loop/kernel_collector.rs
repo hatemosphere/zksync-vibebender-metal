@@ -122,7 +122,7 @@ define_kernel_variants! {
         LookupBasePair(LookupBasePairGKRRelation<F, E>),
         LookupBaseMinusMultiplicityByBase(LookupBaseMinusMultiplicityByBaseGKRRelation<F, E>),
         LookupUnbalanced(LookupRationalPairWithUnbalancedBaseGKRRelation<F, E>),
-        LookupWithCachedDensAndSetup(LookupBaseExtMinusBaseExtGKRRelation),
+        LookupWithCachedDensAndSetup(LookupBaseExtMinusBaseExtGKRRelation<F, E>),
         LookupPairDimensionReducing(LookupPairDimensionReducingGKRRelation),
     }
     // single challenge, no output
@@ -203,7 +203,7 @@ impl<F: PrimeField, E: FieldExtension<F> + Field> KernelVariant<F, E> {
                     *output,
                 )
             }
-            NoFieldGKRRelation::LookupPair { input, output } => {
+            NoFieldGKRRelation::AggregateLookupRationalPair { input, output } => {
                 let challenges = [get_challenge(), get_challenge()];
                 Self::LookupPair(
                     LookupPairGKRRelation {
@@ -274,6 +274,8 @@ impl<F: PrimeField, E: FieldExtension<F> + Field> KernelVariant<F, E> {
                         nums: [input[0], setup[0]],
                         dens: [input[1], setup[1]],
                         outputs: *output,
+                        lookup_additive_challenge: lookup_challenges_additive_part,
+                        _marker: core::marker::PhantomData,
                     },
                     challenges,
                     *output,
@@ -297,7 +299,7 @@ impl<F: PrimeField, E: FieldExtension<F> + Field> KernelVariant<F, E> {
             NoFieldGKRRelation::LookupPairFromBaseInputs { .. } => todo!(),
             NoFieldGKRRelation::LookupPairFromVectorInputs { .. } => todo!(),
             a @ _ => {
-                todo!()
+                panic!("Relation {:?} is not yet implemented", a);
             }
         }
     }
@@ -656,7 +658,9 @@ impl<F: PrimeField, E: FieldExtension<F> + Field> KernelCollector<F, E> {
                     }
                 }
                 KernelVariant::LookupWithCachedDensAndSetup(rel, challenges, _) => {
-                    let k = LookupBaseExtMinusBaseExtGKRRelationKernel::<F, E>::default();
+                    let k = LookupBaseExtMinusBaseExtGKRRelationKernel::<F, E>::new(
+                        rel.lookup_additive_challenge,
+                    );
                     for j in 0..2usize {
                         let in_base0 = efr(get(rel.nums[0], j));
                         let in_base1 = efr(get(rel.nums[1], j));
