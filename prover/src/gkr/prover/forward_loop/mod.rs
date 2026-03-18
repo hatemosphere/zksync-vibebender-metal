@@ -11,6 +11,7 @@ use cs::{
 };
 
 pub(crate) mod copy;
+pub(crate) mod linear_and_max_quadratic;
 pub(crate) mod lookup_from_base_inputs;
 pub(crate) mod lookup_from_vector_inputs;
 pub(crate) mod lookup_pair;
@@ -342,6 +343,10 @@ pub fn evaluate_layer<F: PrimeField, E: FieldExtension<F> + Field>(
     worker: &Worker,
 ) {
     println!("Evaluating layer {} in forward direction", layer_idx);
+    assert_eq!(
+        compiled_circuit.scratch_space_mapping.len(),
+        compiled_circuit.scratch_space_mapping_rev.len()
+    );
 
     if layer_idx == 0 {
         // move base field polys
@@ -370,7 +375,8 @@ pub fn evaluate_layer<F: PrimeField, E: FieldExtension<F> + Field>(
             );
         }
     } else {
-        // we can still get some intermediate polys
+        // we can still get some intermediate polys already computed and form
+        // the scratch space, and we will insert them here
         for (i, poly) in witness_trace
             .column_major_scratch_space_trace
             .iter_mut()
@@ -379,13 +385,18 @@ pub fn evaluate_layer<F: PrimeField, E: FieldExtension<F> + Field>(
             if let Some(place) = compiled_circuit.scratch_space_mapping_rev.get(&i) {
                 if let GKRAddress::InnerLayer { layer, .. } = *place {
                     if layer == layer_idx {
-                        assert!(poly.is_empty() == false);
+                        assert!(
+                            poly.is_empty() == false,
+                            "trying to fill {:?} from scratch space, but it's source is empty",
+                            place
+                        );
                         let poly = core::mem::replace(poly, vec![]);
                         gkr_storage.insert_base_field_at_layer(
                             layer_idx,
                             *place,
                             BaseFieldPoly::new(poly.into_boxed_slice()),
                         );
+                        println!("Filled intermediate poly {:?} from scratch space", place);
                     }
                 }
             }
@@ -502,18 +513,6 @@ pub fn evaluate_layer<F: PrimeField, E: FieldExtension<F> + Field>(
                     worker,
                 );
             }
-            NoFieldGKRRelation::LookupPairFromMaterializedBaseInputs { input, output } => {
-                // println!("Should evaluate {:?}", &gate.enforced_relation);
-                lookup_from_base_inputs::forward_evaluate_lookup_base_inputs_pair(
-                    *input,
-                    *output,
-                    gkr_storage,
-                    expected_output_layer,
-                    trace_len,
-                    lookup_challenges_additive_part,
-                    worker,
-                );
-            }
             NoFieldGKRRelation::LookupWithCachedDensAndSetup {
                 input,
                 setup,
@@ -533,6 +532,18 @@ pub fn evaluate_layer<F: PrimeField, E: FieldExtension<F> + Field>(
                     worker,
                 );
             }
+            NoFieldGKRRelation::LookupPairFromMaterializedBaseInputs { input, output } => {
+                // println!("Should evaluate {:?}", &gate.enforced_relation);
+                lookup_from_base_inputs::forward_evaluate_lookup_base_inputs_pair(
+                    *input,
+                    *output,
+                    gkr_storage,
+                    expected_output_layer,
+                    trace_len,
+                    lookup_challenges_additive_part,
+                    worker,
+                );
+            }
             NoFieldGKRRelation::LookupUnbalancedPairWithMaterializedBaseInputs {
                 input,
                 remainder,
@@ -540,6 +551,23 @@ pub fn evaluate_layer<F: PrimeField, E: FieldExtension<F> + Field>(
             } => {
                 // println!("Should evaluate {:?}", &gate.enforced_relation);
                 lookup_from_base_inputs::forward_evaluate_lookup_rational_with_base_remainder_input(
+                    *input,
+                    *remainder,
+                    *output,
+                    gkr_storage,
+                    expected_output_layer,
+                    trace_len,
+                    lookup_challenges_additive_part,
+                    worker,
+                );
+            }
+            NoFieldGKRRelation::LookupUnbalancedPairWithMaterializedVectorInputs {
+                input,
+                remainder,
+                output,
+            } => {
+                // println!("Should evaluate {:?}", &gate.enforced_relation);
+                lookup_from_vector_inputs::forward_evaluate_lookup_rational_with_vector_remainder_input(
                     *input,
                     *remainder,
                     *output,
@@ -561,6 +589,14 @@ pub fn evaluate_layer<F: PrimeField, E: FieldExtension<F> + Field>(
                     lookup_challenges_additive_part,
                     worker,
                 );
+            }
+            NoFieldGKRRelation::MaxQuadratic { input, output } => {
+                if compiled_circuit.scratch_space_mapping.contains_key(output) {
+                    // a value of it will be filled from scratch space in the next round
+                } else {
+                    println!("Need to evaluate {:?} -> {:?}", input, output);
+                    todo!();
+                }
             }
             rel @ _ => {
                 panic!("Should evaluate {:?}", rel);

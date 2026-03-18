@@ -9,7 +9,9 @@ use crate::gkr::sumcheck::evaluation_kernels::{
     ExtensionCopyGKRRelation, LookupBaseExtMinusBaseExtGKRRelation,
     LookupBaseMinusMultiplicityByBaseGKRRelation, LookupBasePairGKRRelation,
     LookupExtensionPairGKRRelation, LookupExtensionPairGKRRelationKernel, LookupPairGKRRelation,
-    LookupRationalPairWithUnbalancedBaseGKRRelation, MaskIntoIdentityProductGKRRelation,
+    LookupRationalPairWithUnbalancedBaseGKRRelation,
+    LookupRationalPairWithUnbalancedExtensionGKRRelation,
+    LookupRationalPairWithUnbalancedExtensionGKRRelationKernel, MaskIntoIdentityProductGKRRelation,
     SameSizeProductGKRRelation,
 };
 use crate::worker::Worker;
@@ -123,7 +125,8 @@ define_kernel_variants! {
         LookupBasePair(LookupBasePairGKRRelation<F, E>),
         LookupVectorPair(LookupExtensionPairGKRRelation<F, E>),
         LookupBaseMinusMultiplicityByBase(LookupBaseMinusMultiplicityByBaseGKRRelation<F, E>),
-        LookupUnbalanced(LookupRationalPairWithUnbalancedBaseGKRRelation<F, E>),
+        LookupUnbalancedWithBase(LookupRationalPairWithUnbalancedBaseGKRRelation<F, E>),
+        LookupUnbalancedWithExtension(LookupRationalPairWithUnbalancedExtensionGKRRelation<F, E>),
         LookupMaskedVectorMinusSetup(LookupBaseExtMinusBaseExtGKRRelation<F, E>),
         LookupPairDimensionReducing(LookupPairDimensionReducingGKRRelation),
     }
@@ -253,8 +256,26 @@ impl<F: PrimeField, E: FieldExtension<F> + Field> KernelVariant<F, E> {
                 output,
             } => {
                 let challenges = [get_challenge(), get_challenge()];
-                Self::LookupUnbalanced(
+                Self::LookupUnbalancedWithBase(
                     LookupRationalPairWithUnbalancedBaseGKRRelation {
+                        inputs: *input,
+                        remainder: *remainder,
+                        outputs: *output,
+                        lookup_additive_challenge: lookup_challenges_additive_part,
+                        _marker: core::marker::PhantomData,
+                    },
+                    challenges,
+                    *output,
+                )
+            }
+            NoFieldGKRRelation::LookupUnbalancedPairWithMaterializedVectorInputs {
+                input,
+                remainder,
+                output,
+            } => {
+                let challenges = [get_challenge(), get_challenge()];
+                Self::LookupUnbalancedWithExtension(
+                    LookupRationalPairWithUnbalancedExtensionGKRRelation {
                         inputs: *input,
                         remainder: *remainder,
                         outputs: *output,
@@ -308,7 +329,6 @@ impl<F: PrimeField, E: FieldExtension<F> + Field> KernelVariant<F, E> {
                     *output,
                 )
             }
-            // NoFieldGKRRelation::UnbalancedGrandProductWithCache { .. } => todo!(),
             // NoFieldGKRRelation::MaterializeSingleLookupInput { .. } => todo!(),
             // NoFieldGKRRelation::MaterializedVectorLookupInput { .. } => todo!(),
             // NoFieldGKRRelation::LookupPairFromBaseInputs { .. } => todo!(),
@@ -670,7 +690,7 @@ impl<F: PrimeField, E: FieldExtension<F> + Field> KernelCollector<F, E> {
                         acc[j].add_assign(&val1);
                     }
                 }
-                KernelVariant::LookupUnbalanced(rel, challenges, _) => {
+                KernelVariant::LookupUnbalancedWithBase(rel, challenges, _) => {
                     let k = LookupRationalPairWithUnbalancedBaseGKRRelationKernel::<F, E>::new(
                         rel.lookup_additive_challenge,
                     );
@@ -686,6 +706,32 @@ impl<F: PrimeField, E: FieldExtension<F> + Field> KernelCollector<F, E> {
                             2,
                         >::pointwise_eval(
                             &k, &[in_base], &[in_ext0, in_ext1], &()
+                        );
+
+                        let mut val0 = computed[0];
+                        val0.mul_assign(&challenges[0]);
+                        acc[j].add_assign(&val0);
+
+                        let mut val1 = computed[1];
+                        val1.mul_assign(&challenges[1]);
+                        acc[j].add_assign(&val1);
+                    }
+                }
+                KernelVariant::LookupUnbalancedWithExtension(rel, challenges, _) => {
+                    let k = LookupRationalPairWithUnbalancedExtensionGKRRelationKernel::<F, E>::new(
+                        rel.lookup_additive_challenge,
+                    );
+                    for j in 0..2usize {
+                        let in_ext0 = efr(get(rel.inputs[0], j));
+                        let in_ext1 = efr(get(rel.inputs[1], j));
+                        let remainder_in_ext = efr(get(rel.remainder, j));
+                        let computed = ExtensionFieldInOutFixedSizesEvaluationKernelCore::<
+                            F,
+                            E,
+                            3,
+                            2,
+                        >::pointwise_eval(
+                            &k, &[in_ext0, in_ext1, remainder_in_ext]
                         );
 
                         let mut val0 = computed[0];

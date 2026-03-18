@@ -251,6 +251,12 @@ impl<F: PrimeField, A: Allocator + Clone, B: Allocator + Clone> GKRFullWitnessTr
                 // el.resize(trace_len, F::ZERO);
             }
 
+            for el in self.column_major_scratch_space_trace.iter_mut() {
+                debug_assert!(el.is_empty());
+                el.set_len(trace_len);
+                // el.set_len(num_cycles);
+                // el.resize(trace_len, 0);
+            }
             for el in self.generic_lookup_mapping.iter_mut() {
                 debug_assert!(el.is_empty());
                 el.set_len(trace_len);
