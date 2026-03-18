@@ -433,6 +433,7 @@ fn test_gkr_sumcheck_verify_inlined() {
     use verifier_common::gkr::flatten::flatten_gkr_proof_for_nds;
     use verifier_common::prover::nd_source_std::*;
 
+    // to generate the proof and circuit run the gkr_run_basic_unrolled_test test
     let proof: GKRProof<BabyBearField, BabyBearExt4, DefaultTreeConstructor> =
         deserialize_from_file("../prover/add_sub_lui_auipc_mop_gkr_proof.json");
     let compiled_circuit: GKRCircuitArtifact<BabyBearField> =
@@ -487,6 +488,50 @@ fn test_gkr_sumcheck_verify_inlined() {
 
 #[test]
 #[cfg(feature = "gkr_verify")]
+fn test_gkr_sumcheck_verify_inlined_rejects_corrupted_proof() {
+    use field::baby_bear::base::BabyBearField;
+    use field::baby_bear::ext4::BabyBearExt4;
+    use prover::gkr::prover::GKRProof;
+    use prover::merkle_trees::DefaultTreeConstructor;
+    use verifier_common::cs::gkr_compiler::GKRCircuitArtifact;
+    use verifier_common::gkr::flatten::flatten_gkr_proof_for_nds;
+    use verifier_common::prover::nd_source_std::*;
+
+    // to generate the proof and circuit run the gkr_run_basic_unrolled_test test
+    let proof: GKRProof<BabyBearField, BabyBearExt4, DefaultTreeConstructor> =
+        deserialize_from_file("../prover/add_sub_lui_auipc_mop_gkr_proof.json");
+    let compiled_circuit: GKRCircuitArtifact<BabyBearField> =
+        deserialize_from_file("../prover/add_sub_lui_auipc_mop_gkr_circuit.json");
+
+    let mut oracle_data = flatten_gkr_proof_for_nds::<
+        BabyBearField,
+        BabyBearExt4,
+        DefaultTreeConstructor,
+    >(&proof, &compiled_circuit);
+
+    // Corrupt a word in the sumcheck coefficient region (past the transcript preamble and evaluations)
+    let corrupt_idx = oracle_data.len() / 2;
+    oracle_data[corrupt_idx] ^= 1;
+
+    let result = std::thread::Builder::new()
+        .name("gkr verifier corrupted".to_string())
+        .stack_size(1 << 27)
+        .spawn(move || {
+            set_iterator(oracle_data.into_iter());
+            generated_gkr_inlined::verify_gkr_sumcheck::<ThreadLocalBasedSource>()
+        })
+        .expect("failed to spawn thread")
+        .join()
+        .expect("verifier thread panicked");
+
+    assert!(
+        result.is_err(),
+        "verifier should reject corrupted proof data"
+    );
+}
+
+#[test]
+#[cfg(feature = "gkr_verify")]
 #[ignore = "requires RISC-V binary from tools/gkr_verifier"]
 fn test_gkr_verifier_in_transpiler() {
     use field::baby_bear::base::BabyBearField;
@@ -499,6 +544,7 @@ fn test_gkr_verifier_in_transpiler() {
     use verifier_common::cs::gkr_compiler::GKRCircuitArtifact;
     use verifier_common::gkr::flatten::flatten_gkr_proof_for_nds;
 
+    // to generate the proof and circuit run the gkr_run_basic_unrolled_test test
     let proof: GKRProof<BabyBearField, BabyBearExt4, DefaultTreeConstructor> =
         deserialize_from_file("../prover/add_sub_lui_auipc_mop_gkr_proof.json");
     let compiled_circuit: GKRCircuitArtifact<BabyBearField> =

@@ -515,7 +515,7 @@ where
         let mut eq_buf = LazyVec::<#quartic_struct, #evals_per_poly>::new();
         let eq_challenges: &[#quartic_struct; #evaluation_point_len] =
             all_challenges[..#evaluation_point_len].try_into().unwrap_unchecked();
-        make_eq_poly_last(eq_challenges, &mut eq_buf);
+        make_eq_poly(eq_challenges, &mut eq_buf);
 
         let mut prev_claims: LazyVec<#quartic_struct, GKR_ADDRS> = LazyVec::new();
         #claim_accum_body
@@ -598,7 +598,7 @@ where
                 const DIM_REDUCING_EXTRA_CHALLENGES: usize = 2;
                 const DIM_REDUCING_EQ_SIZE: usize = 1 << DIM_REDUCING_EXTRA_CHALLENGES;
                 let mut eq4 = LazyVec::<#quartic_struct, DIM_REDUCING_EQ_SIZE>::new();
-                make_eq_poly_last(&[r_before_last, r_last], &mut eq4);
+                make_eq_poly(&[r_before_last, r_last], &mut eq4);
                 let evals: &[[#quartic_struct; DIM_REDUCING_EQ_SIZE]] = eval_buf.transmute_subslice(
                     BLAKE2S_DIGEST_SIZE_U32_WORDS, #num_input_addrs);
                 let eq4_arr: &[#quartic_struct; DIM_REDUCING_EQ_SIZE] =
@@ -736,7 +736,7 @@ where
             LayerState, LazyVec,
             verify_sumcheck_rounds, verify_final_step_check,
             fold_standard_claims,
-            make_eq_poly_last, dot_eq,
+            make_eq_poly, dot_eq,
             read_eval_data_from_nds, commit_eval_buffer,
             draw_field_els_into, read_field_el, read_field_els, commit_field_els,
         };

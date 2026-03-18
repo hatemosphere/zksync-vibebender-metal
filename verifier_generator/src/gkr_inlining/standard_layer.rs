@@ -25,18 +25,23 @@ pub fn generate_layer_compute_claim<MW: MersenneWrapper>(
 
     let mul_batch = MW::mul_assign(quote! { current_batch }, quote! { batch_base });
 
-    let gates = layer
+    let gates: Vec<_> = layer
         .gates
         .iter()
-        .chain(layer.gates_with_external_connections.iter());
+        .chain(layer.gates_with_external_connections.iter())
+        .collect();
+    let num_gates = gates.len();
 
-    for gate in gates {
+    for (gate_idx, gate) in gates.into_iter().enumerate() {
+        let is_last = gate_idx == num_gates - 1;
         use NoFieldGKRRelation as R;
         match &gate.enforced_relation {
             R::EnforceConstraintsMaxQuadratic { .. } => {
-                body.extend(quote! {
-                    #mul_batch;
-                });
+                if !is_last {
+                    body.extend(quote! {
+                        #mul_batch;
+                    });
+                }
             }
             R::Copy { output, .. }
             | R::InitialGrandProductFromCaches { output, .. }
@@ -48,10 +53,11 @@ pub fn generate_layer_compute_claim<MW: MersenneWrapper>(
                 let out_idx = addr_to_idx(output, output_sorted_addrs);
                 let mul_t = MW::mul_assign(quote! { t }, quote! { claim });
                 let add_combined = MW::add_assign(quote! { combined }, quote! { t });
+                let advance = if is_last { quote! {} } else { quote! { #mul_batch; } };
                 body.extend(quote! {
                     {
                         let bc = current_batch;
-                        #mul_batch;
+                        #advance
                         let claim = output_claims.get(#out_idx);
                         let mut t = bc;
                         #mul_t;
@@ -74,12 +80,13 @@ pub fn generate_layer_compute_claim<MW: MersenneWrapper>(
                 let add_t0 = MW::add_assign(quote! { combined }, quote! { t0 });
                 let mul_t1 = MW::mul_assign(quote! { t1 }, quote! { c1 });
                 let add_t1 = MW::add_assign(quote! { combined }, quote! { t1 });
+                let advance = if is_last { quote! {} } else { quote! { #mul_batch; } };
                 body.extend(quote! {
                     {
                         let bc0 = current_batch;
                         #mul_batch;
                         let bc1 = current_batch;
-                        #mul_batch;
+                        #advance
                         let c0 = output_claims.get(#o0);
                         let c1 = output_claims.get(#o1);
                         let mut t0 = bc0;

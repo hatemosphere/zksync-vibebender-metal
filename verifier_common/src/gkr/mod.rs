@@ -216,7 +216,7 @@ pub fn dot_eq<E: Field, const N: usize>(values: &[E; N], eq: &[E; N]) -> E {
 }
 
 #[inline(always)]
-pub fn make_eq_poly_last<E: Field + Copy, const N: usize>(
+pub fn make_eq_poly<E: Field + Copy, const N: usize>(
     challenges: &[E; N],
     buf: &mut LazyVec<E, {1 << N}>,
 ) {
@@ -324,7 +324,6 @@ where
         Blake2sTranscript::draw_randomness_using_hasher(&mut hasher, seed, &mut draw_buf);
         let r_k = {
             let mut arr = LazyVec::<F, {E::DEGREE}>::new();
-            [F::ZERO; E::DEGREE];
             for i in 0..E::DEGREE {
                 let w = draw_buf[i];
                 arr.push(F::from_u32_with_reduction(w));

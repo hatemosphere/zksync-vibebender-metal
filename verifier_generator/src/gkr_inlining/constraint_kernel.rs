@@ -41,6 +41,7 @@ pub fn generate_constraint_kernel<MW: MersenneWrapper, F: PrimeField>(
     // Linear terms: val * coeff * challenge_powers[pow]
     for (addr, terms) in &rel.linear_terms {
         let idx = addr_to_idx(addr, input_sorted_addrs);
+        let mut term_body = TokenStream::new();
         for &(coeff, pow) in terms.iter() {
             let mont = coeff_to_internal_repr::<F>(coeff);
             let field_coeff = MW::field_new(quote! { #mont });
@@ -48,9 +49,8 @@ pub fn generate_constraint_kernel<MW: MersenneWrapper, F: PrimeField>(
                 MW::mul_assign_by_base(quote! { t }, field_coeff);
             let mul_by_val = MW::mul_assign(quote! { t }, quote! { val });
             let add_to_result = MW::add_assign(quote! { result }, quote! { t });
-            body.extend(quote! {
+            term_body.extend(quote! {
                 {
-                    let val = unsafe { evals.get_unchecked(#idx) }[j];
                     let mut t = unsafe { *challenge_powers.get_unchecked(#pow) };
                     #mul_by_base;
                     #mul_by_val;
@@ -58,6 +58,12 @@ pub fn generate_constraint_kernel<MW: MersenneWrapper, F: PrimeField>(
                 }
             });
         }
+        body.extend(quote! {
+            {
+                let val = unsafe { evals.get_unchecked(#idx) }[j];
+                #term_body
+            }
+        });
     }
 
     // Quadratic terms: (va * vb) * coeff * challenge_powers[pow]
@@ -65,6 +71,7 @@ pub fn generate_constraint_kernel<MW: MersenneWrapper, F: PrimeField>(
         let idx_a = addr_to_idx(addr_a, input_sorted_addrs);
         let idx_b = addr_to_idx(addr_b, input_sorted_addrs);
         let mul_prod = MW::mul_assign(quote! { prod }, quote! { vb });
+        let mut term_body = TokenStream::new();
         for &(coeff, pow) in terms.iter() {
             let mont = coeff_to_internal_repr::<F>(coeff);
             let field_coeff = MW::field_new(quote! { #mont });
@@ -72,12 +79,8 @@ pub fn generate_constraint_kernel<MW: MersenneWrapper, F: PrimeField>(
                 MW::mul_assign_by_base(quote! { t }, field_coeff);
             let mul_by_prod = MW::mul_assign(quote! { t }, quote! { prod });
             let add_to_result = MW::add_assign(quote! { result }, quote! { t });
-            body.extend(quote! {
+            term_body.extend(quote! {
                 {
-                    let va = unsafe { evals.get_unchecked(#idx_a) }[j];
-                    let vb = unsafe { evals.get_unchecked(#idx_b) }[j];
-                    let mut prod = va;
-                    #mul_prod;
                     let mut t = unsafe { *challenge_powers.get_unchecked(#pow) };
                     #mul_by_base;
                     #mul_by_prod;
@@ -85,6 +88,15 @@ pub fn generate_constraint_kernel<MW: MersenneWrapper, F: PrimeField>(
                 }
             });
         }
+        body.extend(quote! {
+            {
+                let va = unsafe { evals.get_unchecked(#idx_a) }[j];
+                let vb = unsafe { evals.get_unchecked(#idx_b) }[j];
+                let mut prod = va;
+                #mul_prod;
+                #term_body
+            }
+        });
     }
 
     body.extend(quote! { result });
