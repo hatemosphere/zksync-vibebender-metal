@@ -12,7 +12,7 @@ use crate::gkr::sumcheck::evaluation_kernels::{
     LookupRationalPairWithUnbalancedBaseGKRRelation,
     LookupRationalPairWithUnbalancedExtensionGKRRelation,
     LookupRationalPairWithUnbalancedExtensionGKRRelationKernel, MaskIntoIdentityProductGKRRelation,
-    SameSizeProductGKRRelation,
+    MaxQuadraticGKRRelation, SameSizeProductGKRRelation,
 };
 use crate::worker::Worker;
 use field::{Field, FieldExtension, PrimeField};
@@ -83,11 +83,11 @@ macro_rules! define_kernel_variants {
                 match self {
                     $(KernelVariant::$s_name(_, challenge, output_addr) => {
                         let mut res = challenge[0];
-                        res.mul_assign(
-                            output_claims
-                                .get(output_addr)
-                                .expect("output claim must exist"),
-                        );
+                        let Some(out_claim) = output_claims
+                            .get(output_addr) else {
+                                panic!("Claim missing for {:?} in kernel {:?}", output_addr, self);
+                            };
+                        res.mul_assign(out_claim);
                         res
                     })*
                     $(KernelVariant::$p_name(_, challenges, addrs) => {
@@ -98,7 +98,7 @@ macro_rules! define_kernel_variants {
                                 weighted.mul_assign(challenge);
                                 res.add_assign(&weighted);
                             } else {
-                                panic!("Claim missing for {:?}", addr);
+                                panic!("Claim missing for {:?} in kenrel {:?}", addr, self);
                             }
                         }
                         res
@@ -118,6 +118,7 @@ define_kernel_variants! {
         Product(SameSizeProductGKRRelation),
         MaskIdentity(MaskIntoIdentityProductGKRRelation),
         PairwiseProductDimensionReducing(PairwiseProductDimensionReducingGKRRelation),
+        MaxQuadratic(MaxQuadraticGKRRelation::<F, E>),
     }
     // 2 challenges, two outputs
     pair {
@@ -325,6 +326,14 @@ impl<F: PrimeField, E: FieldExtension<F> + Field> KernelVariant<F, E> {
                         lookup_additive_challenge: lookup_challenges_additive_part,
                         _marker: core::marker::PhantomData,
                     },
+                    challenges,
+                    *output,
+                )
+            }
+            NoFieldGKRRelation::MaxQuadratic { input, output } => {
+                let challenges = [get_challenge()];
+                Self::MaxQuadratic(
+                    MaxQuadraticGKRRelation::new(input, *output),
                     challenges,
                     *output,
                 )
@@ -769,6 +778,16 @@ impl<F: PrimeField, E: FieldExtension<F> + Field> KernelCollector<F, E> {
                         let mut val1 = computed[1];
                         val1.mul_assign(&challenges[1]);
                         acc[j].add_assign(&val1);
+                    }
+                }
+                KernelVariant::MaxQuadratic(rel, challenge, _) => {
+                    for j in 0..2usize {
+                        let inputs_vec: Vec<E> =
+                            rel.inputs.iter().map(|addr| get(*addr, j)).collect();
+                        let [val] = rel.kernel.pointwise_eval(&inputs_vec);
+                        let mut contrib = val;
+                        contrib.mul_assign(&challenge[0]);
+                        acc[j].add_assign(&contrib);
                     }
                 }
 

@@ -9,6 +9,7 @@ use worker::Worker;
 
 use super::utils::*;
 use crate::gkr::prover::sumcheck_loop::evaluate_sumcheck_for_layer;
+use crate::gkr::prover::GKRExternalChallenges;
 use crate::gkr::sumcheck::eq_poly::*;
 
 type F = Mersenne31Field;
@@ -89,6 +90,7 @@ fn test_sumcheck_loop_product() {
         POLY_SIZE,
         lookup_additive_part,
         constraints_batch_challenge,
+        &GKRExternalChallenges::default(),
         &mut seed,
         &worker,
     );
@@ -242,6 +244,7 @@ fn test_sumcheck_loop_multiple_gates() {
         POLY_SIZE,
         lookup_additive_part,
         constraints_batch_challenge,
+        &GKRExternalChallenges::default(),
         &mut seed,
         &worker,
     );

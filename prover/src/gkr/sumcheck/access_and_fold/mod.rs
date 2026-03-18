@@ -489,7 +489,31 @@ impl<F: PrimeField, E: FieldExtension<F> + Field> GKRStorage<F, E> {
                 storage.extension_field_inputs.push(accessor);
             }
         }
-
+        for output in inputs.outputs_in_base.iter() {
+            if *output == GKRAddress::placeholder() {
+                storage
+                    .base_field_outputs
+                    .push(BaseFieldPolySource::empty());
+            } else {
+                let layer = match *output {
+                    GKRAddress::ScratchSpace(..)
+                    | GKRAddress::BaseLayerMemory(..)
+                    | GKRAddress::BaseLayerWitness(..)
+                    | GKRAddress::Setup(..) => {
+                        unreachable!()
+                    }
+                    GKRAddress::Cached { .. } => {
+                        unreachable!()
+                    }
+                    GKRAddress::InnerLayer { layer, .. } => layer,
+                };
+                let Some(source) = self.layers[layer].base_field_inputs.get(output) else {
+                    panic!("Polynomial with address {:?} is missing from output sources for base field polys for evaluating caller {:?}", output, core::panic::Location::caller());
+                };
+                let accessor = source.accessor();
+                storage.base_field_outputs.push(accessor);
+            }
+        }
         for output in inputs.outputs_in_extension.iter() {
             if *output == GKRAddress::placeholder() {
                 storage

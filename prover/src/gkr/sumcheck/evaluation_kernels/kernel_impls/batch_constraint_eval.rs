@@ -234,6 +234,7 @@ impl<F: PrimeField, E: FieldExtension<F> + Field>
         _output_sources: &[SOUT],
         batch_challenges: &[E],
         ctx: &R0::CollapseContext,
+        _out_collapse_ctx: &ROUT::CollapseContext,
     ) -> [E; 2] {
         assert!(_output_sources.is_empty());
         let mut result = [E::ZERO; 2];

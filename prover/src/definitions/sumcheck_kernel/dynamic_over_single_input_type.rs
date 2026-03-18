@@ -30,6 +30,7 @@ pub trait SingleInputTypeBatchSumcheckEvaluationKernel<
         output_sources: &[SOUT], // we keep it dynamic as there is no need to then make a dummy one for batch constraints
         batch_challenges: &[E],
         collapse_ctx: &R0::CollapseContext,
+        out_collapse_ctx: &ROUT::CollapseContext,
     ) -> [E; 2];
 
     fn evaluate<

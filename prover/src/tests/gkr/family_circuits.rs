@@ -273,7 +273,7 @@ pub fn gkr_run_basic_unrolled_test_impl(
             < NUM_CYCLES_PER_CHUNK
     );
 
-    if false {
+    if true {
         println!("Will try to prove ADD/SUB/LUI/AUIPC/MOP circuit");
         const CIRCUIT_TYPE: u8 = ADD_SUB_LUI_AUIPC_MOP_CIRCUIT_FAMILY_IDX;
 
@@ -456,7 +456,7 @@ pub fn gkr_run_basic_unrolled_test_impl(
         }
     }
 
-    if false {
+    if true {
         println!("Will try to prove JUMP/BRANCH/SLT circuit");
         const CIRCUIT_TYPE: u8 = JUMP_BRANCH_SLT_CIRCUIT_FAMILY_IDX;
 
@@ -799,7 +799,7 @@ pub fn gkr_run_basic_unrolled_test_impl(
                 assert_eq!(proof.grand_product_accumulator_computed, BabyBearExt4::ONE);
             }
 
-            serialize_to_file(&proof, "test_proofs/jump_branch_slt_gkr_proof.json");
+            serialize_to_file(&proof, "test_proofs/shift_binop_gkr_proof.json");
 
             // serialize_to_file_if_not_gpu_comparison(
             //     &proof,
