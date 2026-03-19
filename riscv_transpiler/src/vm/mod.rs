@@ -476,6 +476,10 @@ impl<C: Counters, E: ExecutionObserver<C>> VM<C, E> {
                 InstructionName::Divu => mul_div::divu::<C, S, R>(state, ram, snapshotter, instr),
                 InstructionName::Remu => mul_div::remu::<C, S, R>(state, ram, snapshotter, instr),
 
+                InstructionName::ZicsrMarkerCsr => {
+                    marker::<C, S, R, E>(state, ram, snapshotter, instr)
+                }
+
                 a @ _ => {
                     panic!("Unknown instruction {:?}", a);
                 }

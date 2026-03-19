@@ -241,6 +241,10 @@ impl<C: Counters> ReplayerVM<C> {
                     InstructionName::Divu => mul_div::divu::<C, R>(state, ram, instr, tracer),
                     InstructionName::Remu => mul_div::remu::<C, R>(state, ram, instr, tracer),
 
+                    InstructionName::ZicsrMarkerCsr => panic!(
+                        "detected transpiler marker CSR during replay; programs containing development cycle markers must not be proved"
+                    ),
+
                     a @ _ => {
                         panic!("Unknown instruction {:?}", a);
                     }

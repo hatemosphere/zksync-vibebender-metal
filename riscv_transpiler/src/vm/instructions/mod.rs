@@ -94,3 +94,22 @@ pub(crate) fn illegal<C: Counters, S: Snapshotter<C>, R: RAM>(
 ) {
     panic!("Illegal instruction encounteted at PC = 0x{:08x}", state.pc);
 }
+
+#[inline(always)]
+pub(crate) fn marker<C: Counters, S: Snapshotter<C>, R: RAM, E: ExecutionObserver<C>>(
+    state: &mut State<C>,
+    _ram: &mut R,
+    _snapshotter: &mut S,
+    instr: Instruction,
+) {
+    let _rs1_value = read_register::<C, 0>(state, instr.rs1);
+    touch_x0::<C, 1>(state);
+    write_register_for_pure_opcode::<C, 2>(state, instr.rd, 0);
+
+    // Emit the observation before the instruction advances the cycle-family
+    // counters or the outer execution loop bumps the timestamp.
+    E::on_marker(state);
+
+    default_increase_pc::<C>(state);
+    // NOTE: it's only for tests, so we do not touch any instruction counter
+}
