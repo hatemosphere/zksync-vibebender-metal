@@ -1,6 +1,7 @@
 use std::collections::BTreeMap;
 
 use crate::gkr::prover::dimension_reduction::forward::DimensionReducingInputOutput;
+use cs::definitions::gkr::RamWordRepresentation;
 use cs::definitions::{
     GKRAddress, MEM_ARGUMENT_CHALLENGE_POWERS_ADDRESS_HIGH_IDX,
     MEM_ARGUMENT_CHALLENGE_POWERS_ADDRESS_LOW_IDX,
@@ -50,6 +51,7 @@ pub(crate) fn check_logup_identity<F: PrimeField, E: FieldExtension<F> + Field>(
                 sum.add_assign(&term);
             }
             if !sum.is_zero() {
+                println!("LogUp relation diverged for lookup type {:?}", output_type);
                 return false;
             }
         }
@@ -282,13 +284,39 @@ fn evaluate_memory_tuple_from_claims<F: PrimeField, E: FieldExtension<F> + Field
         result.add_assign(&t);
     }
 
-    for (idx, offset) in [
-        (MEM_ARGUMENT_CHALLENGE_POWERS_VALUE_LOW_IDX, rel.value[0]),
-        (MEM_ARGUMENT_CHALLENGE_POWERS_VALUE_HIGH_IDX, rel.value[1]),
-    ] {
-        let mut t = challenges[idx];
-        t.mul_assign(&claims[&GKRAddress::BaseLayerMemory(offset)]);
-        result.add_assign(&t);
+    match rel.value {
+        RamWordRepresentation::U16Limbs(read_value) => {
+            for (idx, offset) in [
+                (MEM_ARGUMENT_CHALLENGE_POWERS_VALUE_LOW_IDX, read_value[0]),
+                (MEM_ARGUMENT_CHALLENGE_POWERS_VALUE_HIGH_IDX, read_value[1]),
+            ] {
+                let mut t = challenges[idx];
+                t.mul_assign(&claims[&GKRAddress::BaseLayerMemory(offset)]);
+                result.add_assign(&t);
+            }
+        }
+        RamWordRepresentation::U8Limbs(read_value) => {
+            for (idx, offset_low, offset_high) in [
+                (
+                    MEM_ARGUMENT_CHALLENGE_POWERS_VALUE_LOW_IDX,
+                    read_value[0],
+                    read_value[1],
+                ),
+                (
+                    MEM_ARGUMENT_CHALLENGE_POWERS_VALUE_HIGH_IDX,
+                    read_value[2],
+                    read_value[3],
+                ),
+            ] {
+                let low = claims[&GKRAddress::BaseLayerMemory(offset_low)];
+                let mut combined = claims[&GKRAddress::BaseLayerMemory(offset_high)];
+                combined.mul_assign_by_base(&F::from_u32_unchecked(1 << 8));
+                combined.add_assign(&low);
+                let mut t = challenges[idx];
+                t.mul_assign(&combined);
+                result.add_assign(&t);
+            }
+        }
     }
 
     result

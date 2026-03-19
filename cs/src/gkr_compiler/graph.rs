@@ -1,10 +1,9 @@
-use field::PrimeField;
-
+use crate::constraint::Constraint;
 use crate::definitions::{GKRAddress, Variable};
-use crate::gkr_compiler::{
-    GKRGate, GKRRelation, LookupType, NoFieldGKRCacheRelation, NoFieldGKRRelation,
-};
-use std::collections::{BTreeSet, HashSet};
+use crate::gkr_compiler::{GKRGate, LookupType, NoFieldGKRCacheRelation, NoFieldGKRRelation};
+use field::PrimeField;
+use std::collections::BTreeSet;
+use std::collections::HashMap;
 use std::{collections::BTreeMap, hash::Hash};
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Hash, serde::Serialize, serde::Deserialize)]
@@ -59,6 +58,8 @@ pub struct GKRGraph {
     pub(crate) generic_lookup_setup_width: usize,
     pub(crate) copies: Vec<BTreeMap<GKRAddress, GKRAddress>>,
     pub(crate) intermediate_layers_offsets: BTreeMap<usize, usize>,
+    pub(crate) intermediate_layers: BTreeMap<Variable, GKRAddress>,
+    pub(crate) intermediate_layers_rev: BTreeMap<GKRAddress, Variable>,
 }
 
 impl GKRGraph {
@@ -78,6 +79,8 @@ impl GKRGraph {
             generic_lookup_setup_width,
             copies: vec![],
             intermediate_layers_offsets: BTreeMap::new(),
+            intermediate_layers: BTreeMap::new(),
+            intermediate_layers_rev: BTreeMap::new(),
         };
 
         // add setups as already resolved
@@ -135,9 +138,11 @@ impl GKRGraph {
         &mut self,
         variables: [Variable; N],
         all_variables_to_place: &mut BTreeSet<Variable>,
+        layers_mapping: &HashMap<Variable, usize>,
     ) -> [GKRAddress; N] {
         let mut columns = [GKRAddress::placeholder(); N];
         for (i, variable) in variables.into_iter().enumerate() {
+            assert_eq!(*layers_mapping.get(&variable).expect("is known"), 0);
             let offset = self.base_layer_memory.len();
             let place = GKRAddress::BaseLayerMemory(offset);
             columns[i] = place;
@@ -161,9 +166,11 @@ impl GKRGraph {
         &mut self,
         variables: [Variable; N],
         all_variables_to_place: &mut BTreeSet<Variable>,
+        layers_mapping: &HashMap<Variable, usize>,
     ) -> [GKRAddress; N] {
         let mut columns = [GKRAddress::placeholder(); N];
         for (i, variable) in variables.into_iter().enumerate() {
+            assert_eq!(*layers_mapping.get(&variable).expect("is known"), 0);
             let offset = self.base_layer_witness.len();
             let place = GKRAddress::BaseLayerWitness(offset);
             columns[i] = place;
@@ -183,6 +190,44 @@ impl GKRGraph {
     }
 
     #[track_caller]
+    pub(crate) fn place_intermediate_variable_from_constraint_at_layer<F: PrimeField>(
+        &mut self,
+        intermediate_layer: usize,
+        variable: Variable,
+        all_variables_to_place: &mut BTreeSet<Variable>,
+        layers_mapping: &HashMap<Variable, usize>,
+        defining_constraint: Constraint<F>,
+    ) -> GKRAddress {
+        assert_eq!(
+            *layers_mapping.get(&variable).expect("is known"),
+            intermediate_layer
+        );
+        let offset = self
+            .intermediate_layers_offsets
+            .entry(intermediate_layer)
+            .or_insert(0);
+        let place = GKRAddress::InnerLayer {
+            layer: intermediate_layer,
+            offset: *offset,
+        };
+        *offset += 1;
+        self.intermediate_layers.insert(variable, place);
+        self.intermediate_layers_rev.insert(place, variable);
+        assert!(
+            all_variables_to_place.remove(&variable),
+            "variable {:?} was already placed",
+            variable
+        );
+        // add gate
+        use crate::gkr_compiler::no_field_gkr_max_quadratic_from_constraint;
+        let relation =
+            no_field_gkr_max_quadratic_from_constraint(&*self, defining_constraint, place);
+        self.add_enforced_relation(relation, intermediate_layer);
+
+        place
+    }
+
+    #[track_caller]
     pub(crate) fn get_fixed_layout_pos(&self, variable: &Variable) -> Option<GKRAddress> {
         if let Some(pos) = self.base_layer_memory.get(variable) {
             return Some(*pos);
@@ -192,11 +237,16 @@ impl GKRGraph {
             return Some(*pos);
         }
 
+        if let Some(pos) = self.intermediate_layers.get(variable) {
+            return Some(*pos);
+        }
+
         None
     }
 }
 
 impl GraphHolder for GKRGraph {
+    #[track_caller]
     fn get_address_for_variable(&self, variable: Variable) -> GKRAddress {
         let Some(pos) = self.get_fixed_layout_pos(&variable) else {
             panic!("Variable {:?} is not placed", variable);
@@ -237,6 +287,7 @@ impl GraphHolder for GKRGraph {
         entry.push(relation);
     }
 
+    #[track_caller]
     fn add_cached_relation(
         &mut self,
         relation: NoFieldGKRCacheRelation,
@@ -252,10 +303,18 @@ impl GraphHolder for GKRGraph {
             let offset = entry.len();
             entry.push(relation);
 
-            GKRAddress::Cached {
+            let rel = GKRAddress::Cached {
                 layer: output_layer,
                 offset,
-            }
+            };
+
+            println!(
+                "Adding cache relation {:?} at {:?}",
+                rel,
+                core::panic::Location::caller()
+            );
+
+            rel
         }
     }
 

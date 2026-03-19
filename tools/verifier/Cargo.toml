@@ -48,7 +48,6 @@ recursion_in_unrolled_layer = ["full_statement_verifier/verifier_program", "full
 recursion_in_unified_layer = ["full_statement_verifier/verifier_program", "full_statement_verifier/blake2_with_compression"]
 bloat_testing = ["cargo-bloat"]
 verifier_tests = ["verifier"]
-# default = ["universal_circuit"]
 default = ["verifier_tests"]
 
 [profile.cli]

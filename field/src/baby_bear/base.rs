@@ -393,6 +393,9 @@ impl PrimeField for BabyBearField {
     const CHAR_BITS: usize = 31;
     const CHARACTERISTICS: u32 = Self::ORDER;
 
+    const IS_MONT_REPR: bool = true;
+    const MONT_K: u32 = BabyBearField::MONT_K;
+
     #[cfg_attr(not(feature = "no_inline"), inline(always))]
     fn as_u32(self) -> u32 {
         self.as_u32_reduced()
@@ -424,6 +427,18 @@ impl PrimeField for BabyBearField {
     #[cfg_attr(not(feature = "no_inline"), inline(always))]
     fn from_reduced_raw_repr(value: u32) -> Self {
         Self(value)
+    }
+    #[cfg_attr(not(feature = "no_inline"), inline(always))]
+    fn from_raw_repr_with_reduction(value: u32) -> Self {
+        // at most two subtractions needed
+        let mut c = value;
+        if c >= Self::ORDER {
+            c -= Self::ORDER;
+        }
+        if c >= Self::ORDER {
+            c -= Self::ORDER;
+        }
+        Self(c)
     }
     #[track_caller]
     #[cfg_attr(not(feature = "no_inline"), inline(always))]

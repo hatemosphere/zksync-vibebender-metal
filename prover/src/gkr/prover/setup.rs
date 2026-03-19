@@ -1,14 +1,12 @@
 use super::*;
 use crate::gkr::sumcheck::access_and_fold::BaseFieldPoly;
-use crate::prover_stages::compute_aggregated_key_value_dyn;
+use crate::utils::compute_aggregated_key_value_dyn;
 use common_constants::TIMESTAMP_COLUMNS_NUM_BITS;
 use cs::definitions::GKRAddress;
-use cs::machine::ops::unrolled::{
-    materialize_flattened_decoder_table_with_bitmask, DecoderTableEntry,
-};
+use cs::gkr_circuits::materialize_flattened_decoder_table_with_bitmask;
+use cs::gkr_circuits::ExecutorFamilyDecoderData;
 use cs::tables::{TableDriver, TableType};
 use fft::{materialize_powers_serial_starting_with_one, GoodAllocator};
-use field::batch_inverse_checked;
 use std::sync::Arc;
 
 pub struct GKRSetup<F: PrimeField + TwoAdicField> {
@@ -18,14 +16,17 @@ pub struct GKRSetup<F: PrimeField + TwoAdicField> {
 impl<F: PrimeField + TwoAdicField> GKRSetup<F> {
     pub fn construct(
         table_driver: &TableDriver<F>,
-        decoder_table: &[Option<DecoderTableEntry<F>>],
+        decoder_table: &[Option<ExecutorFamilyDecoderData>],
         trace_len: usize,
         compiled_circuit: &GKRCircuitArtifact<F>,
     ) -> Self {
         // we always have range-check 16 bits and timestamp limbs
         let total_width = 2 + compiled_circuit.generic_lookup_tables_width;
 
-        println!("Creating setup with {} columns in total", total_width);
+        println!(
+            "Creating setup with {} columns in total ({} generic lookup tables width)",
+            total_width, compiled_circuit.generic_lookup_tables_width
+        );
 
         let mut result = Vec::with_capacity(total_width);
 
@@ -45,7 +46,8 @@ impl<F: PrimeField + TwoAdicField> GKRSetup<F> {
         assert_eq!(num_table_subsets, 1);
 
         // dump tables
-        let all_generic_tables = table_driver.dump_tables();
+        let all_generic_tables =
+            table_driver.dump_tables(compiled_circuit.generic_lookup_tables_width);
 
         let range_check_16_table_content: Vec<_> = (0..(1 << 16))
             .map(|el| F::from_u32_unchecked(el as u32))
@@ -71,11 +73,16 @@ impl<F: PrimeField + TwoAdicField> GKRSetup<F> {
         }
 
         for row_idx in 0..all_generic_tables.len() {
-            for column in 0..3 {
+            let row = &all_generic_tables[row_idx];
+            assert_eq!(
+                row.len(),
+                compiled_circuit.generic_lookup_tables_width,
+                "padded table row from the driver is {}, but setup has {} columns for it",
+                row.len(),
+                compiled_circuit.generic_lookup_tables_width
+            );
+            for column in 0..compiled_circuit.generic_lookup_tables_width {
                 result[2 + column][row_idx] = all_generic_tables[row_idx][column];
-            }
-            if compiled_circuit.tables_ids_in_generic_lookups {
-                result.last_mut().unwrap()[row_idx] = all_generic_tables[row_idx][3];
             }
         }
         let offset = compiled_circuit.offset_for_decoder_table;
@@ -106,15 +113,16 @@ impl<F: PrimeField + TwoAdicField> GKRSetup<F> {
         }
     }
 
-    pub fn preprocess_lookups<E: FieldExtension<F> + Field>(
+    // NOTE: all(!) preprocessed lookups do NOT include additive constants,
+    // and gates directly add it
+    pub fn preprocess_generic_lookups<E: FieldExtension<F> + Field>(
         &self,
         compiled_circuit: &GKRCircuitArtifact<F>,
         lookup_alpha: E,
-        lookup_gamma: E,
         trace_len: usize,
         gkr_storage: &mut GKRStorage<F, E>,
         worker: &Worker,
-    ) -> (Box<[E]>, Box<[E]>, Box<[E]>) {
+    ) -> Box<[E]> {
         // fill storage with all setup columns
         for (i, eval) in self.hypercube_evals.iter().enumerate() {
             gkr_storage.insert_base_field_at_layer(
@@ -124,28 +132,21 @@ impl<F: PrimeField + TwoAdicField> GKRSetup<F> {
             );
         }
 
-        (
-            Self::preprocess_range_check_16_table::<E, Global>(trace_len, lookup_gamma, worker),
-            Self::preprocess_timestamp_range_check_table::<E, Global>(
-                trace_len,
-                lookup_gamma,
-                worker,
-            ),
-            self.preprocess_lookup_tables::<E, Global>(
-                compiled_circuit,
-                lookup_alpha,
-                lookup_gamma,
-                trace_len,
-                worker,
-            ),
+        self.preprocess_generic_lookup_tables::<E, Global>(
+            compiled_circuit,
+            lookup_alpha,
+            trace_len,
+            worker,
         )
     }
 
-    pub(crate) fn preprocess_lookup_tables<E: FieldExtension<F> + Field, A: GoodAllocator>(
+    pub(crate) fn preprocess_generic_lookup_tables<
+        E: FieldExtension<F> + Field,
+        A: GoodAllocator,
+    >(
         &self,
         compiled_circuit: &GKRCircuitArtifact<F>,
         lookup_alpha: E,
-        lookup_gamma: E,
         trace_len: usize,
         worker: &Worker,
     ) -> Box<[E], A> {
@@ -163,47 +164,39 @@ impl<F: PrimeField + TwoAdicField> GKRSetup<F> {
             let mut dst = &mut generic_lookup_preprocessing.spare_capacity_mut()
                 [..generic_lookup_tables_size];
 
-            unsafe {
-                worker.scope(generic_lookup_tables_size, |scope, geometry| {
-                    for thread_idx in 0..geometry.len() {
-                        let chunk_size = geometry.get_chunk_size(thread_idx);
-                        let chunk_start = geometry.get_chunk_start_pos(thread_idx);
+            worker.scope(generic_lookup_tables_size, |scope, geometry| {
+                for thread_idx in 0..geometry.len() {
+                    let chunk_size = geometry.get_chunk_size(thread_idx);
+                    let chunk_start = geometry.get_chunk_start_pos(thread_idx);
 
-                        let (chunk, rest) = dst.split_at_mut(chunk_size);
-                        dst = rest;
-                        let challenge_powers_ref = &challenge_powers;
+                    let (chunk, rest) = dst.split_at_mut(chunk_size);
+                    dst = rest;
+                    let challenge_powers_ref = &challenge_powers;
 
-                        Worker::smart_spawn(scope, thread_idx == geometry.len() - 1, move |_| {
-                            let mut batch_inverse_buffer = vec![E::ZERO; chunk.len()];
-                            let mut buffer = vec![F::ZERO; compiled_circuit.generic_lookup_tables_width];
-                            for i in 0..chunk_size {
-                                buffer.fill(F::ZERO);
-                                let absolute_row_idx = chunk_start + i;
+                    Worker::smart_spawn(scope, thread_idx == geometry.len() - 1, move |_| {
+                        let mut buffer = vec![F::ZERO; compiled_circuit.generic_lookup_tables_width];
+                        for i in 0..chunk_size {
+                            buffer.fill(F::ZERO);
+                            let absolute_row_idx = chunk_start + i;
 
-                                for column in 0..compiled_circuit.generic_lookup_tables_width {
-                                    buffer[column] = self.hypercube_evals[2 + column][absolute_row_idx];
-                                }
-
-                                let denom = compute_aggregated_key_value_dyn(
-                                    buffer[0],
-                                    &buffer[1..],
-                                    &challenge_powers_ref[1..],
-                                    &lookup_gamma,
-                                );
-
-                                chunk[i].write(denom);
+                            for column in 0..compiled_circuit.generic_lookup_tables_width {
+                                buffer[column] = self.hypercube_evals[2 + column][absolute_row_idx];
                             }
 
-                            // batch inverse
-                            let buffer = chunk.assume_init_mut();
-                            let all_nonzero = batch_inverse_checked(buffer, &mut batch_inverse_buffer);
-                            assert!(all_nonzero);
-                        });
-                    }
+                            let denom = compute_aggregated_key_value_dyn(
+                                buffer[0],
+                                &buffer[1..],
+                                &challenge_powers_ref[1..],
+                                &E::ZERO,
+                            );
 
-                    assert!(dst.is_empty(), "expected to process all elements, but got {} remaining. Work size is {}, num cores = {}", dst.len(), generic_lookup_tables_size, worker.get_num_cores());
-                });
-            }
+                            chunk[i].write(denom);
+                        }
+                    });
+                }
+
+                assert!(dst.is_empty(), "expected to process all elements, but got {} remaining. Work size is {}, num cores = {}", dst.len(), generic_lookup_tables_size, worker.get_num_cores());
+            });
 
             unsafe {
                 generic_lookup_preprocessing.set_len(generic_lookup_tables_size);
@@ -215,113 +208,113 @@ impl<F: PrimeField + TwoAdicField> GKRSetup<F> {
         }
     }
 
-    pub(crate) fn preprocess_range_check_16_table<
-        E: FieldExtension<F> + Field,
-        A: GoodAllocator,
-    >(
-        trace_len: usize,
-        lookup_argument_gamma: E,
-        worker: &Worker,
-    ) -> Box<[E], A> {
-        assert!(trace_len >= 1 << 16);
+    // pub(crate) fn preprocess_range_check_16_table<
+    //     E: FieldExtension<F> + Field,
+    //     A: GoodAllocator,
+    // >(
+    //     trace_len: usize,
+    //     lookup_argument_gamma: E,
+    //     worker: &Worker,
+    // ) -> Box<[E], A> {
+    //     assert!(trace_len >= 1 << 16);
 
-        let mut range_check_16_preprocessing: Vec<E, A> =
-            Vec::with_capacity_in(1 << 16, A::default());
-        let mut dst = &mut range_check_16_preprocessing.spare_capacity_mut()[..(1 << 16)];
+    //     let mut range_check_16_preprocessing: Vec<E, A> =
+    //         Vec::with_capacity_in(1 << 16, A::default());
+    //     let mut dst = &mut range_check_16_preprocessing.spare_capacity_mut()[..(1 << 16)];
 
-        unsafe {
-            worker.scope(1 << 16, |scope, geometry| {
-                for thread_idx in 0..geometry.len() {
-                    let chunk_size = geometry.get_chunk_size(thread_idx);
-                    let chunk_start = geometry.get_chunk_start_pos(thread_idx);
+    //     unsafe {
+    //         worker.scope(1 << 16, |scope, geometry| {
+    //             for thread_idx in 0..geometry.len() {
+    //                 let chunk_size = geometry.get_chunk_size(thread_idx);
+    //                 let chunk_start = geometry.get_chunk_start_pos(thread_idx);
 
-                    let (chunk, rest) = dst.split_at_mut(chunk_size);
-                    dst = rest;
+    //                 let (chunk, rest) = dst.split_at_mut(chunk_size);
+    //                 dst = rest;
 
-                    Worker::smart_spawn(scope, thread_idx == geometry.len() - 1, move |_| {
-                        let mut batch_inverse_buffer = vec![E::ZERO; chunk.len()];
-                        for i in 0..chunk_size {
-                            let absolute_table_idx = chunk_start + i;
+    //                 Worker::smart_spawn(scope, thread_idx == geometry.len() - 1, move |_| {
+    //                     let mut batch_inverse_buffer = vec![E::ZERO; chunk.len()];
+    //                     for i in 0..chunk_size {
+    //                         let absolute_table_idx = chunk_start + i;
 
-                            // range check 16
-                            let mut denom = lookup_argument_gamma;
-                            denom.add_assign_base(&F::from_u32_unchecked(absolute_table_idx as u32));
+    //                         // range check 16
+    //                         let mut denom = lookup_argument_gamma;
+    //                         denom.add_assign_base(&F::from_u32_unchecked(absolute_table_idx as u32));
 
-                            chunk[i].write(denom);
-                        }
+    //                         chunk[i].write(denom);
+    //                     }
 
-                        // batch inverse
-                        let buffer = chunk.assume_init_mut();
-                        let all_nonzero = batch_inverse_checked(buffer, &mut batch_inverse_buffer);
-                        assert!(all_nonzero);
-                    });
-                }
+    //                     // batch inverse
+    //                     let buffer = chunk.assume_init_mut();
+    //                     let all_nonzero = batch_inverse_checked(buffer, &mut batch_inverse_buffer);
+    //                     assert!(all_nonzero);
+    //                 });
+    //             }
 
-                assert!(dst.is_empty(), "expected to process all elements, but got {} remaining. Work size is {}, num cores = {}", dst.len(), 1 << 16, worker.get_num_cores());
-            });
-        }
+    //             assert!(dst.is_empty(), "expected to process all elements, but got {} remaining. Work size is {}, num cores = {}", dst.len(), 1 << 16, worker.get_num_cores());
+    //         });
+    //     }
 
-        unsafe {
-            range_check_16_preprocessing.set_len(1 << 16);
-        }
+    //     unsafe {
+    //         range_check_16_preprocessing.set_len(1 << 16);
+    //     }
 
-        range_check_16_preprocessing.into_boxed_slice()
-    }
+    //     range_check_16_preprocessing.into_boxed_slice()
+    // }
 
-    pub(crate) fn preprocess_timestamp_range_check_table<
-        E: FieldExtension<F> + Field,
-        A: GoodAllocator,
-    >(
-        trace_len: usize,
-        lookup_argument_gamma: E,
-        worker: &Worker,
-    ) -> Box<[E], A> {
-        // and timestamp range checks
-        assert!(trace_len >= 1 << TIMESTAMP_COLUMNS_NUM_BITS);
+    // pub(crate) fn preprocess_timestamp_range_check_table<
+    //     E: FieldExtension<F> + Field,
+    //     A: GoodAllocator,
+    // >(
+    //     trace_len: usize,
+    //     lookup_argument_gamma: E,
+    //     worker: &Worker,
+    // ) -> Box<[E], A> {
+    //     // and timestamp range checks
+    //     assert!(trace_len >= 1 << TIMESTAMP_COLUMNS_NUM_BITS);
 
-        let mut timestamp_range_check_preprocessing: Vec<E, A> =
-            Vec::with_capacity_in(1 << TIMESTAMP_COLUMNS_NUM_BITS, A::default());
-        let mut dst = &mut timestamp_range_check_preprocessing.spare_capacity_mut()
-            [..(1 << TIMESTAMP_COLUMNS_NUM_BITS)];
+    //     let mut timestamp_range_check_preprocessing: Vec<E, A> =
+    //         Vec::with_capacity_in(1 << TIMESTAMP_COLUMNS_NUM_BITS, A::default());
+    //     let mut dst = &mut timestamp_range_check_preprocessing.spare_capacity_mut()
+    //         [..(1 << TIMESTAMP_COLUMNS_NUM_BITS)];
 
-        unsafe {
-            worker.scope(1 << TIMESTAMP_COLUMNS_NUM_BITS, |scope, geometry| {
-                for thread_idx in 0..geometry.len() {
-                    let chunk_size = geometry.get_chunk_size(thread_idx);
-                    let chunk_start = geometry.get_chunk_start_pos(thread_idx);
+    //     unsafe {
+    //         worker.scope(1 << TIMESTAMP_COLUMNS_NUM_BITS, |scope, geometry| {
+    //             for thread_idx in 0..geometry.len() {
+    //                 let chunk_size = geometry.get_chunk_size(thread_idx);
+    //                 let chunk_start = geometry.get_chunk_start_pos(thread_idx);
 
-                    let (chunk, rest) = dst.split_at_mut(chunk_size);
-                    dst = rest;
+    //                 let (chunk, rest) = dst.split_at_mut(chunk_size);
+    //                 dst = rest;
 
-                    Worker::smart_spawn(scope, thread_idx == geometry.len() - 1, move |_| {
-                        let mut batch_inverse_buffer = vec![E::ZERO; chunk.len()];
-                        for i in 0..chunk_size {
-                            let absolute_table_idx = chunk_start + i;
+    //                 Worker::smart_spawn(scope, thread_idx == geometry.len() - 1, move |_| {
+    //                     let mut batch_inverse_buffer = vec![E::ZERO; chunk.len()];
+    //                     for i in 0..chunk_size {
+    //                         let absolute_table_idx = chunk_start + i;
 
-                            // range check
-                            let mut denom = lookup_argument_gamma;
-                            denom.add_assign_base(&F::from_u32_unchecked(absolute_table_idx as u32));
+    //                         // range check
+    //                         let mut denom = lookup_argument_gamma;
+    //                         denom.add_assign_base(&F::from_u32_unchecked(absolute_table_idx as u32));
 
-                            chunk[i].write(denom);
-                        }
+    //                         chunk[i].write(denom);
+    //                     }
 
-                        // batch inverse
-                        let buffer = chunk.assume_init_mut();
-                        let all_nonzero = batch_inverse_checked(buffer, &mut batch_inverse_buffer);
-                        assert!(all_nonzero);
-                    });
-                }
+    //                     // batch inverse
+    //                     let buffer = chunk.assume_init_mut();
+    //                     let all_nonzero = batch_inverse_checked(buffer, &mut batch_inverse_buffer);
+    //                     assert!(all_nonzero);
+    //                 });
+    //             }
 
-                assert!(dst.is_empty(), "expected to process all elements, but got {} remaining. Work size is {}, num cores = {}", dst.len(), 1 << TIMESTAMP_COLUMNS_NUM_BITS, worker.get_num_cores());
-            });
-        }
+    //             assert!(dst.is_empty(), "expected to process all elements, but got {} remaining. Work size is {}, num cores = {}", dst.len(), 1 << TIMESTAMP_COLUMNS_NUM_BITS, worker.get_num_cores());
+    //         });
+    //     }
 
-        unsafe {
-            timestamp_range_check_preprocessing.set_len(1 << TIMESTAMP_COLUMNS_NUM_BITS);
-        }
+    //     unsafe {
+    //         timestamp_range_check_preprocessing.set_len(1 << TIMESTAMP_COLUMNS_NUM_BITS);
+    //     }
 
-        timestamp_range_check_preprocessing.into_boxed_slice()
-    }
+    //     timestamp_range_check_preprocessing.into_boxed_slice()
+    // }
 
     pub fn commit<T: ColumnMajorMerkleTreeConstructor<F>>(
         &self,

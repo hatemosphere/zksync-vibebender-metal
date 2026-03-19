@@ -10,7 +10,7 @@ pub(crate) fn mul<C: Counters, S: Snapshotter<C>, R: RAM>(
     let rs1_value = read_register::<C, 0>(state, instr.rs1);
     let rs2_value = read_register::<C, 1>(state, instr.rs2);
     let mut rd = (rs1_value as i32).wrapping_mul(rs2_value as i32) as u32;
-    write_register::<C, 2>(state, instr.rd, &mut rd);
+    write_register_for_pure_opcode::<C, 2>(state, instr.rd, rd);
     default_increase_pc::<C>(state);
     increment_family_counter::<C, MUL_DIV_CIRCUIT_FAMILY_IDX>(state);
 }
@@ -25,7 +25,7 @@ pub(crate) fn mulhu<C: Counters, S: Snapshotter<C>, R: RAM>(
     let rs1_value = read_register::<C, 0>(state, instr.rs1);
     let rs2_value = read_register::<C, 1>(state, instr.rs2);
     let mut rd = rs1_value.widening_mul(rs2_value).1;
-    write_register::<C, 2>(state, instr.rd, &mut rd);
+    write_register_for_pure_opcode::<C, 2>(state, instr.rd, rd);
     default_increase_pc::<C>(state);
     increment_family_counter::<C, MUL_DIV_CIRCUIT_FAMILY_IDX>(state);
 }

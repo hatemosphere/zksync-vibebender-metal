@@ -1,13 +1,11 @@
+pub mod data_structs;
 pub mod delegation;
 
 use common_constants::{bigint_with_control::*, blake2s_with_control::*, keccak_special5::*};
 use std::mem::MaybeUninit;
 
+pub use self::data_structs::*;
 pub use self::delegation::{DelegationAbiDescription, DelegationWitness};
-use crate::machine_mode_only_unrolled::{
-    MemoryOpcodeTracingDataWithTimestamp, NonMemoryOpcodeTracingDataWithTimestamp,
-    UnifiedOpcodeTracingDataWithTimestamp,
-};
 
 pub trait WitnessTracer {
     fn needs_tracing_data_for_circuit_family<const FAMILY: u8>(&self) -> bool;

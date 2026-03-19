@@ -1,3 +1,6 @@
+use field::Mersenne31Field;
+
+use crate::ir::simple_instruction_set::*;
 use crate::ir::*;
 use crate::vm::*;
 use std::collections::HashMap;
@@ -38,7 +41,7 @@ fn test_reg_reg_op(op_name: &str, expected: u32, op1: u32, op2: u32) {
         let tape = SimpleTape::new(&instructions);
         let mut ram = RamWithRomRegion::<5>::from_rom_content(&text_section, 1 << 30);
 
-        VM::<CountersT>::run_basic_unrolled::<_, _, _>(
+        VM::<CountersT>::run_basic_unrolled::<_, _, _, Mersenne31Field>(
             &mut state,
             &mut ram,
             &mut (),
@@ -71,7 +74,7 @@ fn test_reg_imm_op(op_name: &str, expected: u32, op1: u32, imm: u16) {
         let tape = SimpleTape::new(&instructions);
         let mut ram = RamWithRomRegion::<5>::from_rom_content(&text_section, 1 << 30);
 
-        VM::<CountersT>::run_basic_unrolled::<_, _, _>(
+        VM::<CountersT>::run_basic_unrolled::<_, _, _, Mersenne31Field>(
             &mut state,
             &mut ram,
             &mut (),

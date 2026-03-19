@@ -1,7 +1,6 @@
 use crate::witness::delegation::keccak_special5::KeccakSpecial5DelegationWitness;
 
 use super::*;
-use crate::machine_mode_only_unrolled::*;
 use crate::vm::delegations::keccak_special5::{
     keccak_special5_impl_bump_control, keccak_special5_impl_compute_outputs,
     keccak_special5_impl_decode_control, keccak_special5_impl_extract_indices,
@@ -16,7 +15,7 @@ pub(crate) fn keccak_special5_call<C: Counters, R: RAM>(
     tracer: &mut impl WitnessTracer,
 ) {
     let needs_cycle_data =
-        tracer.needs_tracing_data_for_circuit_family::<SHIFT_BINARY_CSR_CIRCUIT_FAMILY_IDX>();
+        tracer.needs_tracing_data_for_circuit_family::<ADD_SUB_LUI_AUIPC_MOP_CIRCUIT_FAMILY_IDX>();
     let needs_delegation_data = tracer.needs_tracing_data_for_delegation_type::<{common_constants::keccak_special5::KECCAK_SPECIAL5_CSR_REGISTER as u16}>();
 
     let x10 = state.registers[10].value;
@@ -65,6 +64,7 @@ pub(crate) fn keccak_special5_call<C: Counters, R: RAM>(
                 let next_pc = state.pc.wrapping_add(4);
                 // touch x0
                 let x0_timestamp = state.registers[0].timestamp;
+                // NOTE: we only touch x0 as rs1, and as rd
                 state.registers[0].timestamp = state.timestamp | 2;
                 let traced_data = NonMemoryOpcodeTracingDataWithTimestamp {
                     opcode_data: NonMemoryOpcodeTracingData {
@@ -77,11 +77,11 @@ pub(crate) fn keccak_special5_call<C: Counters, R: RAM>(
                         delegation_type: KECCAK_SPECIAL5_CSR_REGISTER as u16,
                     },
                     rs1_read_timestamp: TimestampData::from_scalar(x0_timestamp),
-                    rs2_read_timestamp: TimestampData::from_scalar(state.timestamp),
-                    rd_read_timestamp: TimestampData::from_scalar(state.timestamp | 1),
+                    rs2_read_timestamp: TimestampData::from_scalar(0),
+                    rd_read_timestamp: TimestampData::from_scalar(state.timestamp),
                     cycle_timestamp: TimestampData::from_scalar(state.timestamp),
                 };
-                tracer.write_non_memory_family_data::<SHIFT_BINARY_CSR_CIRCUIT_FAMILY_IDX>(
+                tracer.write_non_memory_family_data::<ADD_SUB_LUI_AUIPC_MOP_CIRCUIT_FAMILY_IDX>(
                     traced_data,
                 );
                 state.pc = next_pc;

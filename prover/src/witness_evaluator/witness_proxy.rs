@@ -1,5 +1,5 @@
 use super::*;
-use cs::cs::witness_placer::*;
+use cs::witness_placer::*;
 
 pub trait WitnessProxy<F: PrimeField, W: WitnessTypeSet<F>>: Sized + Send + Sync {
     fn get_memory_place(&self, idx: usize) -> W::Field;

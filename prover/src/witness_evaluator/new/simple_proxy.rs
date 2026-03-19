@@ -1,7 +1,7 @@
 use crate::witness_proxy::WitnessProxy;
-use cs::cs::placeholder::Placeholder;
-use cs::cs::witness_placer::scalar_witness_type_set::ScalarWitnessTypeSet;
-use cs::{cs::oracle::Oracle, tables::TableDriver};
+use cs::oracle::*;
+use cs::witness_placer::scalar_witness_type_set::ScalarWitnessTypeSet;
+use cs::tables::TableDriver;
 use field::{Mersenne31Field, PrimeField};
 
 pub struct SimpleWitnessProxy<'a, O: Oracle<F> + 'a, F: PrimeField = Mersenne31Field> {

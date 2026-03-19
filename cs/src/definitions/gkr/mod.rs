@@ -36,14 +36,13 @@ pub struct DecoderPlacementDescription {
     pub circuit_family_mask_bits: Box<[GKRAddress]>,
     // the rest are either all in memory, or all in witness
     pub decoder_witness_is_in_memory: bool,
-    pub rd_is_zero: usize,
     pub imm: [usize; REGISTER_SIZE],
     pub funct3: Option<usize>,
 }
 
 #[derive(Clone, Debug, Hash, serde::Serialize, serde::Deserialize)]
 pub struct GKRMemoryLayout {
-    pub shuffle_ram_access_sets: Vec<RamQuery>,
+    pub ram_access_sets: Vec<RamQuery>,
     pub machine_state: Option<MachineStatePermutationDescription>,
     pub decoder_input: Option<DecoderPlacementDescription>,
     pub register_and_indirect_accesses: Vec<()>,
@@ -57,8 +56,5 @@ pub struct GKRWitnessLayout {
     pub multiplicities_columns_for_range_check_16: usize,
     pub multiplicities_columns_for_timestamp_range_check: usize,
     pub multiplicities_columns_for_generic_lookup: core::ops::Range<usize>,
-    pub generic_lookups: Vec<NoFieldVectorLookupRelation>,
-    pub range_check_16_lookup_expressions: Vec<NoFieldSingleColumnLookupRelation>,
-    pub timestamp_range_check_lookup_expressions: Vec<NoFieldSingleColumnLookupRelation>,
     pub total_width: usize,
 }

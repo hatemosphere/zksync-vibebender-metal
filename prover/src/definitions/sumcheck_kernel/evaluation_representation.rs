@@ -8,6 +8,7 @@ pub trait EvaluationRepresentation<F: PrimeField, E: FieldExtension<F> + Field>:
 
     fn collapse_into_ext_with_challenge(self, ctx: &Self::CollapseContext, challenge: &E) -> E;
 
+    fn from_base_constant(value: F) -> Self;
     fn repr_add_assign<const ASSUME_NO_PRODUCTS_BEFORE: bool>(&mut self, other: &Self);
     fn repr_sub_assign<const ASSUME_NO_PRODUCTS_BEFORE: bool>(&mut self, other: &Self);
     fn repr_mul_assign<const ASSUME_NO_PRODUCTS_BEFORE: bool>(&mut self, other: &Self);
@@ -27,10 +28,15 @@ pub trait EvaluationRepresentation<F: PrimeField, E: FieldExtension<F> + Field>:
         other: &E,
         ctx: &Self::CollapseContext,
     ) -> E;
+    fn mul_by_base<const ASSUME_NO_PRODUCTS_BEFORE: bool>(&self, other: &F) -> Self;
 }
 
 impl<F: PrimeField, E: FieldExtension<F> + Field> EvaluationRepresentation<F, E> for () {
     type CollapseContext = ();
+    #[inline(always)]
+    fn from_base_constant(_value: F) -> Self {
+        ()
+    }
     #[inline(always)]
     fn collapse_as_ext_field_element(self, _ctx: &Self::CollapseContext) -> E {
         E::ZERO
@@ -69,6 +75,10 @@ impl<F: PrimeField, E: FieldExtension<F> + Field> EvaluationRepresentation<F, E>
     ) -> E {
         unreachable!()
     }
+    #[inline(always)]
+    fn mul_by_base<const ASSUME_NO_PRODUCTS_BEFORE: bool>(&self, _other: &F) -> Self {
+        unreachable!()
+    }
 }
 
 #[derive(Clone, Copy, Debug)]
@@ -78,6 +88,10 @@ impl<F: PrimeField, E: FieldExtension<F> + Field> EvaluationRepresentation<F, E>
     for BaseFieldRepresentation<F>
 {
     type CollapseContext = ();
+    #[inline(always)]
+    fn from_base_constant(value: F) -> Self {
+        Self(value)
+    }
     #[inline(always)]
     fn collapse_as_ext_field_element(self, _ctx: &Self::CollapseContext) -> E {
         E::from_base(self.0)
@@ -131,6 +145,13 @@ impl<F: PrimeField, E: FieldExtension<F> + Field> EvaluationRepresentation<F, E>
 
         result
     }
+    #[inline(always)]
+    fn mul_by_base<const ASSUME_NO_PRODUCTS_BEFORE: bool>(&self, other: &F) -> Self {
+        let mut result = *other;
+        result.mul_assign(&self.0);
+
+        Self(result)
+    }
 }
 
 // lazy representation as c0 + c1 * folding_challenge == f0 + (f1 - f0) * folding_challenge
@@ -157,6 +178,14 @@ impl<F: PrimeField, E: FieldExtension<F> + Field> EvaluationRepresentation<F, E>
     for BaseFieldFoldedOnceRepresentation<F>
 {
     type CollapseContext = (E, E);
+    #[inline(always)]
+    fn from_base_constant(value: F) -> Self {
+        Self {
+            c0: value,
+            c1: F::ZERO,
+            computed_r2_coeff: F::ZERO,
+        }
+    }
     #[inline(always)]
     fn collapse_as_ext_field_element(self, ctx: &Self::CollapseContext) -> E {
         let (mut r, r2) = *ctx;
@@ -258,6 +287,17 @@ impl<F: PrimeField, E: FieldExtension<F> + Field> EvaluationRepresentation<F, E>
 
         result
     }
+    #[inline(always)]
+    fn mul_by_base<const ASSUME_NO_PRODUCTS_BEFORE: bool>(&self, other: &F) -> Self {
+        let mut result = *self;
+        result.c0.mul_assign(other);
+        result.c1.mul_assign(other);
+        if ASSUME_NO_PRODUCTS_BEFORE == false {
+            result.computed_r2_coeff.mul_assign(other);
+        }
+
+        result
+    }
 }
 
 #[derive(Clone, Copy, Debug)]
@@ -284,6 +324,13 @@ impl<F: PrimeField, E: FieldExtension<F> + Field> EvaluationRepresentation<F, E>
     for ExtensionFieldRepresentation<F, E>
 {
     type CollapseContext = ();
+    #[inline(always)]
+    fn from_base_constant(value: F) -> Self {
+        Self {
+            value: E::from_base(value),
+            _marker: core::marker::PhantomData,
+        }
+    }
     #[inline(always)]
     fn collapse_as_ext_field_element(self, _ctx: &Self::CollapseContext) -> E {
         self.value
@@ -336,6 +383,13 @@ impl<F: PrimeField, E: FieldExtension<F> + Field> EvaluationRepresentation<F, E>
     ) -> E {
         let mut result = *other;
         result.sub_assign(&self.value);
+
+        result
+    }
+    #[inline(always)]
+    fn mul_by_base<const ASSUME_NO_PRODUCTS_BEFORE: bool>(&self, other: &F) -> Self {
+        let mut result = *self;
+        result.value.mul_assign_by_base(other);
 
         result
     }

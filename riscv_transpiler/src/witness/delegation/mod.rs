@@ -1,4 +1,4 @@
-use crate::abstractions::tracer::{RegisterOrIndirectReadData, RegisterOrIndirectReadWriteData};
+use crate::witness::{RegisterOrIndirectReadData, RegisterOrIndirectReadWriteData};
 use common_constants::TimestampScalar;
 use core::fmt::Debug;
 use std::ops::Range;

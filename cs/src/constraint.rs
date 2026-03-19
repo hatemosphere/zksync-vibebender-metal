@@ -1,6 +1,6 @@
-use std::collections::HashSet;
+use std::collections::{BTreeSet, HashSet};
 
-use crate::cs::circuit::Circuit;
+use crate::cs::circuit_trait::Circuit;
 use crate::definitions::*;
 use crate::types::{Boolean, Num};
 use field::PrimeField;
@@ -556,6 +556,18 @@ impl<F: PrimeField> Constraint<F> {
         }
     }
 
+    pub fn stable_variable_set(&self) -> BTreeSet<Variable> {
+        let mut tmp = HashSet::new();
+        self.dump_variables(&mut tmp);
+        let mut stable_set = BTreeSet::new();
+        for el in tmp.into_iter() {
+            assert!(el.is_placeholder() == false);
+            stable_set.insert(el);
+        }
+
+        stable_set
+    }
+
     pub fn express_variable(&self, variable: Variable) -> Self {
         assert!(self.contains_var(&variable));
         assert!(self.degree_for_var(&variable) == 1);
@@ -686,6 +698,17 @@ impl<F: PrimeField> std::ops::Sub for Constraint<F> {
         //     ans.sub_assign(term);
         // });
         ans
+    }
+}
+
+impl<F: PrimeField> std::ops::SubAssign<Constraint<F>> for Constraint<F> {
+    fn sub_assign(&mut self, rhs: Self) {
+        self.terms.extend(rhs.terms.into_iter().map(|mut el| {
+            el.scale(&F::MINUS_ONE);
+
+            el
+        }));
+        self.normalize();
     }
 }
 

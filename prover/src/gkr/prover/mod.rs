@@ -13,13 +13,13 @@ use crate::gkr::prover::debug_utils::compute_initial_sumcheck_claims;
 use crate::gkr::prover::setup::GKRSetup;
 use crate::gkr::prover::stages::stage1;
 use crate::gkr::prover::transcript_utils::{commit_field_els, draw_random_field_els};
+use crate::gkr::prover::utils::flatten_merkle_caps_iter_into;
 use crate::gkr::sumcheck::access_and_fold::GKRStorage;
+use crate::gkr::sumcheck::eq_poly::*;
 use crate::gkr::whir::{whir_fold, ColumnMajorBaseOracleForLDE, WhirPolyCommitProof};
 use crate::gkr::witness_gen::family_circuits::GKRFullWitnessTrace;
 use crate::merkle_trees::ColumnMajorMerkleTreeConstructor;
-use crate::prover_stages::flatten_merkle_caps_iter_into;
 use crate::worker::Worker;
-
 use cs::definitions::{GKRAddress, NUM_MEM_ARGUMENT_LINEARIZATION_CHALLENGES};
 
 mod debug_utils;
@@ -29,6 +29,7 @@ pub mod setup;
 pub mod stages;
 pub mod sumcheck_loop;
 pub mod transcript_utils;
+pub mod utils;
 
 pub(crate) struct SendPtr<T: Sized>(*mut T);
 unsafe impl<T: Send + Sync> Send for SendPtr<T> {}
@@ -65,6 +66,8 @@ pub struct SumcheckIntermediateProofValues<F: PrimeField, E: FieldExtension<F> +
     pub internal_round_coefficients: Vec<[E; 4]>, // max quadratic gates
     #[serde_as(as = "Vec<(_, _)>")]
     pub final_step_evaluations: BTreeMap<GKRAddress, Vec<E>>,
+    #[serde_as(as = "Vec<(_, _)>")]
+    pub extra_evaluations_from_caching_relations: BTreeMap<GKRAddress, E>,
     pub _marker: core::marker::PhantomData<F>,
 }
 
@@ -76,6 +79,9 @@ impl<F: PrimeField, E: FieldExtension<F> + Field> SumcheckIntermediateProofValue
                 .iter()
                 .map(|(_, v)| E::DEGREE * core::mem::size_of::<u32>() * v.len())
                 .sum::<usize>()
+            + self.extra_evaluations_from_caching_relations.len()
+                * E::DEGREE
+                * core::mem::size_of::<u32>()
     }
 }
 
@@ -292,15 +298,12 @@ where
 
     let mut gkr_storage = GKRStorage::<F, E>::default();
 
-    // Now we can use lookup challenges to preprocess tables into values like (column_0 + alpha * column_1 + ... + additive_part)
-    let (
-        preprocessed_range_check_16,
-        preprocessed_timestamp_range_checks,
-        preprocessed_generic_lookup,
-    ) = setup.preprocess_lookups(
+    // Now we can use lookup challenges to preprocess tables into values like (column_0 + alpha * column_1 + ...),
+    // but without(!) additive term, so we can use the same values for both cached and copied values,
+    // and other gates (like non-vectorized lookups)
+    let preprocessed_generic_lookup = setup.preprocess_generic_lookups(
         compiled_circuit,
         lookup_alpha,
-        lookup_additive_part,
         trace_len,
         &mut gkr_storage,
         worker,
@@ -493,63 +496,72 @@ where
             trace_len,
             lookup_additive_part,
             constraints_batch_challenge,
+            external_challenges,
             &mut seed,
             worker,
         );
         sumcheck_intermediate_values.insert(layer_idx, proof);
     }
 
+    // let base_layer_z = points_for_claims_at_layer
+    //     .get(&0)
+    //     .expect("must have base layer point");
+
+    // let eq_precomputed = make_eq_poly_in_full(base_layer_z, worker);
+    // let eq_at_z = eq_precomputed.last().unwrap();
+
+    // let layer_desc = &compiled_circuit.layers[0];
+    // let base_layer_claims = claims_for_layers.entry(0).or_insert_with(BTreeMap::new);
+
+    // for (cached_addr, relation) in layer_desc.cached_relations.iter() {
+    //     debug_assert!(
+    //         base_layer_claims.contains_key(cached_addr),
+    //         "Missing claim for cached address {:?}",
+    //         cached_addr
+    //     );
+
+    //     for dep in relation.dependencies() {
+    //         if base_layer_claims.contains_key(&dep) {
+    //             continue;
+    //         }
+    //         match dep {
+    //             GKRAddress::BaseLayerWitness(_)
+    //             | GKRAddress::BaseLayerMemory(_)
+    //             | GKRAddress::Setup(_) => {
+    //                 println!("Explicitly computing value for {:?}", dep);
+    //                 let values = gkr_storage.get_base_layer(dep);
+    //                 let evaluation = evaluate_with_precomputed_eq::<F, E>(values, &eq_at_z[..]);
+    //                 base_layer_claims.insert(dep, evaluation);
+    //             }
+    //             _ => {
+    //                 panic!(
+    //                     "Unexpected dependency address {:?} for cached relation {:?}",
+    //                     dep, cached_addr
+    //                 );
+    //             }
+    //         }
+    //     }
+    // }
+
+    // #[cfg(feature = "gkr_self_checks")]
+    // assert!(debug_utils::verify_cache_relations(
+    //     layer_desc,
+    //     &base_layer_claims,
+    //     external_challenges,
+    // ));
+
+    drop(preprocessed_generic_lookup);
+
     let base_layer_z = points_for_claims_at_layer
         .get(&0)
         .expect("must have base layer point");
 
-    use crate::gkr::sumcheck::eq_poly::*;
-    let eq_precomputed = make_eq_poly_in_full(base_layer_z, worker);
-    let eq_at_z = eq_precomputed.last().unwrap();
-
-    let layer_desc = &compiled_circuit.layers[0];
-    let base_layer_claims = claims_for_layers.entry(0).or_insert_with(BTreeMap::new);
-
-    for (cached_addr, relation) in layer_desc.cached_relations.iter() {
-        debug_assert!(
-            base_layer_claims.contains_key(cached_addr),
-            "Missing claim for cached address {:?}",
-            cached_addr
-        );
-
-        for dep in relation.dependencies() {
-            if base_layer_claims.contains_key(&dep) {
-                continue;
-            }
-            match dep {
-                GKRAddress::BaseLayerWitness(_)
-                | GKRAddress::BaseLayerMemory(_)
-                | GKRAddress::Setup(_) => {
-                    println!("Explicitly computing value for {:?}", dep);
-                    let values = gkr_storage.get_base_layer(dep);
-                    let evaluation = evaluate_with_precomputed_eq::<F, E>(values, &eq_at_z[..]);
-                    base_layer_claims.insert(dep, evaluation);
-                }
-                _ => {
-                    panic!(
-                        "Unexpected dependency address {:?} for cached relation {:?}",
-                        dep, cached_addr
-                    );
-                }
-            }
-        }
-    }
-
+    let mut _eq_at_z: Box<[E]> = vec![].into_boxed_slice();
     #[cfg(feature = "gkr_self_checks")]
-    assert!(debug_utils::verify_cache_relations(
-        layer_desc,
-        &base_layer_claims,
-        external_challenges,
-    ));
-
-    drop(preprocessed_range_check_16);
-    drop(preprocessed_timestamp_range_checks);
-    drop(preprocessed_generic_lookup);
+    {
+        let mut eq_precomputed = make_eq_poly_in_full(base_layer_z, worker);
+        _eq_at_z = eq_precomputed.pop().unwrap();
+    }
 
     let mut mem_polys_claims = Vec::with_capacity(compiled_circuit.memory_layout.total_width);
     for i in 0..compiled_circuit.memory_layout.total_width {
@@ -560,7 +572,7 @@ where
         #[cfg(feature = "gkr_self_checks")]
         {
             let poly = gkr_storage.get_base_layer(key);
-            let evaluation = evaluate_with_precomputed_eq::<F, E>(poly, &eq_at_z[..]);
+            let evaluation = evaluate_with_precomputed_eq::<F, E>(poly, &_eq_at_z[..]);
             assert_eq!(evaluation, value, "diverged for {:?}", key);
         }
         mem_polys_claims.push(value);
@@ -574,7 +586,7 @@ where
         #[cfg(feature = "gkr_self_checks")]
         {
             let poly = gkr_storage.get_base_layer(key);
-            let evaluation = evaluate_with_precomputed_eq::<F, E>(poly, &eq_at_z[..]);
+            let evaluation = evaluate_with_precomputed_eq::<F, E>(poly, &_eq_at_z[..]);
             assert_eq!(evaluation, value, "diverged for {:?}", key);
         }
         wit_polys_claims.push(value);
@@ -588,7 +600,7 @@ where
         #[cfg(feature = "gkr_self_checks")]
         {
             let poly = gkr_storage.get_base_layer(key);
-            let evaluation = evaluate_with_precomputed_eq::<F, E>(poly, &eq_at_z[..]);
+            let evaluation = evaluate_with_precomputed_eq::<F, E>(poly, &_eq_at_z[..]);
             assert_eq!(evaluation, value, "diverged for {:?}", key);
         }
         setup_polys_claims.push(value);

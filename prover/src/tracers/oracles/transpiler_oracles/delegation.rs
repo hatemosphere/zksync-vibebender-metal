@@ -1,7 +1,6 @@
 use common_constants::{bigint_with_control::*, blake2s_with_control::*, keccak_special5::*};
-use cs::cs::oracle::Oracle;
-use cs::cs::placeholder::Placeholder;
 use cs::definitions::TimestampScalar;
+use cs::oracle::*;
 use field::PrimeField;
 use riscv_transpiler::witness::delegation::bigint::BigintAbiDescription;
 use riscv_transpiler::witness::delegation::blake2_round_function::Blake2sRoundFunctionAbiDescription;

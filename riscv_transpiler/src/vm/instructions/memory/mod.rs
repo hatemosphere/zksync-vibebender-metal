@@ -34,7 +34,7 @@ pub(crate) fn lw<C: Counters, S: Snapshotter<C>, R: RAM>(
     }
     let (read_timestamp, old_value) = ram.read_word(address, state.timestamp | 1);
     let mut rd = old_value;
-    write_register::<C, 2>(state, instr.rd, &mut rd);
+    write_register_for_pure_opcode::<C, 2>(state, instr.rd, rd);
     snapshotter.append_memory_read(address, old_value, read_timestamp, state.timestamp | 1);
     default_increase_pc::<C>(state);
     increment_family_counter::<C, LOAD_STORE_WORD_ONLY_CIRCUIT_FAMILY_IDX>(state);
@@ -130,7 +130,7 @@ pub(crate) fn lh<C: Counters, S: Snapshotter<C>, R: RAM, const SIGN_EXTEND: bool
         value = (value as u16) as u32;
     }
     let mut rd = value;
-    write_register::<C, 2>(state, instr.rd, &mut rd);
+    write_register_for_pure_opcode::<C, 2>(state, instr.rd, rd);
     snapshotter.append_memory_read(
         aligned_address,
         old_value,
@@ -159,7 +159,7 @@ pub(crate) fn lb<C: Counters, S: Snapshotter<C>, R: RAM, const SIGN_EXTEND: bool
         value = (value as u8) as u32;
     }
     let mut rd = value;
-    write_register::<C, 2>(state, instr.rd, &mut rd);
+    write_register_for_pure_opcode::<C, 2>(state, instr.rd, rd);
     snapshotter.append_memory_read(
         aligned_address,
         old_value,

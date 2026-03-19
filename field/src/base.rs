@@ -441,6 +441,9 @@ impl PrimeField for Mersenne31Field {
     const CHAR_BITS: usize = 31;
     const CHARACTERISTICS: u32 = Self::ORDER;
 
+    const IS_MONT_REPR: bool = false;
+    const MONT_K: u32 = 1;
+
     #[cfg_attr(not(feature = "no_inline"), inline(always))]
     fn as_u32(self) -> u32 {
         self.0
@@ -472,6 +475,10 @@ impl PrimeField for Mersenne31Field {
     #[cfg_attr(not(feature = "no_inline"), inline(always))]
     fn from_reduced_raw_repr(value: u32) -> Self {
         Self(value)
+    }
+    #[cfg_attr(not(feature = "no_inline"), inline(always))]
+    fn from_raw_repr_with_reduction(value: u32) -> Self {
+        Self::from_nonreduced_u32(value)
     }
     #[track_caller]
     #[cfg_attr(not(feature = "no_inline"), inline(always))]

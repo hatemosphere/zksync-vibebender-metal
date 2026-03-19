@@ -108,7 +108,7 @@ pub(crate) fn keccak_special5_call<
     );
     state
         .counters
-        .log_multiple_circuit_family_calls::<SHIFT_BINARY_CSR_CIRCUIT_FAMILY_IDX>(
+        .log_multiple_circuit_family_calls::<ADD_SUB_LUI_AUIPC_MOP_CIRCUIT_FAMILY_IDX>(
             common_constants::NUM_DELEGATION_CALLS_FOR_KECCAK_F1600,
         );
 }

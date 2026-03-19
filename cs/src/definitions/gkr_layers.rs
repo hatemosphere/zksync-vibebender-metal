@@ -6,13 +6,13 @@ pub enum GKRAddress {
     BaseLayerMemory(usize),
     InnerLayer { layer: usize, offset: usize },
     Setup(usize),
-    OptimizedOut(usize),
+    ScratchSpace(usize),
     Cached { layer: usize, offset: usize },
 }
 
 impl GKRAddress {
     pub const fn placeholder() -> Self {
-        Self::OptimizedOut(0)
+        Self::Setup(usize::MAX)
     }
 
     pub const fn is_cache(&self) -> bool {
@@ -30,7 +30,7 @@ impl GKRAddress {
             Self::BaseLayerMemory(offset) => *offset,
             Self::Setup(offset) => *offset,
             Self::InnerLayer { offset, .. } => *offset,
-            Self::OptimizedOut(offset) => *offset,
+            Self::ScratchSpace(offset) => *offset,
             Self::Cached { offset, .. } => *offset,
         }
     }
@@ -49,7 +49,7 @@ impl GKRAddress {
                 assert_eq!(output_layer, 1)
             }
             Self::InnerLayer { layer, .. } => assert_eq!(output_layer, *layer + 1),
-            Self::OptimizedOut(..) => unreachable!(),
+            Self::ScratchSpace(..) => unreachable!(),
             Self::Cached { layer, .. } => assert_eq!(output_layer, *layer + 1),
         }
     }
@@ -64,7 +64,7 @@ impl GKRAddress {
                     self, output_layer
                 );
             }
-            Self::Setup(..) | Self::OptimizedOut(..) => {
+            Self::Setup(..) | Self::ScratchSpace(..) => {
                 unreachable!();
             }
             Self::InnerLayer { layer, .. } => {

@@ -1,10 +1,7 @@
-#![allow(warnings)]
-#![allow(incomplete_features)]
-#![feature(generic_const_exprs)]
+#![allow(internal_features)]
 #![feature(vec_push_within_capacity)]
 #![feature(allocator_api)]
 #![feature(widening_mul)]
-#![feature(maybe_uninit_array_assume_init)]
 #![feature(likely_unlikely)]
 #![feature(pointer_is_aligned_to)]
 #![feature(const_cmp)]
@@ -19,7 +16,6 @@ pub mod abstractions;
 pub mod cycle;
 pub mod ir;
 pub mod jit;
-pub mod machine_mode_only_unrolled;
 pub mod replayer;
 pub mod vm;
 pub mod witness;

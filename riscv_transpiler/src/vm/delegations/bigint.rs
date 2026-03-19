@@ -108,7 +108,7 @@ pub(crate) fn bigint_call<C: Counters, S: Snapshotter<C>, R: RAM, E: ExecutionOb
     state.counters.bump_bigint(1);
     E::on_delegation(state, BIGINT_OPS_WITH_CONTROL_CSR_REGISTER, 1);
     default_increase_pc::<C>(state);
-    increment_family_counter::<C, SHIFT_BINARY_CSR_CIRCUIT_FAMILY_IDX>(state);
+    increment_family_counter::<C, ADD_SUB_LUI_AUIPC_MOP_CIRCUIT_FAMILY_IDX>(state);
 }
 
 #[inline(always)]

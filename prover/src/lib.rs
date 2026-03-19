@@ -2,10 +2,6 @@
 #![allow(incomplete_features)]
 #![feature(generic_const_exprs)]
 #![feature(allocator_api)]
-#![feature(iter_array_chunks)]
-#![feature(raw_slice_split)]
-#![feature(slice_from_ptr_range)]
-#![feature(vec_push_within_capacity)]
 #![feature(maybe_uninit_fill)]
 #![feature(lazy_type_alias)] // NECESSARY TO AVOID UGLY LIFETIME BOUND ISSUE
 
@@ -15,8 +11,7 @@ pub const DEBUG_QUOTIENT: bool = true;
 #[cfg(not(feature = "debug_satisfiable"))]
 pub const DEBUG_QUOTIENT: bool = false;
 
-#[cfg(feature = "prover")]
-pub const DEFAULT_TRACE_PADDING_MULTIPLE: usize = 32;
+pub mod utils;
 
 pub mod definitions;
 pub use common_constants;
@@ -25,13 +20,11 @@ pub use field;
 pub use transcript;
 
 #[cfg(feature = "prover")]
-pub use trace_holder;
-
-#[cfg(feature = "prover")]
 pub use fft;
 #[cfg(feature = "prover")]
+pub use trace_holder;
+#[cfg(feature = "prover")]
 pub use worker;
-
 #[cfg(feature = "prover")]
 pub mod cap_holder;
 #[cfg(feature = "prover")]
@@ -43,25 +36,9 @@ pub mod merkle_trees;
 #[cfg(feature = "prover")]
 pub mod nd_source_std;
 #[cfg(feature = "prover")]
-pub mod prover_stages;
-#[cfg(feature = "prover")]
-pub mod quotient_evaluator;
-#[cfg(feature = "prover")]
-pub mod tracer;
+pub mod query_utils;
 #[cfg(feature = "prover")]
 pub mod tracers;
-pub mod utils;
-#[cfg(feature = "prover")]
-pub mod witness_evaluator;
-
-#[cfg(feature = "prover")]
-pub use self::quotient_evaluator::*;
-#[cfg(feature = "prover")]
-pub use self::tracer::*;
-#[cfg(feature = "prover")]
-pub use self::witness_evaluator::*;
-#[cfg(feature = "prover")]
-pub use riscv_transpiler;
 
 #[cfg(any(test, feature = "test"))]
 pub mod tests;
