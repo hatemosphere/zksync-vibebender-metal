@@ -954,7 +954,8 @@ where
         };
 
         // draw OOD sample
-        let ood_point = E::from_base(F::from_u32_unchecked(42));
+        let ood_points: Vec<E> = draw_random_field_els(&mut transcript_seed, 1);
+        let ood_point = ood_points[0];
         // compute OOD value
         let ood_value =
             evaluate_monomial_form(&sumchecked_poly_monomial_form[..], &ood_point, worker);

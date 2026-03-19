@@ -1,21 +1,26 @@
-use crate::definitions::Blake2sForEverythingVerifier;
-use field::PrimeField;
 use super::*;
+use crate::definitions::Blake2sForEverythingVerifier;
 use blake2s_hash_leafs::{
     blake2s_leaf_hashes_for_column_major_coset, blake2s_leaf_hashes_for_coset,
     blake2s_leaf_hashes_separated_for_coset,
 };
 use blake2s_u32::*;
+use field::PrimeField;
 use std::alloc::Global;
 
 #[derive(Clone, Debug)]
-pub struct Blake2sU32MerkleTreeWithCap<A: GoodAllocator = Global, const USE_REDUCED_BLAKE2_ROUNDS: bool = true> {
+pub struct Blake2sU32MerkleTreeWithCap<
+    A: GoodAllocator = Global,
+    const USE_REDUCED_BLAKE2_ROUNDS: bool = true,
+> {
     pub cap_size: usize,
     pub leaf_hashes: Vec<[u32; BLAKE2S_DIGEST_SIZE_U32_WORDS], A>,
     pub node_hashes_enumerated_from_leafs: Vec<Vec<[u32; BLAKE2S_DIGEST_SIZE_U32_WORDS], A>>,
 }
 
-impl<B: GoodAllocator, const USE_REDUCED_BLAKE2_ROUNDS: bool> MerkleTreeConstructor for Blake2sU32MerkleTreeWithCap<B, USE_REDUCED_BLAKE2_ROUNDS> {
+impl<B: GoodAllocator, const USE_REDUCED_BLAKE2_ROUNDS: bool> MerkleTreeConstructor
+    for Blake2sU32MerkleTreeWithCap<B, USE_REDUCED_BLAKE2_ROUNDS>
+{
     type Verifier = Blake2sForEverythingVerifier;
 
     fn construct_for_coset<A: GoodAllocator, const N: usize>(
@@ -24,7 +29,9 @@ impl<B: GoodAllocator, const USE_REDUCED_BLAKE2_ROUNDS: bool> MerkleTreeConstruc
         bitreverse: bool,
         worker: &Worker,
     ) -> Self {
-        let leaf_hashes = blake2s_leaf_hashes_for_coset::<A, B, N, USE_REDUCED_BLAKE2_ROUNDS>(trace, bitreverse, worker);
+        let leaf_hashes = blake2s_leaf_hashes_for_coset::<A, B, N, USE_REDUCED_BLAKE2_ROUNDS>(
+            trace, bitreverse, worker,
+        );
 
         Self::continue_from_leaf_hashes(leaf_hashes, cap_size, worker)
     }
@@ -37,7 +44,9 @@ impl<B: GoodAllocator, const USE_REDUCED_BLAKE2_ROUNDS: bool> MerkleTreeConstruc
         worker: &Worker,
     ) -> Vec<Self> {
         let leaf_hashes_set =
-            blake2s_leaf_hashes_separated_for_coset::<A, B, N, USE_REDUCED_BLAKE2_ROUNDS>(trace, separators, bitreverse, worker);
+            blake2s_leaf_hashes_separated_for_coset::<A, B, N, USE_REDUCED_BLAKE2_ROUNDS>(
+                trace, separators, bitreverse, worker,
+            );
 
         leaf_hashes_set
             .into_iter()
@@ -53,7 +62,9 @@ impl<B: GoodAllocator, const USE_REDUCED_BLAKE2_ROUNDS: bool> MerkleTreeConstruc
         worker: &Worker,
     ) -> Self {
         let leaf_hashes =
-            blake2s_leaf_hashes_for_column_major_coset::<A, B, USE_REDUCED_BLAKE2_ROUNDS>(trace, combine_by, bitreverse, worker);
+            blake2s_leaf_hashes_for_column_major_coset::<A, B, USE_REDUCED_BLAKE2_ROUNDS>(
+                trace, combine_by, bitreverse, worker,
+            );
 
         Self::continue_from_leaf_hashes(leaf_hashes, cap_size, worker)
     }
@@ -110,7 +121,9 @@ impl<B: GoodAllocator, const USE_REDUCED_BLAKE2_ROUNDS: bool> MerkleTreeConstruc
     }
 }
 
-impl<A: GoodAllocator, const USE_REDUCED_BLAKE2_ROUNDS: bool> Blake2sU32MerkleTreeWithCap<A, USE_REDUCED_BLAKE2_ROUNDS> {
+impl<A: GoodAllocator, const USE_REDUCED_BLAKE2_ROUNDS: bool>
+    Blake2sU32MerkleTreeWithCap<A, USE_REDUCED_BLAKE2_ROUNDS>
+{
     fn continue_from_leaf_hashes(
         leaf_hashes: Vec<[u32; BLAKE2S_DIGEST_SIZE_U32_WORDS], A>,
         cap_size: usize,
@@ -213,7 +226,8 @@ impl<A: GoodAllocator, const USE_REDUCED_BLAKE2_ROUNDS: bool> Blake2sU32MerkleTr
     }
 }
 
-impl<F: PrimeField, B: GoodAllocator, const USE_REDUCED_BLAKE2_ROUNDS: bool> ColumnMajorMerkleTreeConstructor<F>
+impl<F: PrimeField, B: GoodAllocator, const USE_REDUCED_BLAKE2_ROUNDS: bool>
+    ColumnMajorMerkleTreeConstructor<F>
     for Blake2sU32MerkleTreeWithCap<B, USE_REDUCED_BLAKE2_ROUNDS>
 {
     type Verifier = Blake2sForEverythingVerifier;
