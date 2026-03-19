@@ -14,7 +14,6 @@ use prover::tracers::delegation::bigint_with_control_factory_fn;
 use prover::tracers::delegation::blake2_with_control_factory_fn;
 use prover::tracers::delegation::keccak_special5_factory_fn;
 use prover::tracers::oracles::delegation_oracle::DelegationCircuitOracle;
-use prover::tracers::oracles::main_risc_v_circuit::MainRiscVOracle;
 use prover::tracers::unrolled::tracer::MemTracingFamilyChunk;
 use prover::tracers::unrolled::tracer::NonMemTracingFamilyChunk;
 use prover::unrolled::MemoryCircuitOracle;
@@ -22,11 +21,11 @@ use prover::unrolled::NonMemoryCircuitOracle;
 use prover::unrolled::UnifiedRiscvCircuitOracle;
 use prover::DEFAULT_TRACE_PADDING_MULTIPLE;
 use prover::*;
-use risc_v_simulator::cycle::IMStandardIsaConfig;
-use risc_v_simulator::cycle::IMStandardIsaConfigWithUnsignedMulDiv;
-use risc_v_simulator::cycle::IWithoutByteAccessIsaConfig;
-use risc_v_simulator::cycle::IWithoutByteAccessIsaConfigWithDelegation;
-use risc_v_simulator::cycle::MachineConfig;
+use riscv_transpiler::cycle::IMStandardIsaConfig;
+use riscv_transpiler::cycle::IMStandardIsaConfigWithUnsignedMulDiv;
+use riscv_transpiler::cycle::IWithoutByteAccessIsaConfig;
+use riscv_transpiler::cycle::IWithoutByteAccessIsaConfigWithDelegation;
+use riscv_transpiler::cycle::MachineConfig;
 use std::alloc::Global;
 use std::collections::HashMap;
 use std::path::Path;
@@ -35,13 +34,8 @@ use worker::Worker;
 
 pub use bigint_with_control;
 pub use blake2_with_compression;
-pub use final_reduced_risc_v_machine;
 pub use keccak_special5;
-pub use machine_without_signed_mul_div;
 pub use prover;
-pub use reduced_risc_v_log_23_machine;
-pub use reduced_risc_v_machine;
-pub use risc_v_cycles;
 
 pub mod circuits;
 pub mod unrolled_circuits;
@@ -160,16 +154,6 @@ pub fn delegation_factories_for_machine<C: MachineConfig, A: GoodAllocator>() ->
     } else {
         panic!("unknown machine configuration {:?}", C::default())
     }
-}
-
-pub struct MainCircuitPrecomputations<C: MachineConfig, A: GoodAllocator, B: GoodAllocator = Global>
-{
-    pub compiled_circuit: cs::one_row_compiler::CompiledCircuitArtifact<Mersenne31Field>,
-    pub table_driver: TableDriver<Mersenne31Field>,
-    pub twiddles: Arc<Twiddles<Mersenne31Complex, A>>,
-    pub lde_precomputations: LdePrecomputations<A>,
-    pub setup: SetupPrecomputations<DEFAULT_TRACE_PADDING_MULTIPLE, A, DefaultTreeConstructor>,
-    pub witness_eval_fn_for_gpu_tracer: fn(&mut SimpleWitnessProxy<'_, MainRiscVOracle<'_, C, B>>),
 }
 
 pub enum UnrolledCircuitWitnessEvalFn<A: GoodAllocator> {
@@ -296,10 +280,6 @@ pub fn all_delegation_circuits_precomputations<A: GoodAllocator + 'static, B: Go
             keccak_special5::DELEGATION_TYPE_ID,
             get_keccak_special5_circuit_setup(worker),
         ),
-        // (
-        //     poseidon2_compression_with_witness::DELEGATION_TYPE_ID,
-        //     get_poseidon2_compress_with_witness_circuit_setup(worker),
-        // ),
     ]
 }
 

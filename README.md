@@ -2,7 +2,7 @@
 
 [![Logo](zksync-airbender-logo.png)](https://zksync.io/)
 
-This repository contains the RISC-V compilation and proving tools for the ZKsync project, including implementations of RISC-V circuits, a RISC-V simulator, and utilities for witness generation, proof creation, and verification.
+This repository contains the RISC-V compilation and proving tools for the ZKsync project, including the transpiler, proving circuits, and utilities for witness generation, proof creation, and verification.
 
 ## Documentation
 
@@ -27,8 +27,10 @@ The most recent documentation can be found here:
   - `cargo test --profile cli`
 - CI-oriented test lane (excludes codegen/legacy-only tests):
   - `CI=1 cargo test --profile cli`
-- Legacy/manual test lane:
-  - `cargo test --profile cli --features legacy_tests`
+- Ignored-test sweep (runs all ignored tests across the workspace, including manual fixture/debug tests):
+  - `cargo test --profile cli -- --ignored`
+- Targeted current-pipeline proving regressions:
+  - `cargo test --profile cli -p execution_utils test_prove_unrolled -- --ignored`
 
 ## Policies
 
