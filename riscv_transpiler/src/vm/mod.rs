@@ -13,7 +13,6 @@ mod instructions;
 mod ram_with_rom_region;
 mod replay_snapshotter;
 mod simple_tape;
-mod uart;
 
 pub(crate) mod delegations;
 
@@ -23,7 +22,6 @@ pub use self::flamegraph::*;
 pub use self::ram_with_rom_region::RamWithRomRegion;
 pub use self::replay_snapshotter::*;
 pub use self::simple_tape::SimpleTape;
-pub use self::uart::QuasiUARTSource;
 
 pub trait Counters: 'static + Clone + Copy + Debug + PartialEq + Eq + Send + Sync {
     fn bump_bigint(&mut self, by: usize);
@@ -190,7 +188,7 @@ impl NonDeterminismCSRSource for () {
     fn write_with_memory_access_dyn(&mut self, ram: &dyn RamPeek, value: u32) {}
 }
 
-impl NonDeterminismCSRSource for QuasiUARTSource {
+impl NonDeterminismCSRSource for crate::abstractions::non_determinism::QuasiUARTSource {
     fn read(&mut self) -> u32 {
         // self.oracle.pop_front().unwrap_or_default()
         self.oracle.pop_front().expect("must have an answer")
@@ -209,7 +207,7 @@ pub struct VM<C: Counters, E: ExecutionObserver<C> = ()> {
     pub(crate) observer: PhantomData<E>,
 }
 
-impl<C: Counters> VM<C> {
+impl<C: Counters, E: ExecutionObserver<C>> VM<C, E> {
     pub fn run_basic_unrolled<
         S: Snapshotter<C>,
         R: RAM,
@@ -292,7 +290,7 @@ impl<C: Counters> VM<C> {
             let pc = state.pc;
 
             profiler.sample_cycle(state, &*ram, cycle);
-            Self::run_step::<S, R, ND, F>(state, ram, snapshotter, instruction_tape, nd);
+            Self::run_step::<S, R, ND, F, E>(state, ram, snapshotter, instruction_tape, nd);
 
             state.timestamp += TIMESTAMP_STEP;
             if state.pc == pc {
@@ -317,6 +315,7 @@ impl<C: Counters> VM<C> {
         R: RAM + FlamegraphReadableRam,
         ND: NonDeterminismCSRSource,
         F: PrimeField,
+        E: ExecutionObserver<C>,
     >(
         state: &mut State<C>,
         ram: &mut R,
@@ -334,7 +333,7 @@ impl<C: Counters> VM<C> {
             profiler.sample_cycle(state, &*ram, cycle);
             cycle += 1;
 
-            Self::run_step::<S, R, ND, F>(state, ram, snapshotter, instruction_tape, nd);
+            Self::run_step::<S, R, ND, F, E>(state, ram, snapshotter, instruction_tape, nd);
 
             state.timestamp += TIMESTAMP_STEP;
             if state.pc == pc {
@@ -407,13 +406,14 @@ impl<C: Counters> VM<C> {
                         nd,
                     )
                 }
-                InstructionName::ZicsrDelegation => add_sub_family::delegation::call_delegation::<
-                    C,
-                    S,
-                    R,
-                >(
-                    state, ram, snapshotter, instr
-                ),
+                InstructionName::ZicsrDelegation => {
+                    add_sub_family::delegation::call_delegation::<C, S, R, E>(
+                        state,
+                        ram,
+                        snapshotter,
+                        instr,
+                    )
+                }
 
                 InstructionName::Jal => {
                     jump_branch_slt_family::jal_jalr::jal::<C, S, R>(state, ram, snapshotter, instr)
@@ -521,14 +521,14 @@ pub(crate) mod test {
         let mut ram = RamWithRomRegion::<5>::from_rom_content(&program, 1 << 22);
         let mut state = State::initial_with_counters(DelegationsCounters::default());
 
-        let (finished, marker_state) =
-            crate::cycle::CycleMarkerHooks::with(|| {
-                VM::<DelegationsCounters, crate::cycle::CycleMarkerHooks>::run_basic_unrolled::<
-                    _,
-                    _,
-                    _,
-                >(&mut state, &mut ram, &mut (), &tape, program.len(), &mut ())
-            });
+        let (finished, marker_state) = crate::cycle::CycleMarkerHooks::with(|| {
+            VM::<DelegationsCounters, crate::cycle::CycleMarkerHooks>::run_basic_unrolled::<
+                _,
+                _,
+                _,
+                Mersenne31Field,
+            >(&mut state, &mut ram, &mut (), &tape, program.len(), &mut ())
+        });
 
         assert!(!finished);
         assert_eq!(state.pc, 12);

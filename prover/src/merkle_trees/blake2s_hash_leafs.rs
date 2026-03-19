@@ -1,11 +1,11 @@
 use crate::gkr::whir::offsets_vec_for_leaf_construction;
-
+use field::PrimeField;
 use super::*;
 use crate::utils::extension_field_into_base_coeffs;
 use blake2s_u32::*;
 use fft::bitreverse_enumeration_inplace;
 
-pub fn blake2s_leaf_hashes_for_coset<A: GoodAllocator, B: GoodAllocator, const N: usize>(
+pub fn blake2s_leaf_hashes_for_coset<A: GoodAllocator, B: GoodAllocator, const N: usize, const USE_REDUCED_BLAKE2_ROUNDS: bool>(
     trace: &RowMajorTrace<Mersenne31Field, N, A>,
     bitreverse: bool,
     worker: &Worker,
@@ -109,6 +109,7 @@ pub fn blake2s_leaf_hashes_separated_for_coset<
     A: GoodAllocator,
     B: GoodAllocator,
     const N: usize,
+    const USE_REDUCED_BLAKE2_ROUNDS: bool
 >(
     trace: &RowMajorTrace<Mersenne31Field, N, A>,
     separators: &[usize],
@@ -256,7 +257,7 @@ pub fn blake2s_leaf_hashes_separated_for_coset<
     leaf_hashes
 }
 
-pub fn blake2s_leaf_hashes_for_column_major_coset<A: GoodAllocator, B: GoodAllocator>(
+pub fn blake2s_leaf_hashes_for_column_major_coset<A: GoodAllocator, B: GoodAllocator, const USE_REDUCED_BLAKE2_ROUNDS: bool>(
     trace: &ColumnMajorTrace<Mersenne31Quartic, A>,
     combine_by: usize,
     bitreverse: bool,
@@ -381,6 +382,7 @@ pub fn blake2s_leaf_hashes_from_columns<
     E: FieldExtension<F>,
     A: GoodAllocator,
     B: GoodAllocator,
+    const USE_REDUCED_BLAKE2_ROUNDS: bool
 >(
     trace: &[&[E]],
     combine_by: usize,
@@ -517,6 +519,7 @@ pub fn blake2s_leaf_hashes_from_cosets<
     E: FieldExtension<F>,
     A: GoodAllocator,
     B: GoodAllocator,
+    const USE_REDUCED_BLAKE2_ROUNDS: bool
 >(
     trace: &[&[&[E]]],
     combine_by: usize,

@@ -556,7 +556,7 @@ where
         .get(&0)
         .expect("must have base layer point");
 
-    let mut _eq_at_z = vec![].into_boxed_slice();
+    let mut _eq_at_z: Box<[E]> = vec![].into_boxed_slice();
     #[cfg(feature = "gkr_self_checks")]
     {
         let mut eq_precomputed = make_eq_poly_in_full(base_layer_z, worker);

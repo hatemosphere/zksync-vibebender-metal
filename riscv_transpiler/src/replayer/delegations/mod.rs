@@ -1,7 +1,4 @@
 use super::*;
-use crate::abstractions::tracer::RegisterOrIndirectReadData;
-use crate::abstractions::tracer::RegisterOrIndirectReadWriteData;
-use crate::machine_mode_only_unrolled::*;
 use crate::replayer::instructions::*;
 use crate::vm::Counters;
 use crate::witness::*;

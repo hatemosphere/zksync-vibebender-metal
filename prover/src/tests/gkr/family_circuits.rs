@@ -23,6 +23,7 @@ use field::Field;
 use riscv_transpiler::ir::simple_instruction_set::preprocess_bytecode;
 use riscv_transpiler::ir::simple_instruction_set::Instruction;
 use riscv_transpiler::ir::*;
+use riscv_transpiler::abstractions::non_determinism::QuasiUARTSource;
 use riscv_transpiler::replayer::*;
 use riscv_transpiler::witness::*;
 use std::alloc::Global;

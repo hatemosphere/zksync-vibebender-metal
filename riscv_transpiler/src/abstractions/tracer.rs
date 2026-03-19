@@ -1,4 +1,4 @@
-use cs::definitions::TimestampData;
+use common_constants::TimestampData;
 
 #[derive(
     Clone, Copy, Debug, PartialEq, Eq, Hash, Default, serde::Serialize, serde::Deserialize,
@@ -12,24 +12,6 @@ pub struct RegisterOrIndirectReadData {
 impl RegisterOrIndirectReadData {
     pub const EMPTY: Self = Self {
         read_value: 0,
-        timestamp: TimestampData::EMPTY,
-    };
-}
-
-#[derive(
-    Clone, Copy, Debug, PartialEq, Eq, Hash, Default, serde::Serialize, serde::Deserialize,
-)]
-#[repr(C)]
-pub struct RegisterOrIndirectReadWriteData {
-    pub read_value: u32,
-    pub write_value: u32,
-    pub timestamp: TimestampData,
-}
-
-impl RegisterOrIndirectReadWriteData {
-    pub const EMPTY: Self = Self {
-        read_value: 0,
-        write_value: 0,
         timestamp: TimestampData::EMPTY,
     };
 }
