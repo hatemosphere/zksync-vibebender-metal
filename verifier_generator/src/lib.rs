@@ -30,20 +30,16 @@ mod test {
         use prover::gkr::prover::GKRProof;
         use prover::merkle_trees::DefaultTreeConstructor;
 
-        let circuit_names = vec![
-            "add_sub_lui_auipc_mop",
-            "jump_branch_slt",
-            "shift_binop",
-        ];
+        let circuit_names = vec!["add_sub_lui_auipc_mop", "jump_branch_slt", "shift_binop"];
 
         for name in circuit_names {
-            let compiled_circuit: GKRCircuitArtifact<BabyBearField> = deserialize_from_file(
-                &format!("../cs/compiled_circuits/{}_preprocessed_layout_gkr.json", name),
-            );
+            let compiled_circuit: GKRCircuitArtifact<BabyBearField> =
+                deserialize_from_file(&format!(
+                    "../cs/compiled_circuits/{}_preprocessed_layout_gkr.json",
+                    name
+                ));
             let proof: GKRProof<BabyBearField, BabyBearExt4, DefaultTreeConstructor> =
-                deserialize_from_file(
-                    &format!("../prover/test_proofs/{}_gkr_proof.json", name),
-                );
+                deserialize_from_file(&format!("../prover/test_proofs/{}_gkr_proof.json", name));
 
             let result = gkr_inlining::generate_gkr_inlined::<DefaultBabyBearField, _, _, _>(
                 &compiled_circuit,

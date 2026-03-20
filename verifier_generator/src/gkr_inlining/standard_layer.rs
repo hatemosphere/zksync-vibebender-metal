@@ -537,9 +537,7 @@ pub fn generate_layer_final_step_accumulator<MW: MersenneWrapper, F: PrimeField>
                     },
                 );
             }
-            R::UnbalancedGrandProductWithCache {
-                scalar, input, ..
-            } => {
+            R::UnbalancedGrandProductWithCache { scalar, input, .. } => {
                 let is = addr_to_idx(scalar, input_sorted_addrs);
                 let ii = addr_to_idx(input, input_sorted_addrs);
                 let mul_si = MW::mul_assign(quote! { val }, quote! { vi });
@@ -607,8 +605,7 @@ pub fn generate_layer_final_step_accumulator<MW: MersenneWrapper, F: PrimeField>
                         let idx = addr_to_idx(addr, input_sorted_addrs);
                         let mont = coeff_to_internal_repr::<F>(coeff);
                         let field_coeff = MW::field_new(quote! { #mont });
-                        let mul_coeff =
-                            MW::mul_assign_by_base(quote! { ct }, field_coeff);
+                        let mul_coeff = MW::mul_assign_by_base(quote! { ct }, field_coeff);
                         let add_ct = MW::add_assign(quote! { col_val }, quote! { ct });
                         col_computation.extend(quote! {
                             let mut ct = unsafe { evals.get_unchecked(#idx) }[j];
@@ -664,32 +661,32 @@ pub fn generate_layer_final_step_accumulator<MW: MersenneWrapper, F: PrimeField>
             R::LookupPairFromBaseInputs { input, .. } => {
                 // Compute 1/(a+γ) + 1/(b+γ) where a, b are inline linear relations
                 // num = (a+γ) + (b+γ), den = (a+γ)*(b+γ)
-                let gen_linear_relation = |rel: &NoFieldSingleColumnLookupRelation,
-                                           var_name: &str| {
-                    let const_mont = coeff_to_internal_repr::<F>(rel.input.constant);
-                    let const_field = MW::field_new(quote! { #const_mont });
-                    let var = syn::Ident::new(var_name, proc_macro2::Span::call_site());
-                    let mut comp = quote! {
-                        let mut #var = #quartic_struct::from_base(#const_field);
+                let gen_linear_relation =
+                    |rel: &NoFieldSingleColumnLookupRelation, var_name: &str| {
+                        let const_mont = coeff_to_internal_repr::<F>(rel.input.constant);
+                        let const_field = MW::field_new(quote! { #const_mont });
+                        let var = syn::Ident::new(var_name, proc_macro2::Span::call_site());
+                        let mut comp = quote! {
+                            let mut #var = #quartic_struct::from_base(#const_field);
+                        };
+                        for &(coeff, ref addr) in rel.input.linear_terms.iter() {
+                            let idx = addr_to_idx(addr, input_sorted_addrs);
+                            let mont = coeff_to_internal_repr::<F>(coeff);
+                            let field_coeff = MW::field_new(quote! { #mont });
+                            let tmp = syn::Ident::new(
+                                &format!("{}_t", var_name),
+                                proc_macro2::Span::call_site(),
+                            );
+                            let mul_coeff = MW::mul_assign_by_base(quote! { #tmp }, field_coeff);
+                            let add_tmp = MW::add_assign(quote! { #var }, quote! { #tmp });
+                            comp.extend(quote! {
+                                let mut #tmp = unsafe { evals.get_unchecked(#idx) }[j];
+                                #mul_coeff;
+                                #add_tmp;
+                            });
+                        }
+                        comp
                     };
-                    for &(coeff, ref addr) in rel.input.linear_terms.iter() {
-                        let idx = addr_to_idx(addr, input_sorted_addrs);
-                        let mont = coeff_to_internal_repr::<F>(coeff);
-                        let field_coeff = MW::field_new(quote! { #mont });
-                        let tmp = syn::Ident::new(
-                            &format!("{}_t", var_name),
-                            proc_macro2::Span::call_site(),
-                        );
-                        let mul_coeff = MW::mul_assign_by_base(quote! { #tmp }, field_coeff);
-                        let add_tmp = MW::add_assign(quote! { #var }, quote! { #tmp });
-                        comp.extend(quote! {
-                            let mut #tmp = unsafe { evals.get_unchecked(#idx) }[j];
-                            #mul_coeff;
-                            #add_tmp;
-                        });
-                    }
-                    comp
-                };
 
                 let comp_a = gen_linear_relation(&input[0], "a_val");
                 let comp_b = gen_linear_relation(&input[1], "b_val");
@@ -727,8 +724,7 @@ pub fn generate_layer_final_step_accumulator<MW: MersenneWrapper, F: PrimeField>
             }
             R::LookupPairFromVectorInputs { input, .. } => {
                 // Same as LookupPairFromBaseInputs but with vector (multi-column) inputs
-                let gen_vector_relation = |rel: &NoFieldVectorLookupRelation,
-                                           var_name: &str| {
+                let gen_vector_relation = |rel: &NoFieldVectorLookupRelation, var_name: &str| {
                     let var = syn::Ident::new(var_name, proc_macro2::Span::call_site());
                     let mut comp = quote! {
                         let mut #var = #quartic_zero;

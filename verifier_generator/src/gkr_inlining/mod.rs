@@ -365,9 +365,8 @@ where
         })
         .collect();
 
-    let get_output_sorted_addrs = |layer_idx: usize| -> &[GKRAddress] {
-        &output_sorted_addrs_per_layer[layer_idx]
-    };
+    let get_output_sorted_addrs =
+        |layer_idx: usize| -> &[GKRAddress] { &output_sorted_addrs_per_layer[layer_idx] };
 
     // Output group info
     let output_groups: Vec<GKROutputGroupInfo> = compiled_circuit
@@ -405,7 +404,8 @@ where
             let extras = collect_extra_addrs_from_cached_relations(
                 &compiled_circuit.layers[layer_idx],
                 &standard_sorted_addrs[layer_idx],
-            ).len();
+            )
+            .len();
             regular + extras
         })
         .max()

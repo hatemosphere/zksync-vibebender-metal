@@ -16,12 +16,7 @@ mod generated_jump_branch_slt;
 mod generated_shift_binop;
 
 #[cfg(feature = "gkr_verify")]
-fn run_gkr_verify_for_circuit(
-    name: &str,
-    proof_path: &str,
-    circuit_path: &str,
-    verify_fn: fn(),
-) {
+fn run_gkr_verify_for_circuit(name: &str, proof_path: &str, circuit_path: &str, verify_fn: fn()) {
     use field::baby_bear::base::BabyBearField;
     use field::baby_bear::ext4::BabyBearExt4;
     use prover::gkr::prover::GKRProof;
@@ -32,8 +27,7 @@ fn run_gkr_verify_for_circuit(
 
     let proof: GKRProof<BabyBearField, BabyBearExt4, DefaultTreeConstructor> =
         deserialize_from_file(proof_path);
-    let compiled_circuit: GKRCircuitArtifact<BabyBearField> =
-        deserialize_from_file(circuit_path);
+    let compiled_circuit: GKRCircuitArtifact<BabyBearField> = deserialize_from_file(circuit_path);
 
     let oracle_data = flatten_gkr_proof_for_nds::<
         BabyBearField,
@@ -172,8 +166,7 @@ fn run_gkr_verifier_in_transpiler(
 
     let proof: GKRProof<BabyBearField, BabyBearExt4, DefaultTreeConstructor> =
         deserialize_from_file(proof_path);
-    let compiled_circuit: GKRCircuitArtifact<BabyBearField> =
-        deserialize_from_file(circuit_path);
+    let compiled_circuit: GKRCircuitArtifact<BabyBearField> = deserialize_from_file(circuit_path);
 
     let oracle_data = flatten_gkr_proof_for_nds::<
         BabyBearField,
@@ -191,16 +184,20 @@ fn run_gkr_verifier_in_transpiler(
     let text_path = format!("../tools/gkr_verifier/{}.text", binary_suffix);
     let elf_path = format!("../tools/gkr_verifier/{}.elf", binary_suffix);
 
-    let binary_bytes = std::fs::read(&bin_path)
-        .expect(&format!("Missing {} — run `cd tools/gkr_verifier && ./dump_bin.sh` first", bin_path));
+    let binary_bytes = std::fs::read(&bin_path).expect(&format!(
+        "Missing {} — run `cd tools/gkr_verifier && ./dump_bin.sh` first",
+        bin_path
+    ));
     assert!(binary_bytes.len() % 4 == 0);
     let binary: Vec<u32> = binary_bytes
         .chunks_exact(4)
         .map(|c| u32::from_le_bytes([c[0], c[1], c[2], c[3]]))
         .collect();
 
-    let text_bytes = std::fs::read(&text_path)
-        .expect(&format!("Missing {} — run `cd tools/gkr_verifier && ./dump_bin.sh` first", text_path));
+    let text_bytes = std::fs::read(&text_path).expect(&format!(
+        "Missing {} — run `cd tools/gkr_verifier && ./dump_bin.sh` first",
+        text_path
+    ));
     assert!(text_bytes.len() % 4 == 0);
     let text_section: Vec<u32> = text_bytes
         .chunks_exact(4)
@@ -234,7 +231,12 @@ fn run_gkr_verifier_in_transpiler(
     let mut profiler = riscv_transpiler::vm::VmFlamegraphProfiler::new(fg_config).unwrap();
 
     let is_program_finished =
-        VM::<DelegationsAndFamiliesCounters>::run_basic_unrolled_with_flamegraph::<_, _, _, field::baby_bear::base::BabyBearField>(
+        VM::<DelegationsAndFamiliesCounters>::run_basic_unrolled_with_flamegraph::<
+            _,
+            _,
+            _,
+            field::baby_bear::base::BabyBearField,
+        >(
             &mut state,
             &mut ram,
             &mut snapshotter,
@@ -280,7 +282,10 @@ fn run_gkr_verifier_in_transpiler(
         name, a0
     );
 
-    println!("{}: GKR verifier completed successfully in transpiler", name);
+    println!(
+        "{}: GKR verifier completed successfully in transpiler",
+        name
+    );
     println!("Flamegraph written to {}", output_path.display());
 }
 
