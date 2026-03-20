@@ -72,7 +72,7 @@ use crate::gkr::sumcheck::eq_poly::{make_domain_eq_poly_in_full, make_eq_poly_in
 use crate::gkr::sumcheck::*;
 use crate::gkr::whir::hypercube_to_monomial::multivariate_coeffs_into_hypercube_evals;
 use crate::gkr::PAR_THRESHOLD;
-use crate::prover_stages::query_producer::assemble_query_index;
+use crate::query_utils::assemble_query_index;
 use crate::{gkr::prover::apply_row_wise, merkle_trees::ColumnMajorMerkleTreeConstructor};
 use fft::{
     batch_inverse_inplace, bitreverse_enumeration_inplace, domain_generator_for_size,
@@ -382,11 +382,10 @@ where
         assert_eq!(a.cosets[0].original_values_normal_order.len(), b.len());
     }
 
-    let mut challenge_powers = materialize_powers_serial_starting_with_one::<E, Global>(
+    let challenge_powers = materialize_powers_serial_starting_with_one::<E, Global>(
         batching_challenge,
         total_base_oracles,
     );
-    challenge_powers[1..].fill(E::ZERO);
 
     let (base_mem_powers, rest) = challenge_powers.split_at(evals_refs[0].len());
     let (base_witness_powers, base_setup_powers) = rest.split_at(evals_refs[1].len());
@@ -954,7 +953,8 @@ where
         };
 
         // draw OOD sample
-        let ood_point = E::from_base(F::from_u32_unchecked(42));
+        let ood_points: Vec<E> = draw_random_field_els(&mut transcript_seed, 1);
+        let ood_point = ood_points[0];
         // compute OOD value
         let ood_value =
             evaluate_monomial_form(&sumchecked_poly_monomial_form[..], &ood_point, worker);

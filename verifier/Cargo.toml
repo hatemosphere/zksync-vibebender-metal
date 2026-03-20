@@ -28,7 +28,6 @@ gkr_verify = ["verifier_common/gkr_verify"]
 
 # If enabled, allows passing custom values into CSR.
 replace_csr = ["verifier_common/replace_csr"]
-legacy_tests = []
 
 default = ["security_80", "blake2_with_compression"]
 

@@ -1,10 +1,22 @@
-use cs::gkr_compiler::GKRCircuitArtifact;
-
-use crate::gkr::witness_gen::family_circuits::{GKRFullWitnessTrace, GKRMemoryOnlyWitnessTrace};
-
 use super::*;
+use crate::gkr::witness_gen::family_circuits::{GKRFullWitnessTrace, GKRMemoryOnlyWitnessTrace};
+use cs::definitions::GKRAddress;
+use cs::gkr_compiler::GKRCircuitArtifact;
+use fft::GoodAllocator;
+use field::PrimeField;
 
 use std::alloc::Allocator;
+use std::collections::BTreeSet;
+
+fn serialize_to_file<T: serde::Serialize>(el: &T, filename: &str) {
+    let mut dst = std::fs::File::create(filename).unwrap();
+    serde_json::to_writer_pretty(&mut dst, el).unwrap();
+}
+
+fn deserialize_from_file<T: serde::de::DeserializeOwned>(filename: &str) -> T {
+    let mut src = std::fs::File::open(filename).unwrap();
+    serde_json::from_reader(src).unwrap()
+}
 
 mod family_circuits;
 
@@ -173,12 +185,16 @@ pub fn check_satisfied_row<F: PrimeField, A: GoodAllocator, B: GoodAllocator>(
                 absolute_row_idx, &compiled_circuit.degree_1_constraints[idx]
             );
             let constraint = &compiled_circuit.degree_1_constraints[idx];
+            let mut all_vars = BTreeSet::new();
             for (_, a) in constraint.linear_terms.iter() {
-                let pos = compiled_circuit.placement_data[a];
-                if let Some(name) = compiled_circuit.variable_names.get(a) {
+                all_vars.insert(*a);
+            }
+            for var in all_vars.into_iter() {
+                let pos = compiled_circuit.placement_data[&var];
+                if let Some(name) = compiled_circuit.variable_names.get(&var) {
                     println!(
                         "Variable {:?} `{}` (position {:?}) = {:?}",
-                        a,
+                        var,
                         name,
                         pos,
                         read_value(full_trace, absolute_row_idx, pos)
@@ -186,7 +202,7 @@ pub fn check_satisfied_row<F: PrimeField, A: GoodAllocator, B: GoodAllocator>(
                 } else {
                     println!(
                         "Variable {:?} (position {:?}) = {:?}",
-                        a,
+                        var,
                         pos,
                         read_value(full_trace, absolute_row_idx, pos)
                     );
@@ -203,34 +219,21 @@ pub fn check_satisfied_row<F: PrimeField, A: GoodAllocator, B: GoodAllocator>(
                 "Unsatisfied at row {}, quadratic constraint {:?}",
                 absolute_row_idx, &compiled_circuit.degree_2_constraints[idx]
             );
+            let mut all_vars = BTreeSet::new();
             let constraint = &compiled_circuit.degree_2_constraints[idx];
             for (_, a, b) in constraint.quadratic_terms.iter() {
-                for a in [a, b] {
-                    let pos = compiled_circuit.placement_data[a];
-                    if let Some(name) = compiled_circuit.variable_names.get(a) {
-                        println!(
-                            "Variable {:?} `{}` (position {:?}) = {:?}",
-                            a,
-                            name,
-                            pos,
-                            read_value(full_trace, absolute_row_idx, pos)
-                        );
-                    } else {
-                        println!(
-                            "Variable {:?} (position {:?}) = {:?}",
-                            a,
-                            pos,
-                            read_value(full_trace, absolute_row_idx, pos)
-                        );
-                    }
-                }
+                all_vars.insert(*a);
+                all_vars.insert(*b);
             }
             for (_, a) in constraint.linear_terms.iter() {
-                let pos = compiled_circuit.placement_data[a];
-                if let Some(name) = compiled_circuit.variable_names.get(a) {
+                all_vars.insert(*a);
+            }
+            for var in all_vars.into_iter() {
+                let pos = compiled_circuit.placement_data[&var];
+                if let Some(name) = compiled_circuit.variable_names.get(&var) {
                     println!(
                         "Variable {:?} `{}` (position {:?}) = {:?}",
-                        a,
+                        var,
                         name,
                         pos,
                         read_value(full_trace, absolute_row_idx, pos)
@@ -238,7 +241,7 @@ pub fn check_satisfied_row<F: PrimeField, A: GoodAllocator, B: GoodAllocator>(
                 } else {
                     println!(
                         "Variable {:?} (position {:?}) = {:?}",
-                        a,
+                        var,
                         pos,
                         read_value(full_trace, absolute_row_idx, pos)
                     );
@@ -251,21 +254,75 @@ pub fn check_satisfied_row<F: PrimeField, A: GoodAllocator, B: GoodAllocator>(
     true
 }
 
-mod add_sub_lui_auipc_mod {
+mod add_sub_lui_auipc_mop {
     use crate::gkr::witness_gen::column_major_proxy::ColumnMajorWitnessProxy;
-    use crate::unrolled::NonMemoryCircuitOracle;
-    use crate::witness_proxy::WitnessProxy;
-    use ::cs::cs::placeholder::Placeholder;
-    use ::cs::cs::witness_placer::WitnessTypeSet;
-    use ::cs::cs::witness_placer::{
+    use crate::gkr::witness_gen::oracles::NonMemoryCircuitOracle;
+    use crate::gkr::witness_gen::witness_proxy::WitnessProxy;
+    use ::cs::oracle::Placeholder;
+    use ::cs::witness_placer::WitnessTypeSet;
+    use ::cs::witness_placer::{
         WitnessComputationCore, WitnessComputationalField, WitnessComputationalI32,
         WitnessComputationalInteger, WitnessComputationalU16, WitnessComputationalU32,
         WitnessComputationalU8, WitnessMask,
     };
     use ::field::baby_bear::base::BabyBearField;
-    use cs::cs::witness_placer::scalar_witness_type_set::ScalarWitnessTypeSet;
+    use cs::witness_placer::scalar_witness_type_set::ScalarWitnessTypeSet;
 
-    include!("../../../add_sub_lui_auipc_mop_preprocessed_generated_gkr.rs");
+    include!("../../../compiled_circuits/add_sub_lui_auipc_mop_preprocessed_generated_gkr.rs");
+
+    pub fn witness_eval_fn<'a, 'b>(
+        proxy: &'_ mut ColumnMajorWitnessProxy<'a, NonMemoryCircuitOracle<'b>, BabyBearField>,
+    ) {
+        let fn_ptr = evaluate_witness_fn::<
+            ScalarWitnessTypeSet<BabyBearField, true>,
+            ColumnMajorWitnessProxy<'a, NonMemoryCircuitOracle<'b>, BabyBearField>,
+        >;
+        (fn_ptr)(proxy);
+    }
+}
+
+mod jump_branch_slt {
+    use crate::gkr::witness_gen::column_major_proxy::ColumnMajorWitnessProxy;
+    use crate::gkr::witness_gen::oracles::NonMemoryCircuitOracle;
+    use crate::gkr::witness_gen::witness_proxy::WitnessProxy;
+    use ::cs::oracle::Placeholder;
+    use ::cs::witness_placer::WitnessTypeSet;
+    use ::cs::witness_placer::{
+        WitnessComputationCore, WitnessComputationalField, WitnessComputationalI32,
+        WitnessComputationalInteger, WitnessComputationalU16, WitnessComputationalU32,
+        WitnessComputationalU8, WitnessMask,
+    };
+    use ::field::baby_bear::base::BabyBearField;
+    use cs::witness_placer::scalar_witness_type_set::ScalarWitnessTypeSet;
+
+    include!("../../../compiled_circuits/jump_branch_slt_preprocessed_generated_gkr.rs");
+
+    pub fn witness_eval_fn<'a, 'b>(
+        proxy: &'_ mut ColumnMajorWitnessProxy<'a, NonMemoryCircuitOracle<'b>, BabyBearField>,
+    ) {
+        let fn_ptr = evaluate_witness_fn::<
+            ScalarWitnessTypeSet<BabyBearField, true>,
+            ColumnMajorWitnessProxy<'a, NonMemoryCircuitOracle<'b>, BabyBearField>,
+        >;
+        (fn_ptr)(proxy);
+    }
+}
+
+mod shift_binary_ops {
+    use crate::gkr::witness_gen::column_major_proxy::ColumnMajorWitnessProxy;
+    use crate::gkr::witness_gen::oracles::NonMemoryCircuitOracle;
+    use crate::gkr::witness_gen::witness_proxy::WitnessProxy;
+    use ::cs::oracle::Placeholder;
+    use ::cs::witness_placer::WitnessTypeSet;
+    use ::cs::witness_placer::{
+        WitnessComputationCore, WitnessComputationalField, WitnessComputationalI32,
+        WitnessComputationalInteger, WitnessComputationalU16, WitnessComputationalU32,
+        WitnessComputationalU8, WitnessMask,
+    };
+    use ::field::baby_bear::base::BabyBearField;
+    use cs::witness_placer::scalar_witness_type_set::ScalarWitnessTypeSet;
+
+    include!("../../../compiled_circuits/shift_binop_preprocessed_generated_gkr.rs");
 
     pub fn witness_eval_fn<'a, 'b>(
         proxy: &'_ mut ColumnMajorWitnessProxy<'a, NonMemoryCircuitOracle<'b>, BabyBearField>,

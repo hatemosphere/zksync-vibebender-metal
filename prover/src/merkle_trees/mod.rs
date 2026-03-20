@@ -1,31 +1,21 @@
 use crate::definitions::{LeafInclusionVerifier, MerkleTreeCap, DIGEST_SIZE_U32_WORDS};
-
-// const USE_REDUCED_BLAKE2_ROUNDS: bool = false;
-const USE_REDUCED_BLAKE2_ROUNDS: bool = true;
+use field::PrimeField;
 
 use fft::GoodAllocator;
 use field::FieldExtension;
 use field::Mersenne31Field;
 use field::Mersenne31Quartic;
-use field::PrimeField;
-// use poseidon2::m31::HASH_SIZE_U32_WORDS;
 use trace_holder::ColumnMajorTrace;
 use trace_holder::RowMajorTrace;
 use worker::Worker;
 
 pub mod blake2s_for_everything_tree;
-// pub mod blake2s_for_leafs_poseidon2_for_nodes_tree;
 pub mod blake2s_hash_leafs;
 
 pub type DefaultTreeConstructor =
     crate::merkle_trees::blake2s_for_everything_tree::Blake2sU32MerkleTreeWithCap<
         std::alloc::Global,
     >;
-
-// pub type DefaultTreeConstructor =
-//     crate::merkle_trees::blake2s_for_leafs_poseidon2_for_nodes_tree::Blake2sU32ForLeafsPoseidon2ForNodesTree<
-//         std::alloc::Global,
-//     >;
 
 #[derive(Clone, Debug, PartialEq, Eq, Hash, Default, serde::Serialize, serde::Deserialize)]
 pub struct MerkleTreeCapVarLength {

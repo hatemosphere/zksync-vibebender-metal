@@ -264,7 +264,7 @@ fn pointwise_eval_impl<
     ctx: &RB::CollapseContext,
     lookup_additive_challenge: &E,
 ) -> [E; 2] {
-    // 1/b - c/d -> (d - c*b), bd
+    // 1/(b + gamma) - c/(d + gamma) -> ((d + gamma) - c*(b + gamma)), (b+gamma)*(d+gamma)
     let [b, c, d] = input;
     let b = b.add_with_ext::<true>(lookup_additive_challenge, ctx);
     let d = d.add_with_ext::<true>(lookup_additive_challenge, ctx);

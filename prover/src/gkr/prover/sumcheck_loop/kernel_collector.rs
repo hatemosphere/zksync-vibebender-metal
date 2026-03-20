@@ -7,9 +7,12 @@ use crate::gkr::sumcheck::access_and_fold::GKRStorage;
 use crate::gkr::sumcheck::evaluation_kernels::{
     BaseFieldCopyGKRRelation, BatchConstraintEvalGKRRelation, BatchedGKRKernel,
     ExtensionCopyGKRRelation, LookupBaseExtMinusBaseExtGKRRelation,
-    LookupBaseMinusMultiplicityByBaseGKRRelation, LookupBasePairGKRRelation, LookupPairGKRRelation,
-    LookupRationalPairWithUnbalancedBaseGKRRelation, MaskIntoIdentityProductGKRRelation,
-    SameSizeProductGKRRelation,
+    LookupBaseMinusMultiplicityByBaseGKRRelation, LookupBasePairGKRRelation,
+    LookupExtensionPairGKRRelation, LookupExtensionPairGKRRelationKernel, LookupPairGKRRelation,
+    LookupRationalPairWithUnbalancedBaseGKRRelation,
+    LookupRationalPairWithUnbalancedExtensionGKRRelation,
+    LookupRationalPairWithUnbalancedExtensionGKRRelationKernel, MaskIntoIdentityProductGKRRelation,
+    MaxQuadraticGKRRelation, SameSizeProductGKRRelation,
 };
 use crate::worker::Worker;
 use field::{Field, FieldExtension, PrimeField};
@@ -80,11 +83,11 @@ macro_rules! define_kernel_variants {
                 match self {
                     $(KernelVariant::$s_name(_, challenge, output_addr) => {
                         let mut res = challenge[0];
-                        res.mul_assign(
-                            output_claims
-                                .get(output_addr)
-                                .expect("output claim must exist"),
-                        );
+                        let Some(out_claim) = output_claims
+                            .get(output_addr) else {
+                                panic!("Claim missing for {:?} in kernel {:?}", output_addr, self);
+                            };
+                        res.mul_assign(out_claim);
                         res
                     })*
                     $(KernelVariant::$p_name(_, challenges, addrs) => {
@@ -95,7 +98,7 @@ macro_rules! define_kernel_variants {
                                 weighted.mul_assign(challenge);
                                 res.add_assign(&weighted);
                             } else {
-                                panic!("Claim missing for {:?}", addr);
+                                panic!("Claim missing for {:?} in kenrel {:?}", addr, self);
                             }
                         }
                         res
@@ -115,14 +118,17 @@ define_kernel_variants! {
         Product(SameSizeProductGKRRelation),
         MaskIdentity(MaskIntoIdentityProductGKRRelation),
         PairwiseProductDimensionReducing(PairwiseProductDimensionReducingGKRRelation),
+        MaxQuadratic(MaxQuadraticGKRRelation::<F, E>),
     }
     // 2 challenges, two outputs
     pair {
-        LookupPair(LookupPairGKRRelation),
+        AggregateLookupPair(LookupPairGKRRelation),
         LookupBasePair(LookupBasePairGKRRelation<F, E>),
+        LookupVectorPair(LookupExtensionPairGKRRelation<F, E>),
         LookupBaseMinusMultiplicityByBase(LookupBaseMinusMultiplicityByBaseGKRRelation<F, E>),
-        LookupUnbalanced(LookupRationalPairWithUnbalancedBaseGKRRelation<F, E>),
-        LookupWithCachedDensAndSetup(LookupBaseExtMinusBaseExtGKRRelation),
+        LookupUnbalancedWithBase(LookupRationalPairWithUnbalancedBaseGKRRelation<F, E>),
+        LookupUnbalancedWithExtension(LookupRationalPairWithUnbalancedExtensionGKRRelation<F, E>),
+        LookupMaskedVectorMinusSetup(LookupBaseExtMinusBaseExtGKRRelation<F, E>),
         LookupPairDimensionReducing(LookupPairDimensionReducingGKRRelation),
     }
     // single challenge, no output
@@ -203,9 +209,9 @@ impl<F: PrimeField, E: FieldExtension<F> + Field> KernelVariant<F, E> {
                     *output,
                 )
             }
-            NoFieldGKRRelation::LookupPair { input, output } => {
+            NoFieldGKRRelation::AggregateLookupRationalPair { input, output } => {
                 let challenges = [get_challenge(), get_challenge()];
-                Self::LookupPair(
+                Self::AggregateLookupPair(
                     LookupPairGKRRelation {
                         inputs: *input,
                         outputs: *output,
@@ -251,8 +257,26 @@ impl<F: PrimeField, E: FieldExtension<F> + Field> KernelVariant<F, E> {
                 output,
             } => {
                 let challenges = [get_challenge(), get_challenge()];
-                Self::LookupUnbalanced(
+                Self::LookupUnbalancedWithBase(
                     LookupRationalPairWithUnbalancedBaseGKRRelation {
+                        inputs: *input,
+                        remainder: *remainder,
+                        outputs: *output,
+                        lookup_additive_challenge: lookup_challenges_additive_part,
+                        _marker: core::marker::PhantomData,
+                    },
+                    challenges,
+                    *output,
+                )
+            }
+            NoFieldGKRRelation::LookupUnbalancedPairWithMaterializedVectorInputs {
+                input,
+                remainder,
+                output,
+            } => {
+                let challenges = [get_challenge(), get_challenge()];
+                Self::LookupUnbalancedWithExtension(
+                    LookupRationalPairWithUnbalancedExtensionGKRRelation {
                         inputs: *input,
                         remainder: *remainder,
                         outputs: *output,
@@ -269,11 +293,13 @@ impl<F: PrimeField, E: FieldExtension<F> + Field> KernelVariant<F, E> {
                 output,
             } => {
                 let challenges = [get_challenge(), get_challenge()];
-                Self::LookupWithCachedDensAndSetup(
+                Self::LookupMaskedVectorMinusSetup(
                     LookupBaseExtMinusBaseExtGKRRelation {
                         nums: [input[0], setup[0]],
                         dens: [input[1], setup[1]],
                         outputs: *output,
+                        lookup_additive_challenge: lookup_challenges_additive_part,
+                        _marker: core::marker::PhantomData,
                     },
                     challenges,
                     *output,
@@ -291,13 +317,34 @@ impl<F: PrimeField, E: FieldExtension<F> + Field> KernelVariant<F, E> {
                     challenge,
                 )
             }
-            NoFieldGKRRelation::UnbalancedGrandProductWithCache { .. } => todo!(),
-            NoFieldGKRRelation::MaterializeSingleLookupInput { .. } => todo!(),
-            NoFieldGKRRelation::MaterializedVectorLookupInput { .. } => todo!(),
-            NoFieldGKRRelation::LookupPairFromBaseInputs { .. } => todo!(),
-            NoFieldGKRRelation::LookupUnbalancedPairWithBaseInputs { .. } => todo!(),
-            NoFieldGKRRelation::LookupFromBaseInputsWithSetup { .. } => todo!(),
-            NoFieldGKRRelation::LookupPairFromVectorInputs { .. } => todo!(),
+            NoFieldGKRRelation::LookupPairFromMaterializedVectorInputs { input, output } => {
+                let challenges = [get_challenge(), get_challenge()];
+                Self::LookupVectorPair(
+                    LookupExtensionPairGKRRelation {
+                        inputs: *input,
+                        outputs: *output,
+                        lookup_additive_challenge: lookup_challenges_additive_part,
+                        _marker: core::marker::PhantomData,
+                    },
+                    challenges,
+                    *output,
+                )
+            }
+            NoFieldGKRRelation::MaxQuadratic { input, output } => {
+                let challenges = [get_challenge()];
+                Self::MaxQuadratic(
+                    MaxQuadraticGKRRelation::new(input, *output),
+                    challenges,
+                    *output,
+                )
+            }
+            // NoFieldGKRRelation::MaterializeSingleLookupInput { .. } => todo!(),
+            // NoFieldGKRRelation::MaterializedVectorLookupInput { .. } => todo!(),
+            // NoFieldGKRRelation::LookupPairFromBaseInputs { .. } => todo!(),
+            // NoFieldGKRRelation::LookupPairFromVectorInputs { .. } => todo!(),
+            a @ _ => {
+                panic!("Relation {:?} is not yet implemented", a);
+            }
         }
     }
 }
@@ -324,7 +371,9 @@ impl<F: PrimeField, E: FieldExtension<F> + Field> KernelCollector<F, E> {
     pub(super) fn register(&mut self, kernel: KernelVariant<F, E>) {
         // Kernels can have a bug in them, place to debug
         match kernel {
-            // KernelVariant::MaskIdentity(..) => {},
+            // KernelVariant::LookupVectorPair(..) => {},
+            // KernelVariant::EnforceConstraintsMaxQuadratic(..) => {},
+            // KernelVariant::LookupMaskedVectorMinusSetup(..) => {},
             _ => self.kernels.push(kernel),
         }
     }
@@ -550,7 +599,7 @@ impl<F: PrimeField, E: FieldExtension<F> + Field> KernelCollector<F, E> {
                         acc[j].add_assign(&val);
                     }
                 }
-                KernelVariant::LookupPair(rel, challenges, _) => {
+                KernelVariant::AggregateLookupPair(rel, challenges, _) => {
                     let k = LookupAdditionGKRRelationKernel::<F, E>::default();
                     for j in 0..2usize {
                         let in0 = efr(get(rel.inputs[0][0], j));
@@ -600,6 +649,29 @@ impl<F: PrimeField, E: FieldExtension<F> + Field> KernelCollector<F, E> {
                         acc[j].add_assign(&val1);
                     }
                 }
+                KernelVariant::LookupVectorPair(rel, challenges, _) => {
+                    let k = LookupExtensionPairGKRRelationKernel::<F, E>::new(
+                        rel.lookup_additive_challenge,
+                    );
+                    for j in 0..2usize {
+                        let in0 = efr(get(rel.inputs[0], j));
+                        let in1 = efr(get(rel.inputs[1], j));
+                        let computed = ExtensionFieldInOutFixedSizesEvaluationKernelCore::<
+                            F,
+                            E,
+                            2,
+                            2,
+                        >::pointwise_eval(&k, &[in0, in1]);
+
+                        let mut val0 = computed[0];
+                        val0.mul_assign(&challenges[0]);
+                        acc[j].add_assign(&val0);
+
+                        let mut val1 = computed[1];
+                        val1.mul_assign(&challenges[1]);
+                        acc[j].add_assign(&val1);
+                    }
+                }
                 KernelVariant::LookupBaseMinusMultiplicityByBase(rel, challenges, _) => {
                     let k = LookupBaseMinusMultiplicityByBaseGKRRelationKernel::<F, E>::new(
                         rel.lookup_additive_challenge,
@@ -627,7 +699,7 @@ impl<F: PrimeField, E: FieldExtension<F> + Field> KernelCollector<F, E> {
                         acc[j].add_assign(&val1);
                     }
                 }
-                KernelVariant::LookupUnbalanced(rel, challenges, _) => {
+                KernelVariant::LookupUnbalancedWithBase(rel, challenges, _) => {
                     let k = LookupRationalPairWithUnbalancedBaseGKRRelationKernel::<F, E>::new(
                         rel.lookup_additive_challenge,
                     );
@@ -654,8 +726,36 @@ impl<F: PrimeField, E: FieldExtension<F> + Field> KernelCollector<F, E> {
                         acc[j].add_assign(&val1);
                     }
                 }
-                KernelVariant::LookupWithCachedDensAndSetup(rel, challenges, _) => {
-                    let k = LookupBaseExtMinusBaseExtGKRRelationKernel::<F, E>::default();
+                KernelVariant::LookupUnbalancedWithExtension(rel, challenges, _) => {
+                    let k = LookupRationalPairWithUnbalancedExtensionGKRRelationKernel::<F, E>::new(
+                        rel.lookup_additive_challenge,
+                    );
+                    for j in 0..2usize {
+                        let in_ext0 = efr(get(rel.inputs[0], j));
+                        let in_ext1 = efr(get(rel.inputs[1], j));
+                        let remainder_in_ext = efr(get(rel.remainder, j));
+                        let computed = ExtensionFieldInOutFixedSizesEvaluationKernelCore::<
+                            F,
+                            E,
+                            3,
+                            2,
+                        >::pointwise_eval(
+                            &k, &[in_ext0, in_ext1, remainder_in_ext]
+                        );
+
+                        let mut val0 = computed[0];
+                        val0.mul_assign(&challenges[0]);
+                        acc[j].add_assign(&val0);
+
+                        let mut val1 = computed[1];
+                        val1.mul_assign(&challenges[1]);
+                        acc[j].add_assign(&val1);
+                    }
+                }
+                KernelVariant::LookupMaskedVectorMinusSetup(rel, challenges, _) => {
+                    let k = LookupBaseExtMinusBaseExtGKRRelationKernel::<F, E>::new(
+                        rel.lookup_additive_challenge,
+                    );
                     for j in 0..2usize {
                         let in_base0 = efr(get(rel.nums[0], j));
                         let in_base1 = efr(get(rel.nums[1], j));
@@ -678,6 +778,16 @@ impl<F: PrimeField, E: FieldExtension<F> + Field> KernelCollector<F, E> {
                         let mut val1 = computed[1];
                         val1.mul_assign(&challenges[1]);
                         acc[j].add_assign(&val1);
+                    }
+                }
+                KernelVariant::MaxQuadratic(rel, challenge, _) => {
+                    for j in 0..2usize {
+                        let inputs_vec: Vec<E> =
+                            rel.inputs.iter().map(|addr| get(*addr, j)).collect();
+                        let [val] = rel.kernel.pointwise_eval(&inputs_vec);
+                        let mut contrib = val;
+                        contrib.mul_assign(&challenge[0]);
+                        acc[j].add_assign(&contrib);
                     }
                 }
 

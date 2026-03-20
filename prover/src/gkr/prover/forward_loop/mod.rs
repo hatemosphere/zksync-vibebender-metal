@@ -1,6 +1,7 @@
 use super::*;
 use crate::gkr::sumcheck::access_and_fold::BaseFieldPoly;
 use crate::{cs::definitions::*, gkr::sumcheck::access_and_fold::ExtensionFieldPoly};
+use cs::definitions::gkr::RamWordRepresentation;
 use cs::gkr_compiler::{
     CompiledAddressSpaceRelationStrict, CompiledAddressStrict, NoFieldGKRRelation,
 };
@@ -10,6 +11,7 @@ use cs::{
 };
 
 pub(crate) mod copy;
+pub(crate) mod linear_and_max_quadratic;
 pub(crate) mod lookup_from_base_inputs;
 pub(crate) mod lookup_from_vector_inputs;
 pub(crate) mod lookup_pair;
@@ -94,13 +96,18 @@ fn evaluate_cache_relation<F: PrimeField, E: FieldExtension<F> + Field>(
                 };
 
                 let destination = destination.assume_init();
-                assert_eq!(layer_idx, 0);
-                gkr_storage.insert_base_field_at_layer(0, address, BaseFieldPoly::new(destination));
+                address.assert_as_layer(layer_idx);
+                gkr_storage.insert_base_field_at_layer(
+                    layer_idx,
+                    address,
+                    BaseFieldPoly::new(destination),
+                );
             }
             NoFieldGKRCacheRelation::MemoryTuple(rel) => {
                 let mut destination = Box::<[E], Global>::new_uninit_slice(trace_len);
                 let ext_destination = vec![&mut destination[..]];
                 let src_ref = &*gkr_storage;
+                let byte_shift = F::from_u32_unchecked(1u32 << 8);
                 apply_row_wise::<F, _>(
                     vec![],
                     ext_destination,
@@ -202,26 +209,65 @@ fn evaluate_cache_relation<F: PrimeField, E: FieldExtension<F> + Field>(
                                 result.add_assign(&t);
                             }
                             // and values are simplified for now
-                            for (idx, offset) in [
-                                (MEM_ARGUMENT_CHALLENGE_POWERS_VALUE_LOW_IDX, rel.value[0]),
-                                (MEM_ARGUMENT_CHALLENGE_POWERS_VALUE_HIGH_IDX, rel.value[1]),
-                            ] {
-                                let mut t = external_challenges
-                                    .permutation_argument_linearization_challenges[idx];
-                                let el = src_ref
-                                    .get_base_layer_mem(offset)
-                                    .get_unchecked(chunk_start + i);
-                                t.mul_assign_by_base(el);
-                                result.add_assign(&t);
+                            match rel.value {
+                                RamWordRepresentation::U16Limbs(read_value) => {
+                                    for (idx, offset) in [
+                                        (
+                                            MEM_ARGUMENT_CHALLENGE_POWERS_VALUE_LOW_IDX,
+                                            read_value[0],
+                                        ),
+                                        (
+                                            MEM_ARGUMENT_CHALLENGE_POWERS_VALUE_HIGH_IDX,
+                                            read_value[1],
+                                        ),
+                                    ] {
+                                        let mut t = external_challenges
+                                            .permutation_argument_linearization_challenges[idx];
+                                        let el = src_ref
+                                            .get_base_layer_mem(offset)
+                                            .get_unchecked(chunk_start + i);
+                                        t.mul_assign_by_base(el);
+                                        result.add_assign(&t);
+                                    }
+                                }
+                                RamWordRepresentation::U8Limbs(read_value_bytes) => {
+                                    for (idx, offset_low, offset_high) in [
+                                        (
+                                            MEM_ARGUMENT_CHALLENGE_POWERS_VALUE_LOW_IDX,
+                                            read_value_bytes[0],
+                                            read_value_bytes[1],
+                                        ),
+                                        (
+                                            MEM_ARGUMENT_CHALLENGE_POWERS_VALUE_HIGH_IDX,
+                                            read_value_bytes[2],
+                                            read_value_bytes[3],
+                                        ),
+                                    ] {
+                                        let mut t = external_challenges
+                                            .permutation_argument_linearization_challenges[idx];
+                                        let el = src_ref
+                                            .get_base_layer_mem(offset_low)
+                                            .get_unchecked(chunk_start + i);
+                                        let mut recomposed = *src_ref
+                                            .get_base_layer_mem(offset_high)
+                                            .get_unchecked(chunk_start + i);
+                                        recomposed.mul_assign(&byte_shift);
+                                        recomposed.add_assign(el);
+                                        t.mul_assign_by_base(&recomposed);
+                                        result.add_assign(&t);
+                                    }
+                                }
                             }
+
                             dest.get_unchecked_mut(i).write(result);
                         }
                     },
                 );
                 let destination = destination.assume_init();
                 assert_eq!(layer_idx, 0);
+                address.assert_as_layer(layer_idx);
                 gkr_storage.insert_extension_at_layer(
-                    0,
+                    layer_idx,
                     address,
                     ExtensionFieldPoly::new(destination),
                 );
@@ -259,9 +305,9 @@ fn evaluate_cache_relation<F: PrimeField, E: FieldExtension<F> + Field>(
                     },
                 );
                 let destination = destination.assume_init();
-                assert_eq!(layer_idx, 0);
+                address.assert_as_layer(layer_idx);
                 gkr_storage.insert_extension_at_layer(
-                    0,
+                    layer_idx,
                     address,
                     ExtensionFieldPoly::new(destination),
                 );
@@ -270,8 +316,7 @@ fn evaluate_cache_relation<F: PrimeField, E: FieldExtension<F> + Field>(
                 let mut destination = Box::<[E], Global>::new_uninit_slice(trace_len);
                 destination[..preprocessed_generic_lookup.len()]
                     .write_copy_of_slice(preprocessed_generic_lookup);
-                let _ = destination[preprocessed_generic_lookup.len()..]
-                    .write_filled(lookup_challenges_additive_part);
+                let _ = destination[preprocessed_generic_lookup.len()..].write_filled(E::ZERO);
                 let destination = destination.assume_init();
                 assert_eq!(layer_idx, 0);
                 gkr_storage.insert_extension_at_layer(
@@ -298,6 +343,10 @@ pub fn evaluate_layer<F: PrimeField, E: FieldExtension<F> + Field>(
     worker: &Worker,
 ) {
     println!("Evaluating layer {} in forward direction", layer_idx);
+    assert_eq!(
+        compiled_circuit.scratch_space_mapping.len(),
+        compiled_circuit.scratch_space_mapping_rev.len()
+    );
 
     if layer_idx == 0 {
         // move base field polys
@@ -324,6 +373,33 @@ pub fn evaluate_layer<F: PrimeField, E: FieldExtension<F> + Field>(
                 GKRAddress::BaseLayerWitness(i),
                 BaseFieldPoly::new(poly.into_boxed_slice()),
             );
+        }
+    } else {
+        // we can still get some intermediate polys already computed and form
+        // the scratch space, and we will insert them here
+        for (i, poly) in witness_trace
+            .column_major_scratch_space_trace
+            .iter_mut()
+            .enumerate()
+        {
+            if let Some(place) = compiled_circuit.scratch_space_mapping_rev.get(&i) {
+                if let GKRAddress::InnerLayer { layer, .. } = *place {
+                    if layer == layer_idx {
+                        assert!(
+                            poly.is_empty() == false,
+                            "trying to fill {:?} from scratch space, but it's source is empty",
+                            place
+                        );
+                        let poly = core::mem::replace(poly, vec![]);
+                        gkr_storage.insert_base_field_at_layer(
+                            layer_idx,
+                            *place,
+                            BaseFieldPoly::new(poly.into_boxed_slice()),
+                        );
+                        println!("Filled intermediate poly {:?} from scratch space", place);
+                    }
+                }
+            }
         }
     }
 
@@ -420,9 +496,6 @@ pub fn evaluate_layer<F: PrimeField, E: FieldExtension<F> + Field>(
             NoFieldGKRRelation::EnforceConstraintsMaxQuadratic { .. } => {
                 // we do nothing as it should result in all zeroes in case if constraints are satisfied
             }
-            NoFieldGKRRelation::LookupFromBaseInputsWithSetup { .. } => {
-                unimplemented!("not used");
-            }
             NoFieldGKRRelation::LookupFromMaterializedBaseInputWithSetup {
                 input,
                 setup,
@@ -440,6 +513,25 @@ pub fn evaluate_layer<F: PrimeField, E: FieldExtension<F> + Field>(
                     worker,
                 );
             }
+            NoFieldGKRRelation::LookupWithCachedDensAndSetup {
+                input,
+                setup,
+                output,
+            } => {
+                // println!("Should evaluate {:?}", &gate.enforced_relation);
+                lookup_from_vector_inputs::forward_evaluate_masked_lookup_from_vector_inputs_with_setup(*input, *setup, *output, gkr_storage, expected_output_layer, trace_len, lookup_challenges_additive_part, worker);
+            }
+            NoFieldGKRRelation::AggregateLookupRationalPair { input, output } => {
+                // println!("Should evaluate {:?}", &gate.enforced_relation);
+                lookup_pair::forward_evaluate_lookup_pair(
+                    *input,
+                    *output,
+                    gkr_storage,
+                    expected_output_layer,
+                    trace_len,
+                    worker,
+                );
+            }
             NoFieldGKRRelation::LookupPairFromMaterializedBaseInputs { input, output } => {
                 // println!("Should evaluate {:?}", &gate.enforced_relation);
                 lookup_from_base_inputs::forward_evaluate_lookup_base_inputs_pair(
@@ -449,25 +541,6 @@ pub fn evaluate_layer<F: PrimeField, E: FieldExtension<F> + Field>(
                     expected_output_layer,
                     trace_len,
                     lookup_challenges_additive_part,
-                    worker,
-                );
-            }
-            NoFieldGKRRelation::LookupWithCachedDensAndSetup {
-                input,
-                setup,
-                output,
-            } => {
-                // println!("Should evaluate {:?}", &gate.enforced_relation);
-                lookup_from_vector_inputs::forward_evaluate_masked_lookup_from_vector_inputs_with_setup(*input, *setup, *output, gkr_storage, expected_output_layer, trace_len, worker);
-            }
-            NoFieldGKRRelation::LookupPair { input, output } => {
-                // println!("Should evaluate {:?}", &gate.enforced_relation);
-                lookup_pair::forward_evaluate_lookup_pair(
-                    *input,
-                    *output,
-                    gkr_storage,
-                    expected_output_layer,
-                    trace_len,
                     worker,
                 );
             }
@@ -488,8 +561,45 @@ pub fn evaluate_layer<F: PrimeField, E: FieldExtension<F> + Field>(
                     worker,
                 );
             }
+            NoFieldGKRRelation::LookupUnbalancedPairWithMaterializedVectorInputs {
+                input,
+                remainder,
+                output,
+            } => {
+                // println!("Should evaluate {:?}", &gate.enforced_relation);
+                lookup_from_vector_inputs::forward_evaluate_lookup_rational_with_vector_remainder_input(
+                    *input,
+                    *remainder,
+                    *output,
+                    gkr_storage,
+                    expected_output_layer,
+                    trace_len,
+                    lookup_challenges_additive_part,
+                    worker,
+                );
+            }
+            NoFieldGKRRelation::LookupPairFromMaterializedVectorInputs { input, output } => {
+                // println!("Should evaluate {:?}", &gate.enforced_relation);
+                lookup_from_vector_inputs::forward_evaluate_lookup_from_vector_inputs_pair(
+                    *input,
+                    *output,
+                    gkr_storage,
+                    expected_output_layer,
+                    trace_len,
+                    lookup_challenges_additive_part,
+                    worker,
+                );
+            }
+            NoFieldGKRRelation::MaxQuadratic { input, output } => {
+                if compiled_circuit.scratch_space_mapping.contains_key(output) {
+                    // a value of it will be filled from scratch space in the next round
+                } else {
+                    println!("Need to evaluate {:?} -> {:?}", input, output);
+                    todo!();
+                }
+            }
             rel @ _ => {
-                println!("Should evaluate {:?}", rel);
+                panic!("Should evaluate {:?}", rel);
             }
         }
         // println!(

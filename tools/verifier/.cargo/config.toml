@@ -11,3 +11,4 @@ rustflags = [
 
 [unstable]
 panic-immediate-abort = true
+build-std = ["core", "alloc"]

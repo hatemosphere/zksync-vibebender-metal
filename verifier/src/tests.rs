@@ -1,21 +1,3 @@
-use core::mem::offset_of;
-
-use super::*;
-#[cfg(test)]
-use prover::prover_stages::Proof;
-#[cfg(feature = "legacy_tests")]
-use verifier_common::proof_flattener::*;
-use verifier_common::prover::nd_source_std::*;
-use verifier_common::{
-    cs::one_row_compiler::CompiledCircuitArtifact, DefaultLeafInclusionVerifier,
-};
-
-#[allow(dead_code)]
-fn serialize_to_file<T: serde::Serialize>(el: &T, filename: &str) {
-    let mut dst = std::fs::File::create(filename).unwrap();
-    serde_json::to_writer_pretty(&mut dst, el).unwrap();
-}
-
 fn deserialize_from_file<T: serde::de::DeserializeOwned>(filename: &str) -> T {
     let src = std::fs::File::open(filename).unwrap();
     serde_json::from_reader(src).unwrap()

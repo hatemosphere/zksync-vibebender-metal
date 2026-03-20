@@ -87,7 +87,7 @@ impl<F: PrimeField, E: FieldExtension<F> + Field> BatchedGKRKernel<F, E>
     }
 }
 
-// Assumes reordering of access implementors, to have lhs at 0 and rhs at 1
+// Takes inputs without additive constant
 pub struct LookupBasePairGKRRelationKernel<F: PrimeField, E: FieldExtension<F> + Field> {
     pub lookup_additive_challenge: E,
     _marker: core::marker::PhantomData<(F, E)>,
@@ -249,7 +249,7 @@ fn pointwise_eval_impl<
     ctx: &RB::CollapseContext,
     lookup_additive_challenge: &E,
 ) -> [E; 2] {
-    // 1/b + 1/d -> (b + d), bd
+    // 1/(b+gamma) + 1/(d + gamma) -> (b + d), bd
     let [b, d] = input;
     let b = b.add_with_ext::<true>(lookup_additive_challenge, ctx);
     let d = d.add_with_ext::<true>(lookup_additive_challenge, ctx);
@@ -271,7 +271,7 @@ fn pointwise_eval_quadratic_only_impl<
     input: &[RB; 2],
     ctx: &RB::CollapseContext,
 ) -> [E; 2] {
-    // 1/b + 1/d -> zero, bd
+    // 1/(b+gamma) + 1/(d+gamma) -> zero, bd
     let [b, d] = input;
     let d_ext = d.mul_by_ext::<true>(&E::ONE, ctx);
     let den = b.mul_by_ext::<true>(&d_ext, ctx);

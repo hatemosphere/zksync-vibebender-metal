@@ -1,9 +1,6 @@
 use super::*;
-use crate::cs::circuit::ShuffleRamMemQuery;
-use crate::cs::circuit::ShuffleRamQueryType;
+use crate::cs::circuit_trait::{MemoryAccess, RegisterAccess, WordRepresentation};
 use crate::definitions::Variable;
-use crate::one_row_compiler::compile_layout::ShuffleRamTimestampComparisonPartialData;
-use crate::types::Boolean;
 
 #[derive(Clone, Hash, Debug, PartialEq, Eq)]
 pub enum GrandProductAccumulationStep {
@@ -136,7 +133,7 @@ impl GKRGate for GrandProductAccumulationMaskingNode {
 pub(crate) fn layout_initial_grand_product_accumulation(
     graph: &mut impl GraphHolder,
     predicate: Variable,
-    shuffle_ram_augmented_sets: &[(ShuffleRamMemQuery, ShuffleRamTimestampComparisonPartialData)],
+    ram_augmented_sets: &[(MemoryAccess, ShuffleRamTimestampComparisonPartialData)],
     cycle_start_timestamp: [Variable; 2],
     cycle_start_pc: [Variable; 2],
     cycle_end_timestamp: [Variable; 2],
@@ -149,72 +146,76 @@ pub(crate) fn layout_initial_grand_product_accumulation(
 
     let copied_predicate_for_grand_product_masking = graph.copy_base_layer_variable(predicate);
 
-    for [a, b] in shuffle_ram_augmented_sets.as_chunks::<2>().0.iter() {
+    for [a, b] in ram_augmented_sets.as_chunks::<2>().0.iter() {
         // we construct read and write sets separately
         let mut read_set = vec![];
         let mut write_set = vec![];
         for (query, aux) in [a, b] {
-            let read_set_el = match query.query_type {
-                ShuffleRamQueryType::RegisterOnly { register_index } => {
+            let read_set_el = match query {
+                MemoryAccess::RegisterOnly(RegisterAccess { reg_idx, .. }) => {
                     MemoryPermutationExpression {
-                        address: AddressSpaceAddress::SingleLimb(register_index),
+                        address: AddressSpaceAddress::SingleLimb(*reg_idx),
                         address_space: AddressSpace::Constant(AddressSpaceType::Register),
                         timestamp: aux.read_timestamp,
-                        value: query.read_value,
+                        value: query.read_value(),
                         timestamp_offset: 0,
                     }
                 }
-                ShuffleRamQueryType::RegisterOrRam {
-                    is_register,
-                    address,
-                } => {
-                    let address_space_inner = match is_register {
-                        Boolean::Is(var) => AddressSpaceIsRegister::Is(var),
-                        Boolean::Not(var) => AddressSpaceIsRegister::Not(var),
-                        Boolean::Constant(..) => {
-                            unreachable!()
-                        }
-                    };
-                    MemoryPermutationExpression {
-                        address: AddressSpaceAddress::U32Space(address),
-                        address_space: AddressSpace::RegisterOrRam(address_space_inner),
-                        timestamp: aux.read_timestamp,
-                        value: query.read_value,
-                        timestamp_offset: 0,
-                    }
-                }
+                MemoryAccess::RegisterOrRam(..) => {
+                    todo!();
+                } // ShuffleRamQueryType::RegisterOrRam {
+                  //     is_register,
+                  //     address,
+                  // } => {
+                  //     let address_space_inner = match is_register {
+                  //         Boolean::Is(var) => AddressSpaceIsRegister::Is(var),
+                  //         Boolean::Not(var) => AddressSpaceIsRegister::Not(var),
+                  //         Boolean::Constant(..) => {
+                  //             unreachable!()
+                  //         }
+                  //     };
+                  //     MemoryPermutationExpression {
+                  //         address: AddressSpaceAddress::U32Space(address),
+                  //         address_space: AddressSpace::RegisterOrRam(address_space_inner),
+                  //         timestamp: aux.read_timestamp,
+                  //         value: query.read_value,
+                  //         timestamp_offset: 0,
+                  //     }
+                  // }
             };
             read_set.push(read_set_el);
 
-            let write_set_el = match query.query_type {
-                ShuffleRamQueryType::RegisterOnly { register_index } => {
+            let write_set_el = match query {
+                MemoryAccess::RegisterOnly(RegisterAccess { reg_idx, .. }) => {
                     MemoryPermutationExpression {
-                        address: AddressSpaceAddress::SingleLimb(register_index),
+                        address: AddressSpaceAddress::SingleLimb(*reg_idx),
                         address_space: AddressSpace::Constant(AddressSpaceType::Register),
                         timestamp: cycle_start_timestamp,
-                        value: query.write_value,
-                        timestamp_offset: query.local_timestamp_in_cycle as u32,
+                        value: query.write_value(),
+                        timestamp_offset: query.local_timestamp_in_cycle(),
                     }
                 }
-                ShuffleRamQueryType::RegisterOrRam {
-                    is_register,
-                    address,
-                } => {
-                    let address_space_inner = match is_register {
-                        Boolean::Is(var) => AddressSpaceIsRegister::Is(var),
-                        Boolean::Not(var) => AddressSpaceIsRegister::Not(var),
-                        Boolean::Constant(..) => {
-                            unreachable!()
-                        }
-                    };
-                    MemoryPermutationExpression {
-                        address: AddressSpaceAddress::U32Space(address),
-                        address_space: AddressSpace::RegisterOrRam(address_space_inner),
-                        timestamp: cycle_start_timestamp,
-                        value: query.write_value,
-                        timestamp_offset: query.local_timestamp_in_cycle as u32,
-                    }
-                }
+                MemoryAccess::RegisterOrRam(..) => {
+                    todo!();
+                } // ShuffleRamQueryType::RegisterOrRam {
+                  //     is_register,
+                  //     address,
+                  // } => {
+                  //     let address_space_inner = match is_register {
+                  //         Boolean::Is(var) => AddressSpaceIsRegister::Is(var),
+                  //         Boolean::Not(var) => AddressSpaceIsRegister::Not(var),
+                  //         Boolean::Constant(..) => {
+                  //             unreachable!()
+                  //         }
+                  //     };
+                  //     MemoryPermutationExpression {
+                  //         address: AddressSpaceAddress::U32Space(address),
+                  //         address_space: AddressSpace::RegisterOrRam(address_space_inner),
+                  //         timestamp: cycle_start_timestamp,
+                  //         value: query.write_value,
+                  //         timestamp_offset: query.local_timestamp_in_cycle as u32,
+                  //     }
+                  // }
             };
             write_set.push(write_set_el);
         }
@@ -236,8 +237,8 @@ pub(crate) fn layout_initial_grand_product_accumulation(
         grand_product_write_accumulation_nodes.push(write_set_node);
     }
 
-    if shuffle_ram_augmented_sets.as_chunks::<2>().1.is_empty() == false {
-        let last_el = shuffle_ram_augmented_sets.as_chunks::<2>().1[0].clone();
+    if ram_augmented_sets.as_chunks::<2>().1.is_empty() == false {
+        let last_el = ram_augmented_sets.as_chunks::<2>().1[0].clone();
         // we tread PC permutation as a part of our global permutation under all the same rules
 
         let mut read_set = vec![];
@@ -246,66 +247,34 @@ pub(crate) fn layout_initial_grand_product_accumulation(
         // memory
         {
             let (query, aux) = last_el;
-            let read_set_el = match query.query_type {
-                ShuffleRamQueryType::RegisterOnly { register_index } => {
+            let read_set_el = match query {
+                MemoryAccess::RegisterOnly(RegisterAccess { reg_idx, .. }) => {
                     MemoryPermutationExpression {
-                        address: AddressSpaceAddress::SingleLimb(register_index),
+                        address: AddressSpaceAddress::SingleLimb(reg_idx),
                         address_space: AddressSpace::Constant(AddressSpaceType::Register),
                         timestamp: aux.read_timestamp,
-                        value: query.read_value,
+                        value: query.read_value(),
                         timestamp_offset: 0,
                     }
                 }
-                ShuffleRamQueryType::RegisterOrRam {
-                    is_register,
-                    address,
-                } => {
-                    let address_space_inner = match is_register {
-                        Boolean::Is(var) => AddressSpaceIsRegister::Is(var),
-                        Boolean::Not(var) => AddressSpaceIsRegister::Not(var),
-                        Boolean::Constant(..) => {
-                            unreachable!()
-                        }
-                    };
-                    MemoryPermutationExpression {
-                        address: AddressSpaceAddress::U32Space(address),
-                        address_space: AddressSpace::RegisterOrRam(address_space_inner),
-                        timestamp: aux.read_timestamp,
-                        value: query.read_value,
-                        timestamp_offset: 0,
-                    }
+                MemoryAccess::RegisterOrRam(..) => {
+                    todo!();
                 }
             };
             read_set.push(read_set_el);
 
-            let write_set_el = match query.query_type {
-                ShuffleRamQueryType::RegisterOnly { register_index } => {
+            let write_set_el = match query {
+                MemoryAccess::RegisterOnly(RegisterAccess { reg_idx, .. }) => {
                     MemoryPermutationExpression {
-                        address: AddressSpaceAddress::SingleLimb(register_index),
+                        address: AddressSpaceAddress::SingleLimb(reg_idx),
                         address_space: AddressSpace::Constant(AddressSpaceType::Register),
                         timestamp: cycle_start_timestamp,
-                        value: query.write_value,
-                        timestamp_offset: query.local_timestamp_in_cycle as u32,
+                        value: query.write_value(),
+                        timestamp_offset: query.local_timestamp_in_cycle(),
                     }
                 }
-                ShuffleRamQueryType::RegisterOrRam {
-                    is_register,
-                    address,
-                } => {
-                    let address_space_inner = match is_register {
-                        Boolean::Is(var) => AddressSpaceIsRegister::Is(var),
-                        Boolean::Not(var) => AddressSpaceIsRegister::Not(var),
-                        Boolean::Constant(..) => {
-                            unreachable!()
-                        }
-                    };
-                    MemoryPermutationExpression {
-                        address: AddressSpaceAddress::U32Space(address),
-                        address_space: AddressSpace::RegisterOrRam(address_space_inner),
-                        timestamp: cycle_start_timestamp,
-                        value: query.write_value,
-                        timestamp_offset: query.local_timestamp_in_cycle as u32,
-                    }
+                MemoryAccess::RegisterOrRam(..) => {
+                    todo!();
                 }
             };
             write_set.push(write_set_el);
@@ -317,7 +286,7 @@ pub(crate) fn layout_initial_grand_product_accumulation(
                 address: AddressSpaceAddress::Empty,
                 address_space: AddressSpace::Constant(AddressSpaceType::PC),
                 timestamp: cycle_start_timestamp,
-                value: cycle_start_pc,
+                value: WordRepresentation::U16Limbs(cycle_start_pc),
                 timestamp_offset: 0,
             };
             read_set.push(read_set_el);
@@ -326,7 +295,7 @@ pub(crate) fn layout_initial_grand_product_accumulation(
                 address: AddressSpaceAddress::Empty,
                 address_space: AddressSpace::Constant(AddressSpaceType::PC),
                 timestamp: cycle_end_timestamp,
-                value: cycle_end_pc,
+                value: WordRepresentation::U16Limbs(cycle_end_pc),
                 timestamp_offset: 0,
             };
             write_set.push(write_set_el);

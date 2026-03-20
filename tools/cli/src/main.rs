@@ -5,29 +5,26 @@
 use base64::Engine;
 use clap::{Parser, Subcommand, ValueEnum};
 use cli_lib::prover_utils::{
-    default_backend_for_build, serialize_to_file, u32_from_hex_string, CpuConfig, GpuConfig,
-    ProgramProver, ProgramProverConfig, ProgramSource, ProofTarget, ProverBackend,
+    default_backend_for_build, deserialize_from_file, serialize_to_file, u32_from_hex_string,
+    CpuConfig, GpuConfig, ProgramProver, ProgramProverConfig, ProgramSource, ProofArtifact,
+    ProofTarget, ProverBackend,
 };
-#[cfg(any(
-    feature = "include_verifiers",
-    feature = "include_verifiers_80",
-    feature = "include_verifiers_100"
-))]
-use cli_lib::prover_utils::{deserialize_from_file, ProofArtifact};
+use execution_utils::setups::read_binary;
 use reqwest::blocking::Client;
+use riscv_transpiler::ir::{
+    preprocess_bytecode, DecodingOptions, FullUnsignedMachineDecoderConfig,
+    ReducedMachineDecoderConfig,
+};
+use riscv_transpiler::vm::{DelegationsCounters, RamWithRomRegion, SimpleTape, State, VM};
 use serde::Serialize;
 use serde_json::Value;
 use std::path::Path;
 use std::{fs, iter};
 
-use prover::risc_v_simulator::{
-    abstractions::non_determinism::QuasiUARTSource,
-    cycle::{IMStandardIsaConfigWithUnsignedMulDiv, IWithoutByteAccessIsaConfigWithDelegation},
-    runner::run_simple_with_entry_point_and_non_determimism_source_for_config,
-    sim::SimulatorConfig,
-};
+use riscv_transpiler::abstractions::non_determinism::QuasiUARTSource;
 
 const DEFAULT_CYCLES: usize = 32_000_000;
+const DEFAULT_RUN_RAM_BOUND_BYTES: usize = 1 << 30;
 
 #[derive(Parser)]
 #[command(version, about, long_about = None)]
@@ -128,6 +125,27 @@ enum Commands {
         #[arg(long, default_value_t = 8)]
         gpu_replay_threads: usize,
     },
+    /// Continue staged proving from an existing proof artifact.
+    ContinueProof {
+        #[arg(short, long)]
+        proof: String,
+        #[arg(short, long)]
+        bin: String,
+        #[arg(long)]
+        text: Option<String>,
+        #[arg(long, default_value = "output")]
+        output_dir: String,
+        #[arg(long, default_value = "proof.json")]
+        output_file: String,
+        #[arg(long, value_enum, default_value = "recursion-unified")]
+        target: ProofTarget,
+        #[arg(long, default_value_t = 1 << 31)]
+        cpu_cycles_bound: usize,
+        #[arg(long, default_value_t = 1 << 30)]
+        cpu_ram_bound: usize,
+        #[arg(long)]
+        cpu_worker_threads: Option<usize>,
+    },
     /// Verify a single proof artifact.
     Verify {
         #[arg(short, long)]
@@ -137,10 +155,12 @@ enum Commands {
         #[arg(long)]
         text: Option<String>,
     },
-    /// Run binary in the simulator.
+    /// Run binary via the transpiler VM.
     Run {
         #[arg(short, long)]
         bin: String,
+        #[arg(long)]
+        text: Option<String>,
         #[clap(flatten)]
         input: InputConfig,
         #[arg(long)]
@@ -242,6 +262,15 @@ fn make_prover_config(
     }
 }
 
+fn write_artifact(artifact: &ProofArtifact, output_dir: &str, output_file: &str) {
+    let output_path = Path::new(output_dir).join(output_file);
+    if let Some(parent) = output_path.parent() {
+        fs::create_dir_all(parent).expect("Failed to create output directory");
+    }
+    serialize_to_file(artifact, &output_path);
+    println!("Proof artifact written to {}", output_path.display());
+}
+
 fn main() {
     env_logger::Builder::from_env(env_logger::Env::default().default_filter_or("info"))
         .format_timestamp_millis()
@@ -286,12 +315,7 @@ fn main() {
                 .prove_words(batch_id, input_words)
                 .unwrap_or_else(|e| panic!("Proving failed: {}", e));
 
-            let output_path = Path::new(&output_dir).join(output_file);
-            if let Some(parent) = output_path.parent() {
-                fs::create_dir_all(parent).expect("Failed to create output directory");
-            }
-            serialize_to_file(&artifact, &output_path);
-            println!("Proof artifact written to {}", output_path.display());
+            write_artifact(&artifact, &output_dir, &output_file);
         }
         Commands::ProveBatch {
             bin,
@@ -354,35 +378,46 @@ fn main() {
             serialize_to_file(&summary, &summary_path);
             println!("Batch summary written to {}", summary_path.display());
         }
+        Commands::ContinueProof {
+            proof,
+            bin,
+            text,
+            output_dir,
+            output_file,
+            target,
+            cpu_cycles_bound,
+            cpu_ram_bound,
+            cpu_worker_threads,
+        } => {
+            let input_artifact: ProofArtifact = deserialize_from_file(&proof);
+            let source = ProgramSource::from_paths(bin, text);
+            let prover_config = make_prover_config(
+                target,
+                Some(ProverBackend::Cpu),
+                cpu_cycles_bound,
+                cpu_ram_bound,
+                cpu_worker_threads,
+                8,
+            );
+
+            let prover = ProgramProver::new(source, prover_config)
+                .unwrap_or_else(|e| panic!("Failed to create prover: {}", e));
+            let artifact = prover
+                .continue_artifact(input_artifact)
+                .unwrap_or_else(|e| panic!("Continuation failed: {}", e));
+
+            write_artifact(&artifact, &output_dir, &output_file);
+        }
         Commands::Verify { proof, bin, text } => {
-            #[cfg(any(
-                feature = "include_verifiers",
-                feature = "include_verifiers_80",
-                feature = "include_verifiers_100"
-            ))]
-            {
-                let artifact: ProofArtifact = deserialize_from_file(&proof);
-                let source = ProgramSource::from_paths(bin, text);
-                let output = cli_lib::prover_utils::verify_artifact(&artifact, &source)
-                    .unwrap_or_else(|e| panic!("Verification failed: {}", e));
-                println!("PROOF IS VALID. output={:?}", output);
-            }
-            #[cfg(not(any(
-                feature = "include_verifiers",
-                feature = "include_verifiers_80",
-                feature = "include_verifiers_100"
-            )))]
-            {
-                let _ = proof;
-                let _ = bin;
-                let _ = text;
-                panic!(
-                    "Verify command is not available: compile with include_verifiers_80 or include_verifiers_100"
-                );
-            }
+            let artifact: ProofArtifact = deserialize_from_file(&proof);
+            let source = ProgramSource::from_paths(bin, text);
+            let output = cli_lib::prover_utils::verify_artifact(&artifact, &source)
+                .unwrap_or_else(|e| panic!("Verification failed: {}", e));
+            println!("PROOF IS VALID. output={:?}", output);
         }
         Commands::Run {
             bin,
+            text,
             input,
             cycles,
             expected_results,
@@ -391,8 +426,9 @@ fn main() {
             let input_words = fetch_input_data(&input)
                 .expect("Failed to fetch input")
                 .unwrap_or_default();
+            let source = ProgramSource::from_paths(bin, text);
             run_binary(
-                &bin,
+                &source,
                 cycles.unwrap_or(DEFAULT_CYCLES),
                 input_words,
                 expected_results,
@@ -403,40 +439,36 @@ fn main() {
 }
 
 fn run_binary(
-    bin_path: &str,
+    source: &ProgramSource,
     cycles: usize,
     input_data: Vec<u32>,
     expected_results: Option<Vec<u32>>,
     machine: RunMachine,
 ) {
-    let config = SimulatorConfig {
-        bin: prover::risc_v_simulator::sim::BinarySource::Path(bin_path.into()),
-        cycles,
-        entry_point: 0,
-        diagnostics: None,
+    let (_, binary_image) = read_binary(Path::new(&source.bin_path));
+    let (_, text_section) = read_binary(Path::new(&source.text_path));
+
+    let (registers, finished) = match machine {
+        RunMachine::FullUnsigned => run_binary_with_decoder::<FullUnsignedMachineDecoderConfig>(
+            &binary_image,
+            &text_section,
+            cycles,
+            input_data,
+        ),
+        RunMachine::Reduced => run_binary_with_decoder::<ReducedMachineDecoderConfig>(
+            &binary_image,
+            &text_section,
+            cycles,
+            input_data,
+        ),
     };
 
-    let mut non_determinism_source = QuasiUARTSource::default();
-    for entry in input_data {
-        non_determinism_source.oracle.push_back(entry);
+    if !finished {
+        println!(
+            "Program did not finish within {} cycles; reporting current register state",
+            cycles
+        );
     }
-
-    let registers = match machine {
-        RunMachine::FullUnsigned => {
-            let result = run_simple_with_entry_point_and_non_determimism_source_for_config::<
-                _,
-                IMStandardIsaConfigWithUnsignedMulDiv,
-            >(config, non_determinism_source);
-            result.state.registers
-        }
-        RunMachine::Reduced => {
-            let result = run_simple_with_entry_point_and_non_determimism_source_for_config::<
-                _,
-                IWithoutByteAccessIsaConfigWithDelegation,
-            >(config, non_determinism_source);
-            result.state.registers
-        }
-    };
 
     let result = registers[10..26]
         .iter()
@@ -461,4 +493,36 @@ fn run_binary(
             }
         }
     }
+}
+
+fn run_binary_with_decoder<D: DecodingOptions>(
+    binary_image: &[u32],
+    text_section: &[u32],
+    cycles: usize,
+    input_data: Vec<u32>,
+) -> ([u32; 32], bool) {
+    // The CLI now mirrors the active proving path: ROM comes from `.bin`, while
+    // instruction decoding comes from the paired `.text` section.
+    let instructions = preprocess_bytecode::<D>(text_section);
+    let tape = SimpleTape::new(&instructions);
+    let mut ram =
+        RamWithRomRegion::<{ prover::common_constants::rom::ROM_SECOND_WORD_BITS }>::from_rom_content(
+            binary_image,
+            DEFAULT_RUN_RAM_BOUND_BYTES,
+        );
+
+    // We only need final registers for `cli run`, so counters are enough and
+    // the no-op snapshotter keeps the execution path lightweight.
+    let mut state = State::initial_with_counters(DelegationsCounters::default());
+    let mut non_determinism_source = QuasiUARTSource::new_with_reads(input_data);
+    let finished = VM::<DelegationsCounters>::run_basic_unrolled(
+        &mut state,
+        &mut ram,
+        &mut (),
+        &tape,
+        cycles,
+        &mut non_determinism_source,
+    );
+
+    (state.registers.map(|register| register.value), finished)
 }

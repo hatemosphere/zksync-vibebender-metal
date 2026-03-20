@@ -1,7 +1,7 @@
 use super::*;
 use crate::witness_evaluator::memory_witness::main_circuit::get_aux_boundary_data;
 use crate::WitnessEvaluationData;
-use cs::cs::oracle::Oracle;
+use cs::oracle::*;
 use cs::one_row_compiler::CompiledCircuitArtifact;
 use cs::tables::TableDriver;
 use fft::GoodAllocator;

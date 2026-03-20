@@ -1,14 +1,10 @@
 use crate::constraint::Constraint;
 use crate::constraint::Term;
-use crate::cs::circuit::*;
-use crate::cs::placeholder::Placeholder;
-use crate::cs::witness_placer::WitnessComputationalInteger;
-use crate::cs::witness_placer::WitnessComputationalU16;
-use crate::cs::witness_placer::WitnessPlacer;
+use crate::cs::circuit_trait::Circuit;
 use crate::definitions::*;
-use crate::devices::optimization_context::OptimizationContext;
-use crate::one_row_compiler::LookupInput;
-use crate::tables::TableType;
+use crate::oracle::*;
+use crate::witness_placer::*;
+// // use crate::tables::TableType;
 use field::PrimeField;
 
 pub const LIMB_WIDTH: usize = 16;
@@ -18,12 +14,6 @@ pub const LIMB_MASK: u64 = (1 << LIMB_WIDTH) - 1;
 pub enum Num<F: PrimeField> {
     Var(Variable),
     Constant(F),
-}
-
-impl TableType {
-    pub fn to_num<F: PrimeField>(self) -> Num<F> {
-        Num::Constant(F::from_u32_unchecked(self.to_table_id() as u32))
-    }
 }
 
 impl<F: PrimeField> Num<F> {
@@ -165,7 +155,6 @@ impl Boolean {
 
         //setting values
         let value_fn = move |placer: &mut CS::WitnessPlacer| {
-            use crate::cs::witness_placer::*;
             let input_value = placer.get_field(input).as_integer();
 
             for idx in 0..N {
@@ -528,7 +517,6 @@ impl Boolean {
                         let new_var = cs.add_variable();
 
                         let value_fn = move |placer: &mut CS::WitnessPlacer| {
-                            use crate::cs::witness_placer::*;
                             let a = <CS::WitnessPlacer as WitnessTypeSet<F>>::Mask::constant(a);
                             let b = <CS::WitnessPlacer as WitnessTypeSet<F>>::Mask::constant(b);
                             let mask = placer.get_boolean(cond);
@@ -572,7 +560,6 @@ impl Boolean {
                         let new_var = cs.add_variable();
 
                         let value_fn = move |placer: &mut CS::WitnessPlacer| {
-                            use crate::cs::witness_placer::*;
                             let a = placer.get_boolean(a);
                             let b = placer.get_boolean(b);
                             let mask = placer.get_boolean(cond);
@@ -598,7 +585,6 @@ impl Boolean {
                         let new_var = cs.add_variable();
 
                         let value_fn = move |placer: &mut CS::WitnessPlacer| {
-                            use crate::cs::witness_placer::*;
                             let mask = placer.get_boolean(cond).negate();
                             let selection_result =
                                 <CS::WitnessPlacer as WitnessTypeSet<F>>::Mask::select(
@@ -635,7 +621,6 @@ impl Boolean {
                         let new_var = cs.add_variable();
 
                         let value_fn = move |placer: &mut CS::WitnessPlacer| {
-                            use crate::cs::witness_placer::*;
                             let a = placer.get_boolean(a);
                             let b =
                                 <CS::WitnessPlacer as WitnessTypeSet<F>>::Mask::constant(constant);
@@ -679,7 +664,6 @@ impl Boolean {
                         let new_var = cs.add_variable();
 
                         let value_fn = move |placer: &mut CS::WitnessPlacer| {
-                            use crate::cs::witness_placer::*;
                             let a =
                                 <CS::WitnessPlacer as WitnessTypeSet<F>>::Mask::constant(constant);
                             let b = placer.get_boolean(b);
@@ -746,7 +730,6 @@ impl Boolean {
                         let new_var = cs.add_variable();
 
                         let value_fn = move |placer: &mut CS::WitnessPlacer| {
-                            use crate::cs::witness_placer::*;
                             let a = <CS::WitnessPlacer as WitnessTypeSet<F>>::Mask::constant(a);
                             let b = <CS::WitnessPlacer as WitnessTypeSet<F>>::Mask::constant(b);
                             let mask = placer.get_boolean(cond);
@@ -791,7 +774,6 @@ impl Boolean {
                         let new_var = cs.add_variable();
 
                         let value_fn = move |placer: &mut CS::WitnessPlacer| {
-                            use crate::cs::witness_placer::*;
                             let a = placer.get_boolean(a);
                             let b = placer.get_boolean(b);
                             let mask = placer.get_boolean(cond);
@@ -834,7 +816,6 @@ impl Boolean {
                         let new_var = cs.add_variable();
 
                         let value_fn = move |placer: &mut CS::WitnessPlacer| {
-                            use crate::cs::witness_placer::*;
                             let a = placer.get_boolean(a);
                             let b =
                                 <CS::WitnessPlacer as WitnessTypeSet<F>>::Mask::constant(constant);
@@ -878,7 +859,6 @@ impl Boolean {
                         let new_var = cs.add_variable();
 
                         let value_fn = move |placer: &mut CS::WitnessPlacer| {
-                            use crate::cs::witness_placer::*;
                             let a =
                                 <CS::WitnessPlacer as WitnessTypeSet<F>>::Mask::constant(constant);
                             let b = placer.get_boolean(b);
@@ -995,13 +975,22 @@ impl<F: PrimeField> Register<F> {
 
         // set value
         let vars = new.0.map(|el| el.get_variable());
-        let value_fn = move |placer: &mut CS::WitnessPlacer| {
-            let value = placer.get_oracle_u32(placeholder);
+        if CS::ASSUME_MEMORY_VALUES_ASSIGNED == false {
+            let value_fn = move |placer: &mut CS::WitnessPlacer| {
+                let value = placer.get_oracle_u32(placeholder);
 
-            placer.assign_u32_from_u16_parts(vars, &value);
-        };
+                placer.assign_u32_from_u16_parts(vars, &value);
+            };
 
-        cs.set_values(value_fn);
+            cs.set_values(value_fn);
+        } else {
+            let value_fn = move |placer: &mut CS::WitnessPlacer| {
+                for el in vars.iter() {
+                    placer.assume_assigned(*el);
+                }
+            };
+            cs.set_values(value_fn);
+        }
 
         new
     }
@@ -1088,241 +1077,5 @@ impl<F: PrimeField> Register<F> {
         let high = cs.choose(flag, self.0[1], Num::Constant(F::ZERO));
 
         Register([low, high])
-    }
-}
-
-#[deprecated]
-#[derive(Clone, Debug, Copy)]
-pub struct RegisterDecomposition<F: PrimeField> {
-    pub u16_limbs: [Num<F>; 2],
-    pub u8_decomposition: [Num<F>; 4],
-}
-
-#[allow(deprecated)]
-impl<F: PrimeField> RegisterDecomposition<F> {
-    pub fn into_register(&self) -> Register<F> {
-        Register(self.u16_limbs)
-    }
-
-    pub unsafe fn split_unchecked<CS: Circuit<F>>(cs: &mut CS, reg: &Register<F>) -> Self {
-        let chunks: [Num<F>; 4] = std::array::from_fn(|_: usize| Num::Var(cs.add_variable()));
-        cs.add_constraint(
-            Term::from(chunks[1]) * Term::from(1 << 8) + Term::from(chunks[0])
-                - Term::from(reg.0[0]),
-        );
-        cs.add_constraint(
-            Term::from(chunks[3]) * Term::from(1 << 8) + Term::from(chunks[2])
-                - Term::from(reg.0[1]),
-        );
-
-        let outputs = chunks.map(|x| x.get_variable());
-        let register_limbs = [reg.0[0].get_variable(), reg.0[1].get_variable()];
-        //setting values for overflow flags
-        let value_fn = move |placer: &mut CS::WitnessPlacer| {
-            let low_limb = placer.get_u16(register_limbs[0]);
-            let high_limb = placer.get_u16(register_limbs[1]);
-
-            let byte0 = low_limb.truncate();
-            let byte1 = low_limb.shr(8).truncate();
-
-            let byte2 = high_limb.truncate();
-            let byte3 = high_limb.shr(8).truncate();
-
-            placer.assign_u8(outputs[0], &byte0);
-            placer.assign_u8(outputs[1], &byte1);
-            placer.assign_u8(outputs[2], &byte2);
-            placer.assign_u8(outputs[3], &byte3);
-        };
-
-        cs.set_values(value_fn);
-
-        RegisterDecomposition {
-            u16_limbs: [reg.0[0], reg.0[1]],
-            u8_decomposition: chunks,
-        }
-    }
-
-    pub const fn uninitialized() -> Self {
-        RegisterDecomposition {
-            u16_limbs: [Num::Constant(F::ZERO); 2],
-            u8_decomposition: [Num::Constant(F::ZERO); 4],
-        }
-    }
-
-    #[track_caller]
-    pub fn split_reg_with_opt_ctx<CS: Circuit<F>>(
-        circuit: &mut CS,
-        reg: Register<F>,
-        opt_ctx: &mut OptimizationContext<F, CS>,
-        exec_flag: Boolean,
-    ) -> Self {
-        if exec_flag.get_value(&*circuit).unwrap_or(false) {
-            if let Some(value) = reg.0[0].get_value(&*circuit) {
-                assert!(value.as_u32_reduced() <= u16::MAX as u32);
-            }
-
-            if let Some(value) = reg.0[1].get_value(&*circuit) {
-                assert!(value.as_u32_reduced() <= u16::MAX as u32);
-            }
-        }
-
-        let u16_low_splitting =
-            opt_ctx.append_u16_to_le_u8_decomposition_relation(reg.0[0], exec_flag, circuit);
-        let u16_high_splitting =
-            opt_ctx.append_u16_to_le_u8_decomposition_relation(reg.0[1], exec_flag, circuit);
-
-        RegisterDecomposition {
-            u16_limbs: [reg.0[0], reg.0[1]],
-            u8_decomposition: [
-                u16_low_splitting[0],
-                u16_low_splitting[1],
-                u16_high_splitting[0],
-                u16_high_splitting[1],
-            ],
-        }
-    }
-
-    pub fn parse_reg<CS: Circuit<F>>(cs: &mut CS, reg: Register<F>) -> Self {
-        let chunks: [Num<F>; 4] =
-            std::array::from_fn(|_: usize| cs.add_variable_with_range_check(8));
-
-        let outputs = chunks.map(|x| x.get_variable());
-        let register_limbs = [reg.0[0].get_variable(), reg.0[1].get_variable()];
-        //setting values for overflow flags
-        let value_fn = move |placer: &mut CS::WitnessPlacer| {
-            let low_limb = placer.get_u16(register_limbs[0]);
-            let high_limb = placer.get_u16(register_limbs[1]);
-
-            let byte0 = low_limb.truncate();
-            let byte1 = low_limb.shr(8).truncate();
-
-            let byte2 = high_limb.truncate();
-            let byte3 = high_limb.shr(8).truncate();
-
-            placer.assign_u8(outputs[0], &byte0);
-            placer.assign_u8(outputs[1], &byte1);
-            placer.assign_u8(outputs[2], &byte2);
-            placer.assign_u8(outputs[3], &byte3);
-        };
-
-        cs.set_values(value_fn);
-
-        cs.add_constraint_allow_explicit_linear(
-            Term::from(chunks[1]) * Term::from(1 << 8) + Term::from(chunks[0])
-                - Term::from(reg.0[0]),
-        );
-        cs.add_constraint_allow_explicit_linear(
-            Term::from(chunks[3]) * Term::from(1 << 8) + Term::from(chunks[2])
-                - Term::from(reg.0[1]),
-        );
-
-        RegisterDecomposition {
-            u16_limbs: [reg.0[0], reg.0[1]],
-            u8_decomposition: chunks,
-        }
-    }
-}
-
-// To be used only for operands coming from decoder
-#[derive(Clone, Debug, Copy)]
-pub struct RegisterWithSign<F: PrimeField> {
-    pub u16_limbs: [Num<F>; 2],
-    pub sign_bit: Boolean,
-}
-
-impl<F: PrimeField> RegisterWithSign<F> {
-    pub fn uninitialized() -> Self {
-        Self {
-            u16_limbs: [Num::Constant(F::ZERO); 2],
-            sign_bit: Boolean::Constant(false),
-        }
-    }
-
-    pub fn into_register(self) -> Register<F> {
-        Register(self.u16_limbs)
-    }
-}
-
-// To be used only for operands coming from decoder
-#[derive(Clone, Debug)]
-pub struct RegisterDecompositionWithSign<F: PrimeField> {
-    pub u16_limbs: [Num<F>; 2],
-    pub low_word_unconstrained_decomposition: (Variable, Constraint<F>),
-    pub high_word_decomposition: (Constraint<F>, Variable),
-    pub sign_bit: Boolean,
-}
-
-impl<F: PrimeField> RegisterDecompositionWithSign<F> {
-    pub fn parse_reg<CS: Circuit<F>>(cs: &mut CS, reg: Register<F>) -> Self {
-        let byte_0 = cs.add_variable();
-        let low_word = reg.0[0].get_variable();
-        //setting values for overflow flags
-        let value_fn = move |placer: &mut CS::WitnessPlacer| {
-            let low_limb = placer.get_u16(low_word);
-
-            let byte0_val = low_limb.truncate();
-
-            placer.assign_u8(byte_0, &byte0_val);
-        };
-        cs.set_values(value_fn);
-
-        let mut byte_1 = Term::from(reg.0[0]) - Term::from(byte_0);
-        byte_1.scale(F::from_u32_unchecked(1 << 8).inverse().unwrap());
-
-        // for high we get high byte and sign as one lookup, and low - as constraint
-        let [sign, byte_3] = cs.get_variables_from_lookup_constrained(
-            &[LookupInput::from(reg.0[1].get_variable())],
-            TableType::U16GetSignAndHighByte,
-        );
-        let sign = Boolean::Is(sign);
-        let byte_2 = Constraint::from(reg.0[1]) - (Term::from(byte_3) * Term::from(1 << 8));
-
-        Self {
-            u16_limbs: reg.0,
-            low_word_unconstrained_decomposition: (byte_0, byte_1),
-            high_word_decomposition: (byte_2, byte_3),
-            sign_bit: sign,
-        }
-    }
-
-    pub fn into_register(self) -> Register<F> {
-        Register(self.u16_limbs)
-    }
-
-    pub fn get_value_unsigned<C: Circuit<F>>(self, cs: &C) -> Option<u32> {
-        let low = cs
-            .get_value(self.u16_limbs[0].get_variable())?
-            .as_u32_reduced();
-        let high = cs
-            .get_value(self.u16_limbs[1].get_variable())?
-            .as_u32_reduced();
-
-        debug_assert!(low <= u16::MAX as u32);
-        debug_assert!(high <= u16::MAX as u32);
-
-        Some(low as u32 | (high as u32) << 16)
-    }
-
-    pub fn get_value_signed<C: Circuit<F>>(self, cs: &C) -> Option<i32> {
-        let unsigned = self.clone().get_value_unsigned(cs)?;
-        let sign = cs
-            .get_value(self.sign_bit.get_variable().unwrap())?
-            .as_boolean();
-        let signed = unsigned as i32;
-        if sign {
-            assert!(
-                signed < 0,
-                "sign is claimed negative, while value = 0b{:032b}",
-                unsigned
-            );
-        }
-        Some(signed)
-    }
-
-    pub fn into_register_with_sign(self) -> RegisterWithSign<F> {
-        RegisterWithSign {
-            u16_limbs: self.u16_limbs,
-            sign_bit: self.sign_bit,
-        }
     }
 }

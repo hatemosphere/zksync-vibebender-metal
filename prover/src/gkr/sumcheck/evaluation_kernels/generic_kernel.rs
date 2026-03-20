@@ -58,8 +58,16 @@ pub fn evaluate_single_input_kernel_with_base_inputs<
     match step {
         0 => {
             let sources = storage.get_for_sumcheck_round_0(inputs);
-            let inputs = &sources.base_field_inputs;
+            let base_field_inputs = &sources.base_field_inputs;
             assert!(sources.extension_field_inputs.is_empty());
+            assert_eq!(
+                sources.base_field_outputs.len(),
+                inputs.outputs_in_base.len()
+            );
+            assert_eq!(
+                sources.extension_field_outputs.len(),
+                inputs.outputs_in_extension.len()
+            );
             if sources.base_field_outputs.is_empty() == false {
                 let outputs = &sources.base_field_outputs;
                 apply_row_wise::<F, _>(
@@ -74,9 +82,10 @@ pub fn evaluate_single_input_kernel_with_base_inputs<
                             let absolute_index = chunk_start + index;
                             let value = kernel.evaluate_first_round(
                                 absolute_index,
-                                inputs,
+                                base_field_inputs,
                                 outputs,
                                 challenges,
+                                &(),
                                 &(),
                             );
                             for i in 0..2 {
@@ -99,9 +108,10 @@ pub fn evaluate_single_input_kernel_with_base_inputs<
                             let absolute_index = chunk_start + index;
                             let value = kernel.evaluate_first_round(
                                 absolute_index,
-                                inputs,
+                                base_field_inputs,
                                 outputs,
                                 challenges,
+                                &(),
                                 &(),
                             );
                             for i in 0..2 {
@@ -124,9 +134,10 @@ pub fn evaluate_single_input_kernel_with_base_inputs<
                             let absolute_index = chunk_start + index;
                             let value = kernel.evaluate_first_round(
                                 absolute_index,
-                                inputs,
+                                base_field_inputs,
                                 outputs,
                                 challenges,
+                                &(),
                                 &(),
                             );
                             for i in 0..2 {

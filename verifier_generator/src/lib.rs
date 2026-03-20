@@ -3,7 +3,6 @@
 #![feature(generic_const_exprs)]
 
 use ::prover::*;
-use prover::cs::one_row_compiler::*;
 use prover::field::*;
 
 mod utils;
@@ -14,6 +13,9 @@ pub use self::generator::*;
 
 pub mod inlining_generator;
 pub use self::inlining_generator::*;
+
+pub mod mersenne_wrapper;
+pub use self::mersenne_wrapper::*;
 
 pub mod gkr_inlining;
 

@@ -93,6 +93,9 @@ pub trait PrimeField: Field {
     const MINUS_ONE: Self;
     const NUM_BYTES_IN_REPR: usize;
 
+    const IS_MONT_REPR: bool;
+    const MONT_K: u32;
+
     const CHAR_BITS: usize;
     const CHARACTERISTICS: u32;
 
@@ -110,6 +113,7 @@ pub trait PrimeField: Field {
     }
     fn from_u32(value: u32) -> Option<Self>;
     fn from_reduced_raw_repr(value: u32) -> Self;
+    fn from_raw_repr_with_reduction(value: u32) -> Self;
 
     fn as_boolean(&self) -> bool;
 

@@ -1,6 +1,7 @@
 use crate::gkr::prover::SumcheckIntermediateProofValues;
 use std::collections::BTreeMap;
 
+use crate::gkr::prover::GKRExternalChallenges;
 use crate::gkr::{
     prover::dimension_reduction::forward::DimensionReducingInputOutput,
     sumcheck::{
@@ -151,6 +152,7 @@ where
             .into_iter()
             .map(|(k, v)| (k, v.to_vec()))
             .collect(),
+        extra_evaluations_from_caching_relations: BTreeMap::new(), // none are possible here
         _marker: core::marker::PhantomData,
     }
 }
@@ -168,6 +170,7 @@ pub fn evaluate_sumcheck_for_layer<F: PrimeField, E: FieldExtension<F> + Field>(
     trace_len: usize,
     lookup_challenges_additive_part: E,
     constraints_batch_challenge: E,
+    external_challenges: &GKRExternalChallenges<F, E>,
     seed: &mut Seed,
     worker: &Worker,
 ) -> SumcheckIntermediateProofValues<F, E>
@@ -246,7 +249,7 @@ where
         trace_len.trailing_zeros() as usize
     );
 
-    let new_claims: BTreeMap<_, _> = last_evaluations
+    let mut new_claims: BTreeMap<_, _> = last_evaluations
         .iter()
         .map(|(addr, &[f0, f1])| (*addr, interpolate_linear::<F, E>(f0, f1, &last_r)))
         .collect();
@@ -268,6 +271,80 @@ where
         }
     }
 
+    let mut extra_evaluations_from_caching_relations = BTreeMap::new();
+    if layer.cached_relations.is_empty() == false {
+        use crate::gkr::sumcheck::eq_poly::*;
+        let mut eq_poly = None;
+
+        for (cached_addr, relation) in layer.cached_relations.iter() {
+            assert!(
+                new_claims.contains_key(cached_addr),
+                "Missing claim for cached address {:?}",
+                cached_addr
+            );
+
+            for dep in relation.dependencies() {
+                if new_claims.contains_key(&dep) {
+                    continue;
+                }
+                match dep {
+                    GKRAddress::BaseLayerWitness(_)
+                    | GKRAddress::BaseLayerMemory(_)
+                    | GKRAddress::Setup(_)
+                    | GKRAddress::InnerLayer { .. } => {
+                        println!("Explicitly computing value for {:?}", dep);
+                        if eq_poly.is_none() {
+                            let mut eq_precomputed =
+                                make_eq_poly_in_full(&folding_challenges, worker);
+                            let eq_at_z = eq_precomputed.pop().unwrap();
+                            eq_poly = Some(eq_at_z);
+                        }
+                        let evaluation = if let Some(values) = gkr_storage.try_get_base_poly(dep) {
+                            evaluate_with_precomputed_eq::<F, E>(
+                                values,
+                                &eq_poly.as_ref().unwrap()[..],
+                            )
+                        } else {
+                            if let Some(values) = gkr_storage.try_get_ext_poly(dep) {
+                                evaluate_with_precomputed_eq_ext::<E>(
+                                    values,
+                                    &eq_poly.as_ref().unwrap()[..],
+                                )
+                            } else {
+                                panic!("Unknown poly at address {:?}", dep);
+                            }
+                        };
+
+                        new_claims.insert(dep, evaluation);
+                        extra_evaluations_from_caching_relations.insert(dep, evaluation);
+                    }
+                    _ => {
+                        panic!(
+                            "Unexpected dependency address {:?} for cached relation {:?}",
+                            dep, cached_addr
+                        );
+                    }
+                }
+            }
+
+        }
+
+        if !extra_evaluations_from_caching_relations.is_empty() {
+            let transcript_input = extra_evaluations_from_caching_relations
+                .values()
+                .copied()
+                .collect::<Vec<_>>();
+            commit_field_els(seed, &transcript_input);
+        }
+
+        #[cfg(feature = "gkr_self_checks")]
+        assert!(crate::gkr::prover::debug_utils::verify_cache_relations(
+            layer,
+            &new_claims,
+            external_challenges,
+        ));
+    }
+
     claims_storage.insert(layer_idx, new_claims);
     claim_points.insert(layer_idx, folding_challenges);
 
@@ -283,6 +360,7 @@ where
             .into_iter()
             .map(|(k, v)| (k, v.to_vec()))
             .collect(),
+        extra_evaluations_from_caching_relations,
         _marker: core::marker::PhantomData,
     }
 }
@@ -354,7 +432,11 @@ where
             let mut sum = s0;
             sum.add_assign(&s1);
             sum.mul_assign(&eq_prefactor);
-            assert_eq!(sum, claim, "s(0) + s(1) != claim / eq_prefactor");
+            assert_eq!(
+                sum, claim,
+                "s(0) + s(1) != claim / eq_prefactor at folding step {}",
+                step
+            );
         }
 
         commit_field_els(seed, &coeffs);
@@ -402,7 +484,7 @@ where
 
             assert_eq!(
                 recomputed_claim, claim,
-                "s(0) + s(1) != claim / eq_prefactor"
+                "s(0) + s(1) != claim / eq_prefactor at explicit sumcheck verification"
             );
         }
     }

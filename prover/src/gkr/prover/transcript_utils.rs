@@ -1,5 +1,5 @@
 use super::*;
-use crate::prover_stages::query_producer::BitSource;
+use crate::query_utils::BitSource;
 use crate::{
     definitions::{Transcript, DIGEST_SIZE_U32_WORDS},
     gkr::whir::WhirCommitment,
