@@ -114,8 +114,6 @@ pub use transcript;
 pub mod fri_folding;
 #[cfg(feature = "gkr_verify")]
 pub mod gkr;
-#[cfg(any(test, feature = "proof_utils"))]
-pub mod proof_flattener;
 
 pub mod inline_ops;
 pub mod no_inline_ops;

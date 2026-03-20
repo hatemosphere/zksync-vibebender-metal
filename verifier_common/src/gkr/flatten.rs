@@ -95,6 +95,10 @@ where
         for (_addr, evals) in proof_values.final_step_evaluations.iter() {
             flatten_field_els::<F, E>(evals, &mut result);
         }
+
+        for (_addr, eval) in proof_values.extra_evaluations_from_caching_relations.iter() {
+            flatten_field_els::<F, E>(&[*eval], &mut result);
+        }
     }
 
     flatten_field_els::<F, E>(&[proof.grand_product_accumulator_computed], &mut result);

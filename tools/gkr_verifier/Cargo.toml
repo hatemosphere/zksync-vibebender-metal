@@ -11,6 +11,11 @@ license = "MIT OR Apache-2.0"
 keywords = ["blockchain", "zksync", "zk"]
 categories = ["cryptography"]
 
+[features]
+add_sub = []
+jump_branch_slt = []
+shift_binop = []
+
 [dependencies]
 verifier_common = { path = "../../verifier_common", default-features = false, features = ["gkr_verify", "modular_ops", "blake2_with_compression"] }
 non_determinism_source = { path = "../../non_determinism_source" }

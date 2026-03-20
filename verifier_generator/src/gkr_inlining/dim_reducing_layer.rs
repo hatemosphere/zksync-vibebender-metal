@@ -1,7 +1,7 @@
 use proc_macro2::TokenStream;
 use quote::quote;
 
-use crate::inlining_generator::MersenneWrapper;
+use crate::mersenne_wrapper::MersenneWrapper;
 use prover::cs::definitions::GKRAddress;
 use prover::cs::gkr_compiler::OutputType;
 

@@ -283,7 +283,6 @@ pub fn gkr_run_basic_unrolled_test_impl(
                 "../cs/compiled_circuits/add_sub_lui_auipc_mop_preprocessed_layout_gkr.json",
             )
         };
-        serialize_to_file(&add_sub_circuit, "add_sub_lui_auipc_mop_gkr_circuit.json");
 
         let mut table_driver = TableDriver::<BabyBearField>::new();
         cs::gkr_circuits::add_sub_family::add_sub_lui_auipc_mop_table_driver_fn(&mut table_driver);

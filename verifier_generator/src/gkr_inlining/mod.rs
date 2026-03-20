@@ -1,7 +1,7 @@
 use proc_macro2::TokenStream;
 use quote::{quote, TokenStreamExt};
 
-use crate::inlining_generator::MersenneWrapper;
+use crate::mersenne_wrapper::MersenneWrapper;
 use prover::cs::definitions::GKRAddress;
 use prover::cs::gkr_compiler::{
     GKRCircuitArtifact, GKRLayerDescription, NoFieldGKRRelation, OutputType,
@@ -41,8 +41,8 @@ fn transform_gkr_address(addr: &GKRAddress) -> TokenStream {
         GKRAddress::Setup(offset) => {
             quote! { GKRAddress::Setup(#offset) }
         }
-        GKRAddress::OptimizedOut(offset) => {
-            quote! { GKRAddress::OptimizedOut(#offset) }
+        GKRAddress::ScratchSpace(offset) => {
+            quote! { GKRAddress::ScratchSpace(#offset) }
         }
         GKRAddress::Cached { layer, offset } => {
             quote! { GKRAddress::Cached { layer: #layer, offset: #offset } }
@@ -61,6 +61,22 @@ fn collect_sorted_unique_addrs(layer: &GKRLayerDescription) -> Vec<GKRAddress> {
     {
         use NoFieldGKRRelation as R;
         match &gate.enforced_relation {
+            R::LinearBaseFieldRelation { input, .. } => {
+                for (_, addr) in input.linear_terms.iter() {
+                    addrs.insert(*addr);
+                }
+            }
+            R::MaxQuadratic { input, .. } => {
+                for (addr, terms) in input.quadratic_terms.iter() {
+                    addrs.insert(*addr);
+                    for &(_, b) in terms.iter() {
+                        addrs.insert(b);
+                    }
+                }
+                for &(_, addr) in input.linear_terms.iter() {
+                    addrs.insert(addr);
+                }
+            }
             R::EnforceConstraintsMaxQuadratic { input } => {
                 for ((a, b), _) in &input.quadratic_terms {
                     addrs.insert(*a);
@@ -115,22 +131,6 @@ fn collect_sorted_unique_addrs(layer: &GKRLayerDescription) -> Vec<GKRAddress> {
                 addrs.insert(input[0]);
                 addrs.insert(input[1]);
             }
-            R::LookupUnbalancedPairWithBaseInputs {
-                input, remainder, ..
-            } => {
-                addrs.insert(input[0]);
-                addrs.insert(input[1]);
-                for (_, addr) in &remainder.input.linear_terms {
-                    addrs.insert(*addr);
-                }
-            }
-            R::LookupFromBaseInputsWithSetup { input, setup, .. } => {
-                for (_, addr) in &input.input.linear_terms {
-                    addrs.insert(*addr);
-                }
-                addrs.insert(setup[0]);
-                addrs.insert(setup[1]);
-            }
             R::LookupFromMaterializedBaseInputWithSetup { input, setup, .. } => {
                 addrs.insert(*input);
                 addrs.insert(setup[0]);
@@ -155,7 +155,19 @@ fn collect_sorted_unique_addrs(layer: &GKRLayerDescription) -> Vec<GKRAddress> {
                     }
                 }
             }
-            R::LookupPair { input, .. } => {
+            R::LookupPairFromMaterializedVectorInputs { input, .. }
+            | R::LookupPairFromCachedVectorInputs { input, .. } => {
+                addrs.insert(input[0]);
+                addrs.insert(input[1]);
+            }
+            R::LookupUnbalancedPairWithMaterializedVectorInputs {
+                input, remainder, ..
+            } => {
+                addrs.insert(input[0]);
+                addrs.insert(input[1]);
+                addrs.insert(*remainder);
+            }
+            R::AggregateLookupRationalPair { input, .. } => {
                 addrs.insert(input[0][0]);
                 addrs.insert(input[0][1]);
                 addrs.insert(input[1][0]);
@@ -164,6 +176,64 @@ fn collect_sorted_unique_addrs(layer: &GKRLayerDescription) -> Vec<GKRAddress> {
         }
     }
     addrs.into_iter().collect()
+}
+
+fn collect_output_addrs(layer: &GKRLayerDescription) -> Vec<GKRAddress> {
+    use std::collections::BTreeSet;
+    let mut addrs = BTreeSet::new();
+
+    for gate in layer
+        .gates
+        .iter()
+        .chain(layer.gates_with_external_connections.iter())
+    {
+        use NoFieldGKRRelation as R;
+        match &gate.enforced_relation {
+            R::EnforceConstraintsMaxQuadratic { .. } => {}
+            R::LinearBaseFieldRelation { output, .. }
+            | R::MaxQuadratic { output, .. }
+            | R::Copy { output, .. }
+            | R::InitialGrandProductFromCaches { output, .. }
+            | R::UnbalancedGrandProductWithCache { output, .. }
+            | R::TrivialProduct { output, .. }
+            | R::MaskIntoIdentityProduct { output, .. }
+            | R::MaterializeSingleLookupInput { output, .. }
+            | R::MaterializedVectorLookupInput { output, .. } => {
+                addrs.insert(*output);
+            }
+            R::LookupPairFromBaseInputs { output, .. }
+            | R::LookupPairFromMaterializedBaseInputs { output, .. }
+            | R::LookupUnbalancedPairWithMaterializedBaseInputs { output, .. }
+            | R::LookupFromMaterializedBaseInputWithSetup { output, .. }
+            | R::LookupPairFromVectorInputs { output, .. }
+            | R::LookupPairFromMaterializedVectorInputs { output, .. }
+            | R::LookupPairFromCachedVectorInputs { output, .. }
+            | R::LookupUnbalancedPairWithMaterializedVectorInputs { output, .. }
+            | R::LookupWithCachedDensAndSetup { output, .. }
+            | R::AggregateLookupRationalPair { output, .. } => {
+                addrs.insert(output[0]);
+                addrs.insert(output[1]);
+            }
+        }
+    }
+    addrs.into_iter().collect()
+}
+
+fn collect_extra_addrs_from_cached_relations(
+    layer: &GKRLayerDescription,
+    input_sorted_addrs: &[GKRAddress],
+) -> Vec<GKRAddress> {
+    use std::collections::BTreeSet;
+    let input_set: BTreeSet<GKRAddress> = input_sorted_addrs.iter().copied().collect();
+    let mut extra = BTreeSet::new();
+    for (_cached_addr, relation) in layer.cached_relations.iter() {
+        for dep in relation.dependencies() {
+            if !input_set.contains(&dep) {
+                extra.insert(dep);
+            }
+        }
+    }
+    extra.into_iter().collect()
 }
 
 fn compute_max_pow(layer: &GKRLayerDescription) -> usize {
@@ -264,15 +334,39 @@ where
         })
         .collect();
 
-    // For standard layer N, output addresses index into the next layer's input space.
+    let output_sorted_addrs_per_layer: Vec<Vec<GKRAddress>> = (0..num_standard_layers)
+        .map(|layer_idx| {
+            use std::collections::BTreeSet;
+            let mut addrs: BTreeSet<GKRAddress> = BTreeSet::new();
+            if layer_idx + 1 < num_standard_layers {
+                // Regular: layer L+1's input addresses (from fold)
+                for a in &standard_sorted_addrs[layer_idx + 1] {
+                    addrs.insert(*a);
+                }
+                // Extra: cached relation dependencies at layer L+1
+                let extras = collect_extra_addrs_from_cached_relations(
+                    &compiled_circuit.layers[layer_idx + 1],
+                    &standard_sorted_addrs[layer_idx + 1],
+                );
+                for a in &extras {
+                    addrs.insert(*a);
+                }
+            } else if !dim_reducing_sorted_addrs.is_empty() {
+                // Highest standard layer: claims come from dim-reducing fold
+                for a in &dim_reducing_sorted_addrs[0] {
+                    addrs.insert(*a);
+                }
+            } else {
+                for a in &standard_sorted_addrs[layer_idx] {
+                    addrs.insert(*a);
+                }
+            }
+            addrs.into_iter().collect()
+        })
+        .collect();
+
     let get_output_sorted_addrs = |layer_idx: usize| -> &[GKRAddress] {
-        if layer_idx + 1 < num_standard_layers {
-            &standard_sorted_addrs[layer_idx + 1]
-        } else if !dim_reducing_sorted_addrs.is_empty() {
-            &dim_reducing_sorted_addrs[0]
-        } else {
-            &standard_sorted_addrs[layer_idx]
-        }
+        &output_sorted_addrs_per_layer[layer_idx]
     };
 
     // Output group info
@@ -299,6 +393,26 @@ where
         .map(|l| collect_sorted_unique_addrs(l).len())
         .max()
         .unwrap_or(0);
+
+    let max_output_addrs = output_sorted_addrs_per_layer
+        .iter()
+        .map(|a| a.len())
+        .max()
+        .unwrap_or(0);
+    let max_merged_claims = (0..num_standard_layers)
+        .map(|layer_idx| {
+            let regular = standard_sorted_addrs[layer_idx].len();
+            let extras = collect_extra_addrs_from_cached_relations(
+                &compiled_circuit.layers[layer_idx],
+                &standard_sorted_addrs[layer_idx],
+            ).len();
+            regular + extras
+        })
+        .max()
+        .unwrap_or(0);
+    let max_unique_addrs_standard = max_unique_addrs_standard
+        .max(max_output_addrs)
+        .max(max_merged_claims);
 
     let dim_reducing_addr_count: usize = compiled_circuit
         .global_output_map
@@ -639,6 +753,71 @@ where
 
         let num_regular_rounds = num_sumcheck_rounds - 1;
 
+        let extra_addrs = collect_extra_addrs_from_cached_relations(
+            &compiled_circuit.layers[config_idx],
+            &standard_sorted_addrs[config_idx],
+        );
+        let num_extra = extra_addrs.len();
+
+        let has_extras = num_extra > 0;
+        let fold_and_extras_code = if has_extras {
+            // Compute the target address layout: regular(this_layer) + extras(this_layer)
+            let regular_set: std::collections::BTreeSet<GKRAddress> =
+                standard_sorted_addrs[config_idx].iter().copied().collect();
+            let mut target_addrs: std::collections::BTreeSet<GKRAddress> = regular_set.clone();
+            for a in &extra_addrs {
+                target_addrs.insert(*a);
+            }
+            let target_addrs: Vec<GKRAddress> = target_addrs.into_iter().collect();
+
+            let sub = MW::sub_assign(quote! { diff }, quote! { f0 });
+            let mul_r = MW::mul_assign(quote! { diff }, quote! { last_r });
+            let add_f0 = MW::add_assign(quote! { diff }, quote! { f0 });
+            let mut build_stmts = TokenStream::new();
+            build_stmts.extend(quote! {
+                let mut extra_evals = [#quartic_zero; #num_extra];
+                read_field_els::<#field_struct, #quartic_struct, I>(&mut extra_evals);
+                commit_field_els::<#field_struct, #quartic_struct>(&mut seed, &extra_evals);
+
+                let final_step_evals: &[[#quartic_struct; 2]] = eval_buf.transmute_subslice(
+                    BLAKE2S_DIGEST_SIZE_U32_WORDS, #num_dedup_addrs);
+                state.prev_claims.clear();
+            });
+
+            let mut regular_idx = 0usize;
+            let mut extra_idx = 0usize;
+            for addr in target_addrs.iter() {
+                if regular_set.contains(addr) {
+                    build_stmts.extend(quote! {
+                        {
+                            let ev = unsafe { final_step_evals.get_unchecked(#regular_idx) };
+                            let f0 = ev[0];
+                            let mut diff = ev[1];
+                            #sub;
+                            #mul_r;
+                            #add_f0;
+                            state.prev_claims.push(diff);
+                        }
+                    });
+                    regular_idx += 1;
+                } else {
+                    build_stmts.extend(quote! {
+                        state.prev_claims.push(extra_evals[#extra_idx]);
+                    });
+                    extra_idx += 1;
+                }
+            }
+
+            build_stmts
+        } else {
+            // No extras: use the standard fold function
+            quote! {
+                fold_standard_claims::<#field_struct, #quartic_struct, #num_dedup_addrs, GKR_ADDRS, GKR_EVAL_BUF>(
+                    &eval_buf, last_r, &mut state.prev_claims,
+                );
+            }
+        };
+
         main_body.extend(quote! {
             {
                 let initial_claim = #compute_claim_fn(
@@ -686,9 +865,7 @@ where
                 *state.prev_point.get_unchecked_mut(fc_len) = last_r;
                 fc_len += 1;
 
-                fold_standard_claims::<#field_struct, #quartic_struct, #num_dedup_addrs, GKR_ADDRS, GKR_EVAL_BUF>(
-                    &eval_buf, last_r, &mut state.prev_claims,
-                );
+                #fold_and_extras_code
 
                 state.batching_challenge = next_batching;
                 state.prev_point_len = fc_len;
