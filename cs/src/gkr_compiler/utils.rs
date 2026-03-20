@@ -58,16 +58,16 @@ pub fn no_field_gkr_max_quadratic_from_constraint<F: PrimeField>(
     for (coeff, a, b) in quadratic_part.iter() {
         let a = graph.get_address_for_variable(*a);
         let b = graph.get_address_for_variable(*b);
-        let exising = quadratic_sorted
+        let existing = quadratic_sorted
             .entry(a)
             .or_insert(BTreeMap::new())
             .insert(coeff.as_u32_reduced() as u64, b);
-        assert!(exising.is_none());
+        assert!(existing.is_none());
     }
     for (coeff, a) in linear_part.into_iter() {
         let a = graph.get_address_for_variable(a);
-        let exising = linear_sorted.insert(a, coeff.as_u32_reduced());
-        assert!(exising.is_none());
+        let existing = linear_sorted.insert(a, coeff.as_u32_reduced());
+        assert!(existing.is_none());
     }
 
     let quadratic_terms = quadratic_sorted

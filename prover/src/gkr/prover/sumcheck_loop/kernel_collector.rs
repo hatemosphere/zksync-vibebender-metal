@@ -98,7 +98,7 @@ macro_rules! define_kernel_variants {
                                 weighted.mul_assign(challenge);
                                 res.add_assign(&weighted);
                             } else {
-                                panic!("Claim missing for {:?} in kenrel {:?}", addr, self);
+                                panic!("Claim missing for {:?} in kernel {:?}", addr, self);
                             }
                         }
                         res

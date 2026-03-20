@@ -353,7 +353,7 @@ where
         worker
     ));
 
-    println!("Forward sumcheck loop is done, outputing explicit small polynomials");
+    println!("Forward sumcheck loop is done, outputting explicit small polynomials");
 
     // get final evaluations
     let mut final_explicit_evaluations = BTreeMap::new();

@@ -10,7 +10,7 @@
 // - Prover and verifier can engage in more than 1 sumcheck steps (here the tradeoff is less steps later, but more accesses to F0 oracle)
 // ---- Steps below are recursive, but we only use indexes 0/1 for clarity. Each step NUM_QUERIES also differs
 // - At this moment we would have something like
-// claim_0 = \sum_{x/folded coordiantes} eq(r1, r2, r3, x4, x5, ... y^0, y^1, y^2, y^4, ...) f(r1, r2, r3, x4, x5, ...)
+// claim_0 = \sum_{x/folded coordinates} eq(r1, r2, r3, x4, x5, ... y^0, y^1, y^2, y^4, ...) f(r1, r2, r3, x4, x5, ...)
 // - Now prover sends an oracle F1 to f1(x4, x5, ...) = f(r1, r2, r3, x4, x5, ...) at domain L1. Note that "degree" of f1(x4, x5, ...)
 // is smaller that of original f(x), but prover can decrease the rate for further iterations of the protocol
 // - As in STIR, we want to perform out of domain sampling. So, we draw OOD point y1 and prover sends evaluation of f1(y1^0, y1^1, ...) = z1
@@ -659,7 +659,7 @@ where
 
         // now can draw challenges
 
-        // and we can immediatelly query all the original oracles, and drop them. For that we need to draw indexes
+        // and we can immediately query all the original oracles, and drop them. For that we need to draw indexes
         let query_domain_size = 1u64 << query_domain_log2;
 
         let query_domain_generator = domain_generator_for_size::<F>(query_domain_size);
@@ -806,7 +806,7 @@ where
         drop(mem_oracle);
         drop(wit_oracle);
 
-        // we now update the equality poly - initially we had eq(X, original_evalution_point), from which we folded few coordinates.
+        // we now update the equality poly - initially we had eq(X, original_evaluation_point), from which we folded few coordinates.
         // Now we should add more terms there to reflect OOD and in-domain samples
         update_eq_poly(
             eq_poly,
@@ -825,7 +825,7 @@ where
         num_internal_whir_steps
     );
 
-    // now we step into recursive procesure over one batched polynomial and it's evals. Our sequence is
+    // now we step into recursive procedure over one batched polynomial and it's evals. Our sequence is
     // - fold
     // - RS code word computation and commit
     // - query previous(!) RS oracle
@@ -1089,7 +1089,7 @@ where
         #[cfg(not(feature = "gkr_self_checks"))]
         query_references.clear();
 
-        // we now update the equality poly - initially we had eq(X, original_evalution_point), from which we folded few coordinates.
+        // we now update the equality poly - initially we had eq(X, original_evaluation_point), from which we folded few coordinates.
         // Now we should add more terms there to reflect OOD and in-domain samples
         update_eq_poly(
             eq_poly,
