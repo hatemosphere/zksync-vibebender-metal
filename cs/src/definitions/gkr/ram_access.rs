@@ -21,9 +21,18 @@ pub struct RegisterOrRamAccessAddress {
 }
 
 #[derive(Clone, Copy, Hash, Debug, serde::Serialize, serde::Deserialize)]
+pub struct IndirectRamAccessAddress {
+    pub base_offset_from_register: [usize; REGISTER_SIZE],
+    pub constant_offset: u16,
+    pub variable_offset: Option<(u16, usize)>,
+}
+
+#[derive(Clone, Copy, Hash, Debug, serde::Serialize, serde::Deserialize)]
 pub enum RamAddress {
+    ConstantRegister(u16),
     RegisterOnly(RegisterOnlyAccessAddress),
     RegisterOrRam(RegisterOrRamAccessAddress),
+    IndirectRam(IndirectRamAccessAddress),
 }
 
 #[derive(Clone, Copy, Hash, Debug, serde::Serialize, serde::Deserialize)]
@@ -36,6 +45,7 @@ pub struct RamReadQuery {
 
 #[derive(Clone, Copy, Hash, Debug, PartialEq, Eq, serde::Serialize, serde::Deserialize)]
 pub enum RamWordRepresentation {
+    Zero,
     U16Limbs([usize; REGISTER_SIZE]),
     U8Limbs([usize; REGISTER_SIZE * 2]),
 }

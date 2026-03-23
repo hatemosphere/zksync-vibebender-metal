@@ -248,6 +248,10 @@ impl GKRGraph {
 impl GraphHolder for GKRGraph {
     #[track_caller]
     fn get_address_for_variable(&self, variable: Variable) -> GKRAddress {
+        assert!(
+            variable.is_placeholder() == false,
+            "trying to place a placeholder variable"
+        );
         let Some(pos) = self.get_fixed_layout_pos(&variable) else {
             panic!("Variable {:?} is not placed", variable);
         };

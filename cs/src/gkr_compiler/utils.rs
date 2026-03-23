@@ -5,6 +5,7 @@ use super::*;
 use crate::constraint::Constraint;
 use crate::cs::circuit_trait::WordRepresentation;
 use crate::definitions::DecoderData;
+use crate::definitions::DelegationCircuitState;
 use crate::definitions::GKRAddress;
 use crate::definitions::OpcodeFamilyCircuitState;
 use crate::definitions::Variable;
@@ -302,6 +303,45 @@ pub(crate) fn layout_machine_state_for_preprocessed_bytecode<F: PrimeField>(
     }
 }
 
+#[derive(Clone, Hash, Debug, serde::Serialize, serde::Deserialize)]
+pub struct CompiledDelegationCircuitState {
+    pub execute: usize,
+    pub invocation_timestamp: [usize; NUM_TIMESTAMP_COLUMNS_FOR_RAM],
+}
+
+pub(crate) fn layout_delegation_circuit_state(
+    graph: &mut GKRGraph,
+    all_variables_to_place: &mut BTreeSet<Variable>,
+    state: &DelegationCircuitState,
+    layers_mapping: &HashMap<Variable, usize>,
+) -> CompiledDelegationCircuitState {
+    let [execute] = graph.layout_memory_subtree_multiple_variables(
+        [state.execute],
+        all_variables_to_place,
+        layers_mapping,
+    );
+    let GKRAddress::BaseLayerMemory(execute) = execute else {
+        unreachable!()
+    };
+    let invocation_timestamp = graph.layout_memory_subtree_multiple_variables(
+        state.invocation_timestamp,
+        all_variables_to_place,
+        layers_mapping,
+    );
+    let invocation_timestamp = invocation_timestamp.map(|el| {
+        let GKRAddress::BaseLayerMemory(el) = el else {
+            unreachable!()
+        };
+
+        el
+    });
+
+    CompiledDelegationCircuitState {
+        execute,
+        invocation_timestamp,
+    }
+}
+
 pub trait DependentNode {
     fn add_dependencies_into(
         &self,
@@ -362,11 +402,12 @@ pub enum AddressSpace {
 #[derive(Clone, Copy, Hash, Debug, PartialEq, Eq, serde::Serialize, serde::Deserialize)]
 pub enum AddressSpaceAddress {
     Empty,
+    ConstantU16Limb(u16),
     SingleLimb(Variable),
     U32Space([Variable; 2]),
     U32SpaceSpecialIndirect {
         low_base: Variable,
-        low_dynamic_offset: Option<Variable>,
+        low_dynamic_offset: Option<(u16, Variable)>,
         offset: u32,
         high: Variable,
     },
@@ -408,10 +449,16 @@ pub enum AddressSpaceAddress {
 // }
 
 #[derive(Clone, Copy, Hash, Debug, PartialEq, Eq, serde::Serialize, serde::Deserialize)]
+pub enum MemoryPermutationTimestamp {
+    Zero,
+    Normal([Variable; NUM_TIMESTAMP_COLUMNS_FOR_RAM]),
+}
+
+#[derive(Clone, Copy, Hash, Debug, PartialEq, Eq, serde::Serialize, serde::Deserialize)]
 pub struct MemoryPermutationExpression {
     pub address_space: AddressSpace,
     pub address: AddressSpaceAddress,
-    pub timestamp: [Variable; NUM_TIMESTAMP_COLUMNS_FOR_RAM],
+    pub timestamp: MemoryPermutationTimestamp,
     pub value: WordRepresentation,
     pub timestamp_offset: u32,
 }
@@ -509,6 +556,9 @@ pub(crate) fn mem_permutation_expr_into_cached_expr(
     };
     let address = match mem.address {
         AddressSpaceAddress::Empty => CompiledAddressStrict::Constant(0),
+        AddressSpaceAddress::ConstantU16Limb(u16_address) => {
+            CompiledAddressStrict::ConstantU16(u16_address)
+        }
         AddressSpaceAddress::SingleLimb(v) => {
             CompiledAddressStrict::U16Space(graph.get_address_for_variable(v).as_memory())
         }
@@ -522,18 +572,19 @@ pub(crate) fn mem_permutation_expr_into_cached_expr(
             high,
         } => {
             let low_base = graph.get_address_for_variable(low_base).as_memory();
-            let low_dynamic_offset =
-                low_dynamic_offset.map(|el| graph.get_address_for_variable(el).as_memory());
+            let low_dynamic_offset = low_dynamic_offset
+                .map(|(coeff, el)| (coeff, graph.get_address_for_variable(el).as_memory()));
             let high = graph.get_address_for_variable(high).as_memory();
             CompiledAddressStrict::U32SpaceSpecialIndirect {
                 low_base,
                 low_dynamic_offset,
-                low_offset: offset as u64,
+                low_offset: offset,
                 high,
             }
         }
     };
     let value = match mem.value {
+        WordRepresentation::Zero => RamWordRepresentation::Zero,
         WordRepresentation::U16Limbs(value) => RamWordRepresentation::U16Limbs(
             value.map(|el| graph.get_address_for_variable(el).as_memory()),
         ),
@@ -541,9 +592,13 @@ pub(crate) fn mem_permutation_expr_into_cached_expr(
             value.map(|el| graph.get_address_for_variable(el).as_memory()),
         ),
     };
-    let timestamp = mem
-        .timestamp
-        .map(|el| graph.get_address_for_variable(el).as_memory());
+
+    let timestamp = match mem.timestamp {
+        MemoryPermutationTimestamp::Zero => CompiledMemoryTimestamp::Zero,
+        MemoryPermutationTimestamp::Normal(ts) => CompiledMemoryTimestamp::Normal(
+            ts.map(|el| graph.get_address_for_variable(el).as_memory()),
+        ),
+    };
 
     let rel = NoFieldSpecialMemoryContributionRelation {
         address_space,

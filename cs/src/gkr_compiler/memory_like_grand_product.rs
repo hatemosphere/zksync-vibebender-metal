@@ -1,5 +1,8 @@
 use super::*;
-use crate::cs::circuit_trait::{MemoryAccess, RegisterAccess, WordRepresentation};
+use crate::cs::circuit_trait::{
+    ConstantRegisterAccess, MemoryAccess, RegisterAccess, RegisterIndirectRamAccess,
+    WordRepresentation,
+};
 use crate::definitions::Variable;
 
 #[derive(Clone, Hash, Debug, PartialEq, Eq)]
@@ -61,6 +64,7 @@ impl GKRGate for GrandProductAccumulationStep {
         }
     }
 
+    #[track_caller]
     fn add_at_layer(
         &self,
         graph: &mut impl GraphHolder,
@@ -70,6 +74,7 @@ impl GKRGate for GrandProductAccumulationStep {
         // create caches
         match self {
             Self::Base { lhs, rhs, .. } => {
+                assert_ne!(lhs, rhs);
                 let input = [lhs, rhs].map(|el| {
                     let expr = mem_permutation_expr_into_cached_expr(el, graph);
                     assert!(output_layer > 0);
@@ -82,6 +87,7 @@ impl GKRGate for GrandProductAccumulationStep {
                 (output, relation)
             }
             Self::Aggregation { lhs, rhs, .. } => {
+                assert_ne!(lhs, rhs);
                 let input = [*lhs, *rhs];
                 let relation = NoFieldGKRRelation::TrivialProduct { input, output };
                 graph.add_enforced_relation(relation.clone(), output_layer);
@@ -134,10 +140,12 @@ pub(crate) fn layout_initial_grand_product_accumulation(
     graph: &mut impl GraphHolder,
     predicate: Variable,
     ram_augmented_sets: &[(MemoryAccess, ShuffleRamTimestampComparisonPartialData)],
-    cycle_start_timestamp: [Variable; 2],
-    cycle_start_pc: [Variable; 2],
-    cycle_end_timestamp: [Variable; 2],
-    cycle_end_pc: [Variable; 2],
+    pc_permutation: Option<(
+        ([Variable; 2], [Variable; NUM_TIMESTAMP_COLUMNS_FOR_RAM]),
+        ([Variable; 2], [Variable; NUM_TIMESTAMP_COLUMNS_FOR_RAM]),
+    )>, // (pc, ts)
+    delegation_permutation: Option<(u16, [Variable; NUM_TIMESTAMP_COLUMNS_FOR_RAM])>, // virtual register index, timestamp
+    mem_accesses_base_write_timestamp: [Variable; NUM_TIMESTAMP_COLUMNS_FOR_RAM],
 ) -> ((Vec<GKRAddress>, Vec<GKRAddress>), GKRAddress) {
     const PLACEMENT_LAYER: usize = 1;
 
@@ -156,32 +164,40 @@ pub(crate) fn layout_initial_grand_product_accumulation(
                     MemoryPermutationExpression {
                         address: AddressSpaceAddress::SingleLimb(*reg_idx),
                         address_space: AddressSpace::Constant(AddressSpaceType::Register),
-                        timestamp: aux.read_timestamp,
+                        timestamp: MemoryPermutationTimestamp::Normal(aux.read_timestamp),
                         value: query.read_value(),
                         timestamp_offset: 0,
                     }
                 }
                 MemoryAccess::RegisterOrRam(..) => {
                     todo!();
-                } // ShuffleRamQueryType::RegisterOrRam {
-                  //     is_register,
-                  //     address,
-                  // } => {
-                  //     let address_space_inner = match is_register {
-                  //         Boolean::Is(var) => AddressSpaceIsRegister::Is(var),
-                  //         Boolean::Not(var) => AddressSpaceIsRegister::Not(var),
-                  //         Boolean::Constant(..) => {
-                  //             unreachable!()
-                  //         }
-                  //     };
-                  //     MemoryPermutationExpression {
-                  //         address: AddressSpaceAddress::U32Space(address),
-                  //         address_space: AddressSpace::RegisterOrRam(address_space_inner),
-                  //         timestamp: aux.read_timestamp,
-                  //         value: query.read_value,
-                  //         timestamp_offset: 0,
-                  //     }
-                  // }
+                }
+                MemoryAccess::ConstantRegister(ConstantRegisterAccess { reg_idx, .. }) => {
+                    MemoryPermutationExpression {
+                        address: AddressSpaceAddress::ConstantU16Limb(*reg_idx),
+                        address_space: AddressSpace::Constant(AddressSpaceType::Register),
+                        timestamp: MemoryPermutationTimestamp::Normal(aux.read_timestamp),
+                        value: query.read_value(),
+                        timestamp_offset: 0,
+                    }
+                }
+                MemoryAccess::RamIndirect(RegisterIndirectRamAccess {
+                    variable_offset,
+                    base_address,
+                    constant_offset,
+                    ..
+                }) => MemoryPermutationExpression {
+                    address: AddressSpaceAddress::U32SpaceSpecialIndirect {
+                        low_base: base_address[0],
+                        low_dynamic_offset: variable_offset.map(|(c, v, _)| (c as u16, v)),
+                        offset: *constant_offset,
+                        high: base_address[1],
+                    },
+                    address_space: AddressSpace::Constant(AddressSpaceType::RAM),
+                    timestamp: MemoryPermutationTimestamp::Normal(aux.read_timestamp),
+                    value: query.read_value(),
+                    timestamp_offset: 0,
+                },
             };
             read_set.push(read_set_el);
 
@@ -190,32 +206,46 @@ pub(crate) fn layout_initial_grand_product_accumulation(
                     MemoryPermutationExpression {
                         address: AddressSpaceAddress::SingleLimb(*reg_idx),
                         address_space: AddressSpace::Constant(AddressSpaceType::Register),
-                        timestamp: cycle_start_timestamp,
+                        timestamp: MemoryPermutationTimestamp::Normal(
+                            mem_accesses_base_write_timestamp,
+                        ),
                         value: query.write_value(),
                         timestamp_offset: query.local_timestamp_in_cycle(),
                     }
                 }
                 MemoryAccess::RegisterOrRam(..) => {
                     todo!();
-                } // ShuffleRamQueryType::RegisterOrRam {
-                  //     is_register,
-                  //     address,
-                  // } => {
-                  //     let address_space_inner = match is_register {
-                  //         Boolean::Is(var) => AddressSpaceIsRegister::Is(var),
-                  //         Boolean::Not(var) => AddressSpaceIsRegister::Not(var),
-                  //         Boolean::Constant(..) => {
-                  //             unreachable!()
-                  //         }
-                  //     };
-                  //     MemoryPermutationExpression {
-                  //         address: AddressSpaceAddress::U32Space(address),
-                  //         address_space: AddressSpace::RegisterOrRam(address_space_inner),
-                  //         timestamp: cycle_start_timestamp,
-                  //         value: query.write_value,
-                  //         timestamp_offset: query.local_timestamp_in_cycle as u32,
-                  //     }
-                  // }
+                }
+                MemoryAccess::ConstantRegister(ConstantRegisterAccess { reg_idx, .. }) => {
+                    MemoryPermutationExpression {
+                        address: AddressSpaceAddress::ConstantU16Limb(*reg_idx),
+                        address_space: AddressSpace::Constant(AddressSpaceType::Register),
+                        timestamp: MemoryPermutationTimestamp::Normal(
+                            mem_accesses_base_write_timestamp,
+                        ),
+                        value: query.write_value(),
+                        timestamp_offset: query.local_timestamp_in_cycle(),
+                    }
+                }
+                MemoryAccess::RamIndirect(RegisterIndirectRamAccess {
+                    variable_offset,
+                    base_address,
+                    constant_offset,
+                    ..
+                }) => MemoryPermutationExpression {
+                    address: AddressSpaceAddress::U32SpaceSpecialIndirect {
+                        low_base: base_address[0],
+                        low_dynamic_offset: variable_offset.map(|(c, v, _)| (c as u16, v)),
+                        offset: *constant_offset,
+                        high: base_address[1],
+                    },
+                    address_space: AddressSpace::Constant(AddressSpaceType::RAM),
+                    timestamp: MemoryPermutationTimestamp::Normal(
+                        mem_accesses_base_write_timestamp,
+                    ),
+                    value: query.write_value(),
+                    timestamp_offset: query.local_timestamp_in_cycle(),
+                },
             };
             write_set.push(write_set_el);
         }
@@ -252,13 +282,25 @@ pub(crate) fn layout_initial_grand_product_accumulation(
                     MemoryPermutationExpression {
                         address: AddressSpaceAddress::SingleLimb(reg_idx),
                         address_space: AddressSpace::Constant(AddressSpaceType::Register),
-                        timestamp: aux.read_timestamp,
+                        timestamp: MemoryPermutationTimestamp::Normal(aux.read_timestamp),
                         value: query.read_value(),
                         timestamp_offset: 0,
                     }
                 }
                 MemoryAccess::RegisterOrRam(..) => {
                     todo!();
+                }
+                MemoryAccess::ConstantRegister(ConstantRegisterAccess { reg_idx, .. }) => {
+                    MemoryPermutationExpression {
+                        address: AddressSpaceAddress::ConstantU16Limb(reg_idx),
+                        address_space: AddressSpace::Constant(AddressSpaceType::Register),
+                        timestamp: MemoryPermutationTimestamp::Normal(aux.read_timestamp),
+                        value: query.read_value(),
+                        timestamp_offset: 0,
+                    }
+                }
+                MemoryAccess::RamIndirect(..) => {
+                    todo!()
                 }
             };
             read_set.push(read_set_el);
@@ -268,7 +310,9 @@ pub(crate) fn layout_initial_grand_product_accumulation(
                     MemoryPermutationExpression {
                         address: AddressSpaceAddress::SingleLimb(reg_idx),
                         address_space: AddressSpace::Constant(AddressSpaceType::Register),
-                        timestamp: cycle_start_timestamp,
+                        timestamp: MemoryPermutationTimestamp::Normal(
+                            mem_accesses_base_write_timestamp,
+                        ),
                         value: query.write_value(),
                         timestamp_offset: query.local_timestamp_in_cycle(),
                     }
@@ -276,16 +320,35 @@ pub(crate) fn layout_initial_grand_product_accumulation(
                 MemoryAccess::RegisterOrRam(..) => {
                     todo!();
                 }
+                MemoryAccess::ConstantRegister(ConstantRegisterAccess { reg_idx, .. }) => {
+                    MemoryPermutationExpression {
+                        address: AddressSpaceAddress::ConstantU16Limb(reg_idx),
+                        address_space: AddressSpace::Constant(AddressSpaceType::Register),
+                        timestamp: MemoryPermutationTimestamp::Normal(
+                            mem_accesses_base_write_timestamp,
+                        ),
+                        value: query.write_value(),
+                        timestamp_offset: query.local_timestamp_in_cycle(),
+                    }
+                }
+                MemoryAccess::RamIndirect(..) => {
+                    todo!()
+                }
             };
             write_set.push(write_set_el);
         }
 
-        // and PC permutation
+        // and PC permutation or delegation permutation
+        if let Some((
+            (cycle_start_pc, cycle_start_timestamp),
+            (cycle_end_pc, cycle_end_timestamp),
+        )) = pc_permutation
         {
+            assert!(delegation_permutation.is_none());
             let read_set_el = MemoryPermutationExpression {
                 address: AddressSpaceAddress::Empty,
                 address_space: AddressSpace::Constant(AddressSpaceType::PC),
-                timestamp: cycle_start_timestamp,
+                timestamp: MemoryPermutationTimestamp::Normal(cycle_start_timestamp),
                 value: WordRepresentation::U16Limbs(cycle_start_pc),
                 timestamp_offset: 0,
             };
@@ -294,11 +357,35 @@ pub(crate) fn layout_initial_grand_product_accumulation(
             let write_set_el = MemoryPermutationExpression {
                 address: AddressSpaceAddress::Empty,
                 address_space: AddressSpace::Constant(AddressSpaceType::PC),
-                timestamp: cycle_end_timestamp,
+                timestamp: MemoryPermutationTimestamp::Normal(cycle_end_timestamp),
                 value: WordRepresentation::U16Limbs(cycle_end_pc),
                 timestamp_offset: 0,
             };
             write_set.push(write_set_el);
+        } else {
+            if let Some((reg_idx, delegation_ts)) = delegation_permutation {
+                assert!(pc_permutation.is_none());
+                let read_set_el = MemoryPermutationExpression {
+                    address: AddressSpaceAddress::ConstantU16Limb(reg_idx),
+                    address_space: AddressSpace::Constant(AddressSpaceType::Register),
+                    timestamp: MemoryPermutationTimestamp::Normal(delegation_ts),
+                    value: WordRepresentation::Zero,
+                    timestamp_offset: 0,
+                };
+                read_set.push(read_set_el);
+
+                let write_set_el = MemoryPermutationExpression {
+                    address: AddressSpaceAddress::ConstantU16Limb(reg_idx),
+                    address_space: AddressSpace::Constant(AddressSpaceType::Register),
+                    timestamp: MemoryPermutationTimestamp::Zero, // delegation in the corresponding family uses read ts == 0, and some write TS,
+                    // so here we have to use non-zero read TS, and zero write TS to ensure a permutation
+                    value: WordRepresentation::Zero,
+                    timestamp_offset: 0,
+                };
+                write_set.push(write_set_el);
+            } else {
+                todo!()
+            }
         }
 
         let read_set_node = GrandProductAccumulationStep::Base {
@@ -358,7 +445,7 @@ pub(crate) fn accumulate_memory_like_grand_product(
     );
 
     println!(
-        "Continuing grand product accumulation at layer {} for {} contribution pairs",
+        "Starting grand product accumulation at layer {} for {} read/write contribution pairs",
         placement_layer,
         grand_product_read_accumulation_nodes.len()
     );
@@ -422,8 +509,16 @@ pub(crate) fn accumulate_memory_like_grand_product(
     let mut next_read_remainder = None;
     let mut next_write_remainder = None;
 
+    assert!(current_read_set.len() > 0);
     if current_read_set.len() > 1 || current_write_set.len() > 1 {
         loop {
+            assert_eq!(current_read_set.len(), current_write_set.len());
+
+            if current_read_set.len() == 1 && current_read_remainder.is_none() {
+                break;
+            }
+
+            let initial_len = current_read_set.len() + current_read_remainder.is_some() as usize;
             copied_predicate_for_grand_product_masking =
                 graph.copy_intermediate_layer_variable(copied_predicate_for_grand_product_masking);
 
@@ -435,9 +530,9 @@ pub(crate) fn accumulate_memory_like_grand_product(
             assert_eq!(placement_layer, layer);
 
             println!(
-                "Continuing grand product accumulation at layer {} for {} contribution pairs",
+                "Continuing grand product accumulation at layer {} for {} read/write contribution pairs",
                 placement_layer,
-                next_read_set.len()
+                current_read_set.len()
             );
 
             for [a, b] in current_read_set.as_chunks::<2>().0.iter() {
@@ -497,6 +592,13 @@ pub(crate) fn accumulate_memory_like_grand_product(
             next_write_set = vec![];
             next_read_remainder = None;
             next_write_remainder = None;
+
+            if current_read_set.len() == initial_len {
+                panic!(
+                    "Placer is stuck at layer {}: read set = {:?}, write set = {:?}",
+                    placement_layer, &current_read_set, &current_write_set
+                );
+            }
         }
     }
 

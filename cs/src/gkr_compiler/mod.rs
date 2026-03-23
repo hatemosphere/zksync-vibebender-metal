@@ -28,6 +28,8 @@ pub(crate) struct ShuffleRamTimestampComparisonPartialData {
 }
 
 mod compiled_constraint;
+mod delegation_circuit;
+pub(crate) mod delegation_mem_accesses;
 mod family_circuit;
 mod graph;
 mod layout;
@@ -192,13 +194,14 @@ impl CompiledAddressSpaceRelationStrict {
 
 #[derive(Clone, Debug, Hash, PartialEq, Eq, serde::Serialize, serde::Deserialize)]
 pub enum CompiledAddressStrict {
+    ConstantU16(u16),
     Constant(u32),
     U16Space(usize),
     U32Space([usize; 2]),
     U32SpaceSpecialIndirect {
         low_base: usize,
-        low_dynamic_offset: Option<usize>,
-        low_offset: u64,
+        low_dynamic_offset: Option<(u16, usize)>,
+        low_offset: u32,
         high: usize,
     },
     U32SpaceGeneric([(Box<[(u64, usize)]>, u64); 2]),
@@ -207,6 +210,7 @@ pub enum CompiledAddressStrict {
 impl CompiledAddressStrict {
     pub(crate) fn dependencies(&self) -> Vec<GKRAddress> {
         match self {
+            Self::ConstantU16(..) => vec![],
             Self::Constant(..) => vec![],
             Self::U16Space(offset) => vec![GKRAddress::BaseLayerMemory(*offset)],
             Self::U32Space(offsets) => vec![
@@ -223,7 +227,7 @@ impl CompiledAddressStrict {
                 let mut result = Vec::with_capacity(3);
                 result.push(GKRAddress::BaseLayerMemory(*low_base));
                 result.push(GKRAddress::BaseLayerMemory(*high));
-                if let Some(low_dynamic_offset) = low_dynamic_offset {
+                if let Some((_, low_dynamic_offset)) = low_dynamic_offset {
                     result.push(GKRAddress::BaseLayerMemory(*low_dynamic_offset));
                 }
 
@@ -234,10 +238,16 @@ impl CompiledAddressStrict {
 }
 
 #[derive(Clone, Debug, Hash, PartialEq, Eq, serde::Serialize, serde::Deserialize)]
+pub enum CompiledMemoryTimestamp {
+    Zero,
+    Normal([usize; NUM_TIMESTAMP_COLUMNS_FOR_RAM]),
+}
+
+#[derive(Clone, Debug, Hash, PartialEq, Eq, serde::Serialize, serde::Deserialize)]
 pub struct NoFieldSpecialMemoryContributionRelation {
     pub address_space: CompiledAddressSpaceRelationStrict,
     pub address: CompiledAddressStrict,
-    pub timestamp: [usize; NUM_TIMESTAMP_COLUMNS_FOR_RAM],
+    pub timestamp: CompiledMemoryTimestamp,
     pub value: RamWordRepresentation,
     pub timestamp_offset: u32,
 }
@@ -249,8 +259,17 @@ impl NoFieldSpecialMemoryContributionRelation {
             result.push(a);
         }
         result.extend(self.address.dependencies());
-        result.extend(self.timestamp.map(|el| GKRAddress::BaseLayerMemory(el)));
+        match self.timestamp {
+            CompiledMemoryTimestamp::Zero => {}
+            CompiledMemoryTimestamp::Normal(ts) => {
+                result.extend(ts.map(|el| GKRAddress::BaseLayerMemory(el)));
+            }
+        }
+
         match self.value {
+            RamWordRepresentation::Zero => {
+                // nothing more
+            }
             RamWordRepresentation::U16Limbs(els) => {
                 result.extend(els.map(|el| GKRAddress::BaseLayerMemory(el)));
             }
@@ -417,6 +436,13 @@ pub enum NoFieldGKRRelation {
     // 1/(a+gamma) + 1/(b + gamma) where a, b are in in extension already due to vector nature (no caching)
     LookupPairFromMaterializedVectorInputs {
         input: [GKRAddress; 2],
+        output: [GKRAddress; 2],
+    },
+
+    // 1/(a+gamma) + multiplicity/(setup + gamma) where a is in extension field and materialized or cached
+    LookupFromMaterializedVectorInputWithSetup {
+        input: GKRAddress,
+        setup: [GKRAddress; 2],
         output: [GKRAddress; 2],
     },
 
@@ -588,6 +614,21 @@ impl NoFieldGKRRelation {
                     vec![]
                 }
             }
+            Self::LookupFromMaterializedVectorInputWithSetup {
+                input,
+                setup,
+                output,
+            } => {
+                let mut caches = vec![];
+                if input.is_cache() {
+                    caches.push(*input);
+                }
+                assert!(setup[0].is_cache() == false);
+                if setup[1].is_cache() {
+                    caches.push(setup[1]);
+                }
+                caches
+            }
             Self::AggregateLookupRationalPair { input, output } => {
                 vec![]
             }
@@ -728,6 +769,16 @@ impl NoFieldGKRRelation {
             }
             Self::LookupPairFromMaterializedVectorInputs { input, output } => input.to_vec(),
             Self::LookupPairFromCachedVectorInputs { input, output } => input.to_vec(),
+            Self::LookupFromMaterializedVectorInputWithSetup {
+                input,
+                setup,
+                output,
+            } => {
+                assert!(input.is_cache());
+                assert!(setup[0].is_cache() == false);
+                assert!(setup[1].is_cache());
+                vec![setup[0]]
+            }
             Self::AggregateLookupRationalPair { input, output } => {
                 input.iter().flatten().copied().collect()
             }
@@ -821,9 +872,30 @@ pub fn compile_unrolled_circuit_state_transition_into_gkr<F: PrimeField>(
     compiled
 }
 
+pub fn compile_delegation_circuit_into_gkr<F: PrimeField>(
+    table_addition_fn: &dyn Fn(&mut crate::cs::circuit_impl::BasicAssembly<F>) -> (),
+    circuit_fn: &dyn Fn(&mut crate::cs::circuit_impl::BasicAssembly<F>) -> (),
+    trace_len_log2: usize,
+) -> GKRCircuitArtifact<F> {
+    use crate::cs::circuit_impl::BasicAssembly;
+    use crate::cs::circuit_trait::Circuit;
+    use crate::gkr_compiler::GKRCompiler;
+
+    let mut cs = BasicAssembly::<F>::new();
+    (table_addition_fn)(&mut cs);
+    (circuit_fn)(&mut cs);
+
+    let (cs_output, _) = cs.finalize();
+
+    let compiler = GKRCompiler::default();
+    let compiled = compiler.compile_delegation_circuit(cs_output, trace_len_log2);
+
+    compiled
+}
+
 use crate::witness_placer::graph_description::WitnessGraphCreator;
 
-pub fn dump_wintess_graph_for_unrolled_circuit<F: PrimeField>(
+pub fn dump_wintess_graph<F: PrimeField>(
     table_addition_fn: &dyn Fn(
         &mut crate::cs::circuit_impl::BasicAssembly<F, WitnessGraphCreator<F>>,
     ) -> (),
@@ -847,7 +919,7 @@ pub fn dump_wintess_graph_for_unrolled_circuit<F: PrimeField>(
     witness_placer.unwrap()
 }
 
-pub fn dump_ssa_witness_eval_form_for_unrolled_circuit<F: PrimeField>(
+pub fn dump_ssa_witness_eval_form<F: PrimeField>(
     table_addition_fn: &dyn Fn(
         &mut crate::cs::circuit_impl::BasicAssembly<F, WitnessGraphCreator<F>>,
     ) -> (),
@@ -855,7 +927,7 @@ pub fn dump_ssa_witness_eval_form_for_unrolled_circuit<F: PrimeField>(
         &mut crate::cs::circuit_impl::BasicAssembly<F, WitnessGraphCreator<F>>,
     ) -> (),
 ) -> Vec<Vec<crate::witness_placer::graph_description::RawExpression<F>>> {
-    let graph = dump_wintess_graph_for_unrolled_circuit(table_addition_fn, circuit_fn);
+    let graph = dump_wintess_graph(table_addition_fn, circuit_fn);
     let (_resolution_order, ssa_forms) = graph.compute_resolution_order();
     ssa_forms
 }

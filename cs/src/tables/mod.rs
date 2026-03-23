@@ -744,10 +744,10 @@ impl TableType {
             // TableType::SpecialCSRProperties => {
             //     unimplemented!("must be created in a special manner");
             // }
-            // TableType::Xor3 => LookupWrapper::Dimensional3(create_xor_table::<F, 3>(id)),
-            // TableType::Xor4 => LookupWrapper::Dimensional3(create_xor_table::<F, 4>(id)),
-            // TableType::Xor7 => LookupWrapper::Dimensional3(create_xor_table::<F, 7>(id)),
-            // TableType::Xor9 => LookupWrapper::Dimensional3(create_xor_table::<F, 9>(id)),
+            TableType::Xor3 => LookupWrapper::Initialized(create_xor_table::<F, 3>(id)),
+            TableType::Xor4 => LookupWrapper::Initialized(create_xor_table::<F, 4>(id)),
+            TableType::Xor7 => LookupWrapper::Initialized(create_xor_table::<F, 7>(id)),
+            TableType::Xor9 => LookupWrapper::Initialized(create_xor_table::<F, 9>(id)),
             // TableType::Xor12 => LookupWrapper::Dimensional3(create_xor_table::<F, 12>(id)),
             // TableType::U16SplitAsBytes => {
             //     LookupWrapper::Dimensional3(create_u16_split_into_bytes_table(id))
