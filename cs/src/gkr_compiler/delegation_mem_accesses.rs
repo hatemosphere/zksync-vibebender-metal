@@ -24,6 +24,7 @@ pub(crate) fn compile_register_and_indirect_mem_accesses<F: PrimeField>(
     variable_names: &mut HashMap<Variable, String>,
     ram_access_sets: &mut Vec<RamQuery>,
     ram_augmented_sets: &mut Vec<(MemoryAccess, ShuffleRamTimestampComparisonPartialData)>,
+    indirect_access_variable_offsets: &mut BTreeMap<usize, GKRAddress>,
     range_check_expressions: &mut Vec<RangeCheckQuery<F>>,
 ) {
     for (query_idx, memory_query) in accesses.clone().into_iter().enumerate() {
@@ -302,6 +303,8 @@ pub(crate) fn compile_register_and_indirect_mem_accesses<F: PrimeField>(
                         all_variables_to_place,
                         layers_mapping,
                     );
+                    let existing = indirect_access_variable_offsets.insert(indirect_access_var_idx, offset_place);
+                    assert!(existing.is_none());
                     let GKRAddress::BaseLayerMemory(offset_place) = offset_place else {
                         unreachable!()
                     };
@@ -312,9 +315,11 @@ pub(crate) fn compile_register_and_indirect_mem_accesses<F: PrimeField>(
                 };
 
             let address = RamAddress::IndirectRam(IndirectRamAccessAddress {
-                base_offset_from_register: register_read_value_raw,
+                base_register_value: register_read_value_raw,
+                base_register_index: register_index as u16,
                 constant_offset: constant_offset as u16,
                 variable_offset: variable_offset_compiled,
+                indirect_access_idx_for_register: indirect_access_idx,
             });
 
             let query_columns = if indirect_ram_query.is_readonly() {

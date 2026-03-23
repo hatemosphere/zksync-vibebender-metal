@@ -5115,7 +5115,7 @@
       ],
       "funct3": 2
     },
-    "register_and_indirect_accesses": [],
+    "indirect_access_variable_offsets": [],
     "total_width": 30
   },
   "witness_layout": {

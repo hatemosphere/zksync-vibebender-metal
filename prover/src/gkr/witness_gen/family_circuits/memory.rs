@@ -127,7 +127,7 @@ pub fn evaluate_gkr_memory_witness_for_executor_family<
                 let mut chunk = chunk;
                 for _i in 0..chunk_size {
                     unsafe {
-                        evaluate_memory_witness_for_executor_family_inner::<F, O, false>(
+                        evaluate_memory_witness_for_executor_family_inner::<F, O>(
                             &mut chunk,
                             &compiled_circuit,
                         );
@@ -323,16 +323,12 @@ pub(crate) unsafe fn gkr_process_shuffle_ram_accesses_in_executor_family<
         .enumerate()
     {
         match mem_query.get_address() {
+            RamAddress::ConstantRegister(..) => {}
             RamAddress::RegisterOnly(RegisterOnlyAccessAddress { register_index }) => {
                 proxy.write_u16_placeholder_into_columns::<true>(
                     register_index,
                     Placeholder::ShuffleRamAddress(access_idx),
                 );
-
-                // proxy.write_u8_placeholder_into_columns::<true>(
-                //     register_index,
-                //     Placeholder::ShuffleRamAddress(access_idx),
-                // );
             }
             RamAddress::RegisterOrRam(RegisterOrRamAccessAddress {
                 is_register,
@@ -361,6 +357,9 @@ pub(crate) unsafe fn gkr_process_shuffle_ram_accesses_in_executor_family<
                     Placeholder::ShuffleRamAddress(access_idx),
                 );
             }
+            RamAddress::IndirectRam(IndirectRamAccessAddress { .. }) => {
+                todo!()
+            }
         }
 
         let read_ts = proxy.oracle.get_timestamp_witness_from_placeholder(
@@ -370,6 +369,7 @@ pub(crate) unsafe fn gkr_process_shuffle_ram_accesses_in_executor_family<
         proxy.write_timestamp_value_into_columns(mem_query.get_read_timestamp_columns(), read_ts);
 
         match mem_query.get_read_value_columns() {
+            RamWordRepresentation::Zero => {}
             RamWordRepresentation::U16Limbs(read_value) => {
                 proxy.write_u32_placeholder_into_columns::<true>(
                     read_value,
@@ -387,6 +387,7 @@ pub(crate) unsafe fn gkr_process_shuffle_ram_accesses_in_executor_family<
         if let RamQuery::Write(query) = mem_query {
             // also do write
             match query.write_value {
+                RamWordRepresentation::Zero => {}
                 RamWordRepresentation::U16Limbs(write_value) => {
                     proxy.write_u32_placeholder_into_columns::<true>(
                         write_value,
@@ -403,7 +404,7 @@ pub(crate) unsafe fn gkr_process_shuffle_ram_accesses_in_executor_family<
         }
 
         if COMPUTE_WITNESS {
-            let write_ts = cycle_ts + (access_idx as TimestampScalar);
+            let write_ts = cycle_ts + (mem_query.local_timestamp_in_cycle() as TimestampScalar);
 
             let read_ts_split = split_timestamp(read_ts);
             let write_ts_split = split_timestamp(write_ts);
@@ -444,7 +445,6 @@ pub(crate) unsafe fn evaluate_memory_witness_for_executor_family_inner<
     'a,
     F: PrimeField,
     O: Oracle<F> + 'a,
-    const COMPUTE_WITNESS: bool,
 >(
     proxy: &mut ColumnMajorWitnessProxy<'a, O, F>,
     compiled_circuit: &GKRCircuitArtifact<F>,

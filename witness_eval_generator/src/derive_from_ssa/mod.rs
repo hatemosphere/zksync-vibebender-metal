@@ -558,6 +558,7 @@ mod test {
             // "mul_div_unsigned_preprocessed",
             // "inits_and_teardowns_preprocessed",
             // "reduced_machine_preprocessed",
+            "blake2_with_extended_control",
         ] {
             let compiled_circuit: GKRCircuitArtifact<BabyBearField> = deserialize_from_file(
                 &format!("../cs/compiled_circuits/{}_layout_gkr.json", prefix),

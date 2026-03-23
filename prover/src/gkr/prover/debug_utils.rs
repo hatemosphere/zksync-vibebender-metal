@@ -9,6 +9,7 @@ use cs::definitions::{
     MEM_ARGUMENT_CHALLENGE_POWERS_TIMESTAMP_LOW_IDX, MEM_ARGUMENT_CHALLENGE_POWERS_VALUE_HIGH_IDX,
     MEM_ARGUMENT_CHALLENGE_POWERS_VALUE_LOW_IDX,
 };
+use cs::gkr_compiler::CompiledMemoryTimestamp;
 use cs::gkr_compiler::{
     CompiledAddressSpaceRelationStrict, CompiledAddressStrict, GKRCircuitArtifact,
     GKRLayerDescription, NoFieldGKRCacheRelation, NoFieldSpecialMemoryContributionRelation,
@@ -243,6 +244,11 @@ fn evaluate_memory_tuple_from_claims<F: PrimeField, E: FieldExtension<F> + Field
 
     // Address contribution
     match &rel.address {
+        &CompiledAddressStrict::ConstantU16(c) => {
+            let mut t = challenges[MEM_ARGUMENT_CHALLENGE_POWERS_ADDRESS_LOW_IDX];
+            t.mul_assign_by_base(&F::from_u32_unchecked(c as u32));
+            result.add_assign(&t);
+        }
         &CompiledAddressStrict::Constant(c) => {
             let mut t = challenges[MEM_ARGUMENT_CHALLENGE_POWERS_ADDRESS_LOW_IDX];
             t.mul_assign_by_base(&F::from_u32_unchecked(c));
@@ -270,21 +276,26 @@ fn evaluate_memory_tuple_from_claims<F: PrimeField, E: FieldExtension<F> + Field
             todo!();
         }
     }
-
-    {
-        let mut t = challenges[MEM_ARGUMENT_CHALLENGE_POWERS_TIMESTAMP_LOW_IDX];
-        let mut ts_low = claims[&GKRAddress::BaseLayerMemory(rel.timestamp[0])];
-        ts_low.add_assign_base(&F::from_u32_unchecked(rel.timestamp_offset));
-        t.mul_assign(&ts_low);
-        result.add_assign(&t);
-    }
-    {
-        let mut t = challenges[MEM_ARGUMENT_CHALLENGE_POWERS_TIMESTAMP_HIGH_IDX];
-        t.mul_assign(&claims[&GKRAddress::BaseLayerMemory(rel.timestamp[1])]);
-        result.add_assign(&t);
+    match rel.timestamp {
+        CompiledMemoryTimestamp::Zero => {}
+        CompiledMemoryTimestamp::Normal(ts) => {
+            {
+                let mut t = challenges[MEM_ARGUMENT_CHALLENGE_POWERS_TIMESTAMP_LOW_IDX];
+                let mut ts_low = claims[&GKRAddress::BaseLayerMemory(ts[0])];
+                ts_low.add_assign_base(&F::from_u32_unchecked(rel.timestamp_offset));
+                t.mul_assign(&ts_low);
+                result.add_assign(&t);
+            }
+            {
+                let mut t = challenges[MEM_ARGUMENT_CHALLENGE_POWERS_TIMESTAMP_HIGH_IDX];
+                t.mul_assign(&claims[&GKRAddress::BaseLayerMemory(ts[1])]);
+                result.add_assign(&t);
+            }
+        }
     }
 
     match rel.value {
+        RamWordRepresentation::Zero => {}
         RamWordRepresentation::U16Limbs(read_value) => {
             for (idx, offset) in [
                 (MEM_ARGUMENT_CHALLENGE_POWERS_VALUE_LOW_IDX, read_value[0]),

@@ -47,7 +47,7 @@ pub struct GKRMemoryLayout {
     pub machine_state: Option<MachineStatePermutationDescription>,
     pub delegation_state: Option<CompiledDelegationCircuitState>,
     pub decoder_input: Option<DecoderPlacementDescription>,
-    pub register_and_indirect_accesses: Vec<()>,
+    pub indirect_access_variable_offsets: Vec<usize>,
     pub total_width: usize,
 }
 

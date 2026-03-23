@@ -920,7 +920,7 @@ impl<F: PrimeField> GKRCompiler<F> {
             ram_access_sets,
             machine_state: Some(machine_state),
             delegation_state: None,
-            register_and_indirect_accesses: vec![],
+            indirect_access_variable_offsets: vec![],
             total_width: graph.base_layer_memory.len(),
             decoder_input: Some(decoder_input),
         };

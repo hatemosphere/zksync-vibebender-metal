@@ -2,6 +2,7 @@ use super::*;
 use crate::gkr::sumcheck::access_and_fold::BaseFieldPoly;
 use crate::{cs::definitions::*, gkr::sumcheck::access_and_fold::ExtensionFieldPoly};
 use cs::definitions::gkr::RamWordRepresentation;
+use cs::gkr_compiler::CompiledMemoryTimestamp;
 use cs::gkr_compiler::{
     CompiledAddressSpaceRelationStrict, CompiledAddressStrict, NoFieldGKRRelation,
 };
@@ -142,6 +143,13 @@ fn evaluate_cache_relation<F: PrimeField, E: FieldExtension<F> + Field>(
                                 }
                             }
                             match &rel.address {
+                                &CompiledAddressStrict::ConstantU16(c) => {
+                                    let mut t = external_challenges
+                                        .permutation_argument_linearization_challenges
+                                        [MEM_ARGUMENT_CHALLENGE_POWERS_ADDRESS_LOW_IDX];
+                                    t.mul_assign_by_base(&F::from_u32_unchecked(c as u32));
+                                    result.add_assign(&t);
+                                }
                                 &CompiledAddressStrict::Constant(c) => {
                                     assert!(c < (1u32 << 16));
                                     let mut t = external_challenges
@@ -187,29 +195,40 @@ fn evaluate_cache_relation<F: PrimeField, E: FieldExtension<F> + Field>(
                                 }
                             }
                             // timestamp is a little special as we do add constant offset
-                            {
-                                let mut t = external_challenges
-                                    .permutation_argument_linearization_challenges
-                                    [MEM_ARGUMENT_CHALLENGE_POWERS_TIMESTAMP_LOW_IDX];
-                                let mut el = *src_ref
-                                    .get_base_layer_mem(rel.timestamp[0])
-                                    .get_unchecked(chunk_start + i);
-                                el.add_assign(&F::from_u32_unchecked(rel.timestamp_offset as u32));
-                                t.mul_assign_by_base(&el);
-                                result.add_assign(&t);
-                            }
-                            {
-                                let mut t = external_challenges
-                                    .permutation_argument_linearization_challenges
-                                    [MEM_ARGUMENT_CHALLENGE_POWERS_TIMESTAMP_HIGH_IDX];
-                                let el = src_ref
-                                    .get_base_layer_mem(rel.timestamp[1])
-                                    .get_unchecked(chunk_start + i);
-                                t.mul_assign_by_base(el);
-                                result.add_assign(&t);
+
+                            match rel.timestamp {
+                                CompiledMemoryTimestamp::Zero => {}
+                                CompiledMemoryTimestamp::Normal(ts) => {
+                                    {
+                                        let mut t = external_challenges
+                                            .permutation_argument_linearization_challenges
+                                            [MEM_ARGUMENT_CHALLENGE_POWERS_TIMESTAMP_LOW_IDX];
+                                        let mut el = *src_ref
+                                            .get_base_layer_mem(ts[0])
+                                            .get_unchecked(chunk_start + i);
+                                        el.add_assign(&F::from_u32_unchecked(
+                                            rel.timestamp_offset as u32,
+                                        ));
+                                        t.mul_assign_by_base(&el);
+                                        result.add_assign(&t);
+                                    }
+                                    {
+                                        let mut t = external_challenges
+                                            .permutation_argument_linearization_challenges
+                                            [MEM_ARGUMENT_CHALLENGE_POWERS_TIMESTAMP_HIGH_IDX];
+                                        let el = src_ref
+                                            .get_base_layer_mem(ts[1])
+                                            .get_unchecked(chunk_start + i);
+                                        t.mul_assign_by_base(el);
+                                        result.add_assign(&t);
+                                    }
+                                }
                             }
                             // and values are simplified for now
                             match rel.value {
+                                RamWordRepresentation::Zero => {
+                                    // nothing
+                                }
                                 RamWordRepresentation::U16Limbs(read_value) => {
                                     for (idx, offset) in [
                                         (

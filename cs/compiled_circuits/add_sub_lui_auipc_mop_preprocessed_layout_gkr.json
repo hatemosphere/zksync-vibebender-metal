@@ -3876,7 +3876,7 @@
       ],
       "funct3": null
     },
-    "register_and_indirect_accesses": [],
+    "indirect_access_variable_offsets": [],
     "total_width": 26
   },
   "witness_layout": {

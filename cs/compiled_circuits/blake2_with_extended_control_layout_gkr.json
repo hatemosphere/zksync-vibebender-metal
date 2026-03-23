@@ -59564,11 +59564,13 @@
           "in_cycle_write_index": 2,
           "address": {
             "IndirectRam": {
-              "base_offset_from_register": [
+              "base_register_value": [
                 2,
                 3
               ],
+              "base_register_index": 10,
               "constant_offset": 0,
+              "indirect_access_idx_for_register": 0,
               "variable_offset": null
             }
           },
@@ -59595,11 +59597,13 @@
           "in_cycle_write_index": 2,
           "address": {
             "IndirectRam": {
-              "base_offset_from_register": [
+              "base_register_value": [
                 2,
                 3
               ],
+              "base_register_index": 10,
               "constant_offset": 4,
+              "indirect_access_idx_for_register": 1,
               "variable_offset": null
             }
           },
@@ -59626,11 +59630,13 @@
           "in_cycle_write_index": 2,
           "address": {
             "IndirectRam": {
-              "base_offset_from_register": [
+              "base_register_value": [
                 2,
                 3
               ],
+              "base_register_index": 10,
               "constant_offset": 8,
+              "indirect_access_idx_for_register": 2,
               "variable_offset": null
             }
           },
@@ -59657,11 +59663,13 @@
           "in_cycle_write_index": 2,
           "address": {
             "IndirectRam": {
-              "base_offset_from_register": [
+              "base_register_value": [
                 2,
                 3
               ],
+              "base_register_index": 10,
               "constant_offset": 12,
+              "indirect_access_idx_for_register": 3,
               "variable_offset": null
             }
           },
@@ -59688,11 +59696,13 @@
           "in_cycle_write_index": 2,
           "address": {
             "IndirectRam": {
-              "base_offset_from_register": [
+              "base_register_value": [
                 2,
                 3
               ],
+              "base_register_index": 10,
               "constant_offset": 16,
+              "indirect_access_idx_for_register": 4,
               "variable_offset": null
             }
           },
@@ -59719,11 +59729,13 @@
           "in_cycle_write_index": 2,
           "address": {
             "IndirectRam": {
-              "base_offset_from_register": [
+              "base_register_value": [
                 2,
                 3
               ],
+              "base_register_index": 10,
               "constant_offset": 20,
+              "indirect_access_idx_for_register": 5,
               "variable_offset": null
             }
           },
@@ -59750,11 +59762,13 @@
           "in_cycle_write_index": 2,
           "address": {
             "IndirectRam": {
-              "base_offset_from_register": [
+              "base_register_value": [
                 2,
                 3
               ],
+              "base_register_index": 10,
               "constant_offset": 24,
+              "indirect_access_idx_for_register": 6,
               "variable_offset": null
             }
           },
@@ -59781,11 +59795,13 @@
           "in_cycle_write_index": 2,
           "address": {
             "IndirectRam": {
-              "base_offset_from_register": [
+              "base_register_value": [
                 2,
                 3
               ],
+              "base_register_index": 10,
               "constant_offset": 28,
+              "indirect_access_idx_for_register": 7,
               "variable_offset": null
             }
           },
@@ -59812,11 +59828,13 @@
           "in_cycle_write_index": 2,
           "address": {
             "IndirectRam": {
-              "base_offset_from_register": [
+              "base_register_value": [
                 2,
                 3
               ],
+              "base_register_index": 10,
               "constant_offset": 32,
+              "indirect_access_idx_for_register": 8,
               "variable_offset": null
             }
           },
@@ -59843,11 +59861,13 @@
           "in_cycle_write_index": 2,
           "address": {
             "IndirectRam": {
-              "base_offset_from_register": [
+              "base_register_value": [
                 2,
                 3
               ],
+              "base_register_index": 10,
               "constant_offset": 36,
+              "indirect_access_idx_for_register": 9,
               "variable_offset": null
             }
           },
@@ -59874,11 +59894,13 @@
           "in_cycle_write_index": 2,
           "address": {
             "IndirectRam": {
-              "base_offset_from_register": [
+              "base_register_value": [
                 2,
                 3
               ],
+              "base_register_index": 10,
               "constant_offset": 40,
+              "indirect_access_idx_for_register": 10,
               "variable_offset": null
             }
           },
@@ -59905,11 +59927,13 @@
           "in_cycle_write_index": 2,
           "address": {
             "IndirectRam": {
-              "base_offset_from_register": [
+              "base_register_value": [
                 2,
                 3
               ],
+              "base_register_index": 10,
               "constant_offset": 44,
+              "indirect_access_idx_for_register": 11,
               "variable_offset": null
             }
           },
@@ -59936,11 +59960,13 @@
           "in_cycle_write_index": 2,
           "address": {
             "IndirectRam": {
-              "base_offset_from_register": [
+              "base_register_value": [
                 2,
                 3
               ],
+              "base_register_index": 10,
               "constant_offset": 48,
+              "indirect_access_idx_for_register": 12,
               "variable_offset": null
             }
           },
@@ -59967,11 +59993,13 @@
           "in_cycle_write_index": 2,
           "address": {
             "IndirectRam": {
-              "base_offset_from_register": [
+              "base_register_value": [
                 2,
                 3
               ],
+              "base_register_index": 10,
               "constant_offset": 52,
+              "indirect_access_idx_for_register": 13,
               "variable_offset": null
             }
           },
@@ -59998,11 +60026,13 @@
           "in_cycle_write_index": 2,
           "address": {
             "IndirectRam": {
-              "base_offset_from_register": [
+              "base_register_value": [
                 2,
                 3
               ],
+              "base_register_index": 10,
               "constant_offset": 56,
+              "indirect_access_idx_for_register": 14,
               "variable_offset": null
             }
           },
@@ -60029,11 +60059,13 @@
           "in_cycle_write_index": 2,
           "address": {
             "IndirectRam": {
-              "base_offset_from_register": [
+              "base_register_value": [
                 2,
                 3
               ],
+              "base_register_index": 10,
               "constant_offset": 60,
+              "indirect_access_idx_for_register": 15,
               "variable_offset": null
             }
           },
@@ -60060,11 +60092,13 @@
           "in_cycle_write_index": 2,
           "address": {
             "IndirectRam": {
-              "base_offset_from_register": [
+              "base_register_value": [
                 2,
                 3
               ],
+              "base_register_index": 10,
               "constant_offset": 64,
+              "indirect_access_idx_for_register": 16,
               "variable_offset": null
             }
           },
@@ -60091,11 +60125,13 @@
           "in_cycle_write_index": 2,
           "address": {
             "IndirectRam": {
-              "base_offset_from_register": [
+              "base_register_value": [
                 2,
                 3
               ],
+              "base_register_index": 10,
               "constant_offset": 68,
+              "indirect_access_idx_for_register": 17,
               "variable_offset": null
             }
           },
@@ -60122,11 +60158,13 @@
           "in_cycle_write_index": 2,
           "address": {
             "IndirectRam": {
-              "base_offset_from_register": [
+              "base_register_value": [
                 2,
                 3
               ],
+              "base_register_index": 10,
               "constant_offset": 72,
+              "indirect_access_idx_for_register": 18,
               "variable_offset": null
             }
           },
@@ -60153,11 +60191,13 @@
           "in_cycle_write_index": 2,
           "address": {
             "IndirectRam": {
-              "base_offset_from_register": [
+              "base_register_value": [
                 2,
                 3
               ],
+              "base_register_index": 10,
               "constant_offset": 76,
+              "indirect_access_idx_for_register": 19,
               "variable_offset": null
             }
           },
@@ -60184,11 +60224,13 @@
           "in_cycle_write_index": 2,
           "address": {
             "IndirectRam": {
-              "base_offset_from_register": [
+              "base_register_value": [
                 2,
                 3
               ],
+              "base_register_index": 10,
               "constant_offset": 80,
+              "indirect_access_idx_for_register": 20,
               "variable_offset": null
             }
           },
@@ -60215,11 +60257,13 @@
           "in_cycle_write_index": 2,
           "address": {
             "IndirectRam": {
-              "base_offset_from_register": [
+              "base_register_value": [
                 2,
                 3
               ],
+              "base_register_index": 10,
               "constant_offset": 84,
+              "indirect_access_idx_for_register": 21,
               "variable_offset": null
             }
           },
@@ -60246,11 +60290,13 @@
           "in_cycle_write_index": 2,
           "address": {
             "IndirectRam": {
-              "base_offset_from_register": [
+              "base_register_value": [
                 2,
                 3
               ],
+              "base_register_index": 10,
               "constant_offset": 88,
+              "indirect_access_idx_for_register": 22,
               "variable_offset": null
             }
           },
@@ -60277,11 +60323,13 @@
           "in_cycle_write_index": 2,
           "address": {
             "IndirectRam": {
-              "base_offset_from_register": [
+              "base_register_value": [
                 2,
                 3
               ],
+              "base_register_index": 10,
               "constant_offset": 92,
+              "indirect_access_idx_for_register": 23,
               "variable_offset": null
             }
           },
@@ -60326,11 +60374,13 @@
           "in_cycle_write_index": 2,
           "address": {
             "IndirectRam": {
-              "base_offset_from_register": [
+              "base_register_value": [
                 150,
                 151
               ],
+              "base_register_index": 11,
               "constant_offset": 0,
+              "indirect_access_idx_for_register": 0,
               "variable_offset": null
             }
           },
@@ -60351,11 +60401,13 @@
           "in_cycle_write_index": 2,
           "address": {
             "IndirectRam": {
-              "base_offset_from_register": [
+              "base_register_value": [
                 150,
                 151
               ],
+              "base_register_index": 11,
               "constant_offset": 4,
+              "indirect_access_idx_for_register": 1,
               "variable_offset": null
             }
           },
@@ -60376,11 +60428,13 @@
           "in_cycle_write_index": 2,
           "address": {
             "IndirectRam": {
-              "base_offset_from_register": [
+              "base_register_value": [
                 150,
                 151
               ],
+              "base_register_index": 11,
               "constant_offset": 8,
+              "indirect_access_idx_for_register": 2,
               "variable_offset": null
             }
           },
@@ -60401,11 +60455,13 @@
           "in_cycle_write_index": 2,
           "address": {
             "IndirectRam": {
-              "base_offset_from_register": [
+              "base_register_value": [
                 150,
                 151
               ],
+              "base_register_index": 11,
               "constant_offset": 12,
+              "indirect_access_idx_for_register": 3,
               "variable_offset": null
             }
           },
@@ -60426,11 +60482,13 @@
           "in_cycle_write_index": 2,
           "address": {
             "IndirectRam": {
-              "base_offset_from_register": [
+              "base_register_value": [
                 150,
                 151
               ],
+              "base_register_index": 11,
               "constant_offset": 16,
+              "indirect_access_idx_for_register": 4,
               "variable_offset": null
             }
           },
@@ -60451,11 +60509,13 @@
           "in_cycle_write_index": 2,
           "address": {
             "IndirectRam": {
-              "base_offset_from_register": [
+              "base_register_value": [
                 150,
                 151
               ],
+              "base_register_index": 11,
               "constant_offset": 20,
+              "indirect_access_idx_for_register": 5,
               "variable_offset": null
             }
           },
@@ -60476,11 +60536,13 @@
           "in_cycle_write_index": 2,
           "address": {
             "IndirectRam": {
-              "base_offset_from_register": [
+              "base_register_value": [
                 150,
                 151
               ],
+              "base_register_index": 11,
               "constant_offset": 24,
+              "indirect_access_idx_for_register": 6,
               "variable_offset": null
             }
           },
@@ -60501,11 +60563,13 @@
           "in_cycle_write_index": 2,
           "address": {
             "IndirectRam": {
-              "base_offset_from_register": [
+              "base_register_value": [
                 150,
                 151
               ],
+              "base_register_index": 11,
               "constant_offset": 28,
+              "indirect_access_idx_for_register": 7,
               "variable_offset": null
             }
           },
@@ -60526,11 +60590,13 @@
           "in_cycle_write_index": 2,
           "address": {
             "IndirectRam": {
-              "base_offset_from_register": [
+              "base_register_value": [
                 150,
                 151
               ],
+              "base_register_index": 11,
               "constant_offset": 32,
+              "indirect_access_idx_for_register": 8,
               "variable_offset": null
             }
           },
@@ -60551,11 +60617,13 @@
           "in_cycle_write_index": 2,
           "address": {
             "IndirectRam": {
-              "base_offset_from_register": [
+              "base_register_value": [
                 150,
                 151
               ],
+              "base_register_index": 11,
               "constant_offset": 36,
+              "indirect_access_idx_for_register": 9,
               "variable_offset": null
             }
           },
@@ -60576,11 +60644,13 @@
           "in_cycle_write_index": 2,
           "address": {
             "IndirectRam": {
-              "base_offset_from_register": [
+              "base_register_value": [
                 150,
                 151
               ],
+              "base_register_index": 11,
               "constant_offset": 40,
+              "indirect_access_idx_for_register": 10,
               "variable_offset": null
             }
           },
@@ -60601,11 +60671,13 @@
           "in_cycle_write_index": 2,
           "address": {
             "IndirectRam": {
-              "base_offset_from_register": [
+              "base_register_value": [
                 150,
                 151
               ],
+              "base_register_index": 11,
               "constant_offset": 44,
+              "indirect_access_idx_for_register": 11,
               "variable_offset": null
             }
           },
@@ -60626,11 +60698,13 @@
           "in_cycle_write_index": 2,
           "address": {
             "IndirectRam": {
-              "base_offset_from_register": [
+              "base_register_value": [
                 150,
                 151
               ],
+              "base_register_index": 11,
               "constant_offset": 48,
+              "indirect_access_idx_for_register": 12,
               "variable_offset": null
             }
           },
@@ -60651,11 +60725,13 @@
           "in_cycle_write_index": 2,
           "address": {
             "IndirectRam": {
-              "base_offset_from_register": [
+              "base_register_value": [
                 150,
                 151
               ],
+              "base_register_index": 11,
               "constant_offset": 52,
+              "indirect_access_idx_for_register": 13,
               "variable_offset": null
             }
           },
@@ -60676,11 +60752,13 @@
           "in_cycle_write_index": 2,
           "address": {
             "IndirectRam": {
-              "base_offset_from_register": [
+              "base_register_value": [
                 150,
                 151
               ],
+              "base_register_index": 11,
               "constant_offset": 56,
+              "indirect_access_idx_for_register": 14,
               "variable_offset": null
             }
           },
@@ -60701,11 +60779,13 @@
           "in_cycle_write_index": 2,
           "address": {
             "IndirectRam": {
-              "base_offset_from_register": [
+              "base_register_value": [
                 150,
                 151
               ],
+              "base_register_index": 11,
               "constant_offset": 60,
+              "indirect_access_idx_for_register": 15,
               "variable_offset": null
             }
           },
@@ -60755,7 +60835,7 @@
       ]
     },
     "decoder_input": null,
-    "register_and_indirect_accesses": [],
+    "indirect_access_variable_offsets": [],
     "total_width": 225
   },
   "witness_layout": {
@@ -90797,38 +90877,38 @@
     "151": "Variable at cs/src/types.rs::145",
     "152": "perform final xor flag",
     "153": "Variable at cs/src/cs/circuit_trait.rs::226",
-    "154": "Variable at cs/src/gkr_circuits/delegation/blake2_round_with_extended_control/mod.rs::303",
-    "155": "Variable at cs/src/gkr_circuits/delegation/blake2_round_with_extended_control/mod.rs::312",
-    "156": "Variable at cs/src/gkr_circuits/delegation/blake2_round_with_extended_control/mod.rs::303",
-    "157": "Variable at cs/src/gkr_circuits/delegation/blake2_round_with_extended_control/mod.rs::312",
-    "158": "Variable at cs/src/gkr_circuits/delegation/blake2_round_with_extended_control/mod.rs::303",
-    "159": "Variable at cs/src/gkr_circuits/delegation/blake2_round_with_extended_control/mod.rs::312",
-    "160": "Variable at cs/src/gkr_circuits/delegation/blake2_round_with_extended_control/mod.rs::303",
-    "161": "Variable at cs/src/gkr_circuits/delegation/blake2_round_with_extended_control/mod.rs::312",
-    "162": "Variable at cs/src/gkr_circuits/delegation/blake2_round_with_extended_control/mod.rs::303",
-    "163": "Variable at cs/src/gkr_circuits/delegation/blake2_round_with_extended_control/mod.rs::312",
-    "164": "Variable at cs/src/gkr_circuits/delegation/blake2_round_with_extended_control/mod.rs::303",
-    "165": "Variable at cs/src/gkr_circuits/delegation/blake2_round_with_extended_control/mod.rs::312",
-    "166": "Variable at cs/src/gkr_circuits/delegation/blake2_round_with_extended_control/mod.rs::303",
-    "167": "Variable at cs/src/gkr_circuits/delegation/blake2_round_with_extended_control/mod.rs::312",
-    "168": "Variable at cs/src/gkr_circuits/delegation/blake2_round_with_extended_control/mod.rs::303",
-    "169": "Variable at cs/src/gkr_circuits/delegation/blake2_round_with_extended_control/mod.rs::312",
-    "170": "Variable at cs/src/gkr_circuits/delegation/blake2_round_with_extended_control/mod.rs::303",
-    "171": "Variable at cs/src/gkr_circuits/delegation/blake2_round_with_extended_control/mod.rs::312",
-    "172": "Variable at cs/src/gkr_circuits/delegation/blake2_round_with_extended_control/mod.rs::303",
-    "173": "Variable at cs/src/gkr_circuits/delegation/blake2_round_with_extended_control/mod.rs::312",
-    "174": "Variable at cs/src/gkr_circuits/delegation/blake2_round_with_extended_control/mod.rs::303",
-    "175": "Variable at cs/src/gkr_circuits/delegation/blake2_round_with_extended_control/mod.rs::312",
-    "176": "Variable at cs/src/gkr_circuits/delegation/blake2_round_with_extended_control/mod.rs::303",
-    "177": "Variable at cs/src/gkr_circuits/delegation/blake2_round_with_extended_control/mod.rs::312",
-    "178": "Variable at cs/src/gkr_circuits/delegation/blake2_round_with_extended_control/mod.rs::303",
-    "179": "Variable at cs/src/gkr_circuits/delegation/blake2_round_with_extended_control/mod.rs::312",
-    "180": "Variable at cs/src/gkr_circuits/delegation/blake2_round_with_extended_control/mod.rs::303",
-    "181": "Variable at cs/src/gkr_circuits/delegation/blake2_round_with_extended_control/mod.rs::312",
-    "182": "Variable at cs/src/gkr_circuits/delegation/blake2_round_with_extended_control/mod.rs::303",
-    "183": "Variable at cs/src/gkr_circuits/delegation/blake2_round_with_extended_control/mod.rs::312",
-    "184": "Variable at cs/src/gkr_circuits/delegation/blake2_round_with_extended_control/mod.rs::303",
-    "185": "Variable at cs/src/gkr_circuits/delegation/blake2_round_with_extended_control/mod.rs::312",
+    "154": "Variable at cs/src/gkr_circuits/delegation/blake2_round_with_extended_control/mod.rs::326",
+    "155": "Variable at cs/src/gkr_circuits/delegation/blake2_round_with_extended_control/mod.rs::335",
+    "156": "Variable at cs/src/gkr_circuits/delegation/blake2_round_with_extended_control/mod.rs::326",
+    "157": "Variable at cs/src/gkr_circuits/delegation/blake2_round_with_extended_control/mod.rs::335",
+    "158": "Variable at cs/src/gkr_circuits/delegation/blake2_round_with_extended_control/mod.rs::326",
+    "159": "Variable at cs/src/gkr_circuits/delegation/blake2_round_with_extended_control/mod.rs::335",
+    "160": "Variable at cs/src/gkr_circuits/delegation/blake2_round_with_extended_control/mod.rs::326",
+    "161": "Variable at cs/src/gkr_circuits/delegation/blake2_round_with_extended_control/mod.rs::335",
+    "162": "Variable at cs/src/gkr_circuits/delegation/blake2_round_with_extended_control/mod.rs::326",
+    "163": "Variable at cs/src/gkr_circuits/delegation/blake2_round_with_extended_control/mod.rs::335",
+    "164": "Variable at cs/src/gkr_circuits/delegation/blake2_round_with_extended_control/mod.rs::326",
+    "165": "Variable at cs/src/gkr_circuits/delegation/blake2_round_with_extended_control/mod.rs::335",
+    "166": "Variable at cs/src/gkr_circuits/delegation/blake2_round_with_extended_control/mod.rs::326",
+    "167": "Variable at cs/src/gkr_circuits/delegation/blake2_round_with_extended_control/mod.rs::335",
+    "168": "Variable at cs/src/gkr_circuits/delegation/blake2_round_with_extended_control/mod.rs::326",
+    "169": "Variable at cs/src/gkr_circuits/delegation/blake2_round_with_extended_control/mod.rs::335",
+    "170": "Variable at cs/src/gkr_circuits/delegation/blake2_round_with_extended_control/mod.rs::326",
+    "171": "Variable at cs/src/gkr_circuits/delegation/blake2_round_with_extended_control/mod.rs::335",
+    "172": "Variable at cs/src/gkr_circuits/delegation/blake2_round_with_extended_control/mod.rs::326",
+    "173": "Variable at cs/src/gkr_circuits/delegation/blake2_round_with_extended_control/mod.rs::335",
+    "174": "Variable at cs/src/gkr_circuits/delegation/blake2_round_with_extended_control/mod.rs::326",
+    "175": "Variable at cs/src/gkr_circuits/delegation/blake2_round_with_extended_control/mod.rs::335",
+    "176": "Variable at cs/src/gkr_circuits/delegation/blake2_round_with_extended_control/mod.rs::326",
+    "177": "Variable at cs/src/gkr_circuits/delegation/blake2_round_with_extended_control/mod.rs::335",
+    "178": "Variable at cs/src/gkr_circuits/delegation/blake2_round_with_extended_control/mod.rs::326",
+    "179": "Variable at cs/src/gkr_circuits/delegation/blake2_round_with_extended_control/mod.rs::335",
+    "180": "Variable at cs/src/gkr_circuits/delegation/blake2_round_with_extended_control/mod.rs::326",
+    "181": "Variable at cs/src/gkr_circuits/delegation/blake2_round_with_extended_control/mod.rs::335",
+    "182": "Variable at cs/src/gkr_circuits/delegation/blake2_round_with_extended_control/mod.rs::326",
+    "183": "Variable at cs/src/gkr_circuits/delegation/blake2_round_with_extended_control/mod.rs::335",
+    "184": "Variable at cs/src/gkr_circuits/delegation/blake2_round_with_extended_control/mod.rs::326",
+    "185": "Variable at cs/src/gkr_circuits/delegation/blake2_round_with_extended_control/mod.rs::335",
     "186": "Variable at cs/src/cs/circuit_trait.rs::226",
     "187": "Variable at cs/src/cs/circuit_trait.rs::226",
     "188": "Variable at cs/src/cs/circuit_trait.rs::226",
@@ -91271,116 +91351,116 @@
     "625": "Variable at cs/src/cs/circuit_impl.rs::896",
     "626": "Variable at cs/src/cs/circuit_impl.rs::896",
     "627": "Variable at cs/src/cs/circuit_impl.rs::896",
-    "628": "Variable at cs/src/gkr_circuits/delegation/blake2_round_with_extended_control/mod.rs::899",
+    "628": "Variable at cs/src/gkr_circuits/delegation/blake2_round_with_extended_control/mod.rs::922",
     "629": "Variable at cs/src/cs/circuit_impl.rs::896",
     "630": "Variable at cs/src/cs/circuit_impl.rs::896",
-    "631": "Variable at cs/src/gkr_circuits/delegation/blake2_round_with_extended_control/mod.rs::927",
-    "632": "Variable at cs/src/gkr_circuits/delegation/blake2_round_with_extended_control/mod.rs::928",
+    "631": "Variable at cs/src/gkr_circuits/delegation/blake2_round_with_extended_control/mod.rs::950",
+    "632": "Variable at cs/src/gkr_circuits/delegation/blake2_round_with_extended_control/mod.rs::951",
     "633": "Variable at cs/src/cs/circuit_impl.rs::896",
     "634": "Variable at cs/src/cs/circuit_impl.rs::896",
-    "635": "Variable at cs/src/gkr_circuits/delegation/blake2_round_with_extended_control/mod.rs::899",
+    "635": "Variable at cs/src/gkr_circuits/delegation/blake2_round_with_extended_control/mod.rs::922",
     "636": "Variable at cs/src/cs/circuit_impl.rs::896",
     "637": "Variable at cs/src/cs/circuit_impl.rs::896",
-    "638": "Variable at cs/src/gkr_circuits/delegation/blake2_round_with_extended_control/mod.rs::927",
-    "639": "Variable at cs/src/gkr_circuits/delegation/blake2_round_with_extended_control/mod.rs::928",
+    "638": "Variable at cs/src/gkr_circuits/delegation/blake2_round_with_extended_control/mod.rs::950",
+    "639": "Variable at cs/src/gkr_circuits/delegation/blake2_round_with_extended_control/mod.rs::951",
     "640": "Variable at cs/src/cs/circuit_impl.rs::896",
     "641": "Variable at cs/src/cs/circuit_impl.rs::896",
-    "642": "Variable at cs/src/gkr_circuits/delegation/blake2_round_with_extended_control/mod.rs::899",
+    "642": "Variable at cs/src/gkr_circuits/delegation/blake2_round_with_extended_control/mod.rs::922",
     "643": "Variable at cs/src/cs/circuit_impl.rs::896",
     "644": "Variable at cs/src/cs/circuit_impl.rs::896",
-    "645": "Variable at cs/src/gkr_circuits/delegation/blake2_round_with_extended_control/mod.rs::927",
-    "646": "Variable at cs/src/gkr_circuits/delegation/blake2_round_with_extended_control/mod.rs::928",
+    "645": "Variable at cs/src/gkr_circuits/delegation/blake2_round_with_extended_control/mod.rs::950",
+    "646": "Variable at cs/src/gkr_circuits/delegation/blake2_round_with_extended_control/mod.rs::951",
     "647": "Variable at cs/src/cs/circuit_impl.rs::896",
     "648": "Variable at cs/src/cs/circuit_impl.rs::896",
-    "649": "Variable at cs/src/gkr_circuits/delegation/blake2_round_with_extended_control/mod.rs::899",
+    "649": "Variable at cs/src/gkr_circuits/delegation/blake2_round_with_extended_control/mod.rs::922",
     "650": "Variable at cs/src/cs/circuit_impl.rs::896",
     "651": "Variable at cs/src/cs/circuit_impl.rs::896",
-    "652": "Variable at cs/src/gkr_circuits/delegation/blake2_round_with_extended_control/mod.rs::927",
-    "653": "Variable at cs/src/gkr_circuits/delegation/blake2_round_with_extended_control/mod.rs::928",
+    "652": "Variable at cs/src/gkr_circuits/delegation/blake2_round_with_extended_control/mod.rs::950",
+    "653": "Variable at cs/src/gkr_circuits/delegation/blake2_round_with_extended_control/mod.rs::951",
     "654": "Variable at cs/src/cs/circuit_impl.rs::896",
     "655": "Variable at cs/src/cs/circuit_impl.rs::896",
-    "656": "Variable at cs/src/gkr_circuits/delegation/blake2_round_with_extended_control/mod.rs::899",
+    "656": "Variable at cs/src/gkr_circuits/delegation/blake2_round_with_extended_control/mod.rs::922",
     "657": "Variable at cs/src/cs/circuit_impl.rs::896",
     "658": "Variable at cs/src/cs/circuit_impl.rs::896",
-    "659": "Variable at cs/src/gkr_circuits/delegation/blake2_round_with_extended_control/mod.rs::927",
-    "660": "Variable at cs/src/gkr_circuits/delegation/blake2_round_with_extended_control/mod.rs::928",
+    "659": "Variable at cs/src/gkr_circuits/delegation/blake2_round_with_extended_control/mod.rs::950",
+    "660": "Variable at cs/src/gkr_circuits/delegation/blake2_round_with_extended_control/mod.rs::951",
     "661": "Variable at cs/src/cs/circuit_impl.rs::896",
     "662": "Variable at cs/src/cs/circuit_impl.rs::896",
-    "663": "Variable at cs/src/gkr_circuits/delegation/blake2_round_with_extended_control/mod.rs::899",
+    "663": "Variable at cs/src/gkr_circuits/delegation/blake2_round_with_extended_control/mod.rs::922",
     "664": "Variable at cs/src/cs/circuit_impl.rs::896",
     "665": "Variable at cs/src/cs/circuit_impl.rs::896",
-    "666": "Variable at cs/src/gkr_circuits/delegation/blake2_round_with_extended_control/mod.rs::927",
-    "667": "Variable at cs/src/gkr_circuits/delegation/blake2_round_with_extended_control/mod.rs::928",
+    "666": "Variable at cs/src/gkr_circuits/delegation/blake2_round_with_extended_control/mod.rs::950",
+    "667": "Variable at cs/src/gkr_circuits/delegation/blake2_round_with_extended_control/mod.rs::951",
     "668": "Variable at cs/src/cs/circuit_impl.rs::896",
     "669": "Variable at cs/src/cs/circuit_impl.rs::896",
-    "670": "Variable at cs/src/gkr_circuits/delegation/blake2_round_with_extended_control/mod.rs::899",
+    "670": "Variable at cs/src/gkr_circuits/delegation/blake2_round_with_extended_control/mod.rs::922",
     "671": "Variable at cs/src/cs/circuit_impl.rs::896",
     "672": "Variable at cs/src/cs/circuit_impl.rs::896",
-    "673": "Variable at cs/src/gkr_circuits/delegation/blake2_round_with_extended_control/mod.rs::927",
-    "674": "Variable at cs/src/gkr_circuits/delegation/blake2_round_with_extended_control/mod.rs::928",
+    "673": "Variable at cs/src/gkr_circuits/delegation/blake2_round_with_extended_control/mod.rs::950",
+    "674": "Variable at cs/src/gkr_circuits/delegation/blake2_round_with_extended_control/mod.rs::951",
     "675": "Variable at cs/src/cs/circuit_impl.rs::896",
     "676": "Variable at cs/src/cs/circuit_impl.rs::896",
-    "677": "Variable at cs/src/gkr_circuits/delegation/blake2_round_with_extended_control/mod.rs::899",
+    "677": "Variable at cs/src/gkr_circuits/delegation/blake2_round_with_extended_control/mod.rs::922",
     "678": "Variable at cs/src/cs/circuit_impl.rs::896",
     "679": "Variable at cs/src/cs/circuit_impl.rs::896",
-    "680": "Variable at cs/src/gkr_circuits/delegation/blake2_round_with_extended_control/mod.rs::927",
-    "681": "Variable at cs/src/gkr_circuits/delegation/blake2_round_with_extended_control/mod.rs::928",
+    "680": "Variable at cs/src/gkr_circuits/delegation/blake2_round_with_extended_control/mod.rs::950",
+    "681": "Variable at cs/src/gkr_circuits/delegation/blake2_round_with_extended_control/mod.rs::951",
     "682": "Variable at cs/src/cs/circuit_impl.rs::896",
     "683": "Variable at cs/src/cs/circuit_impl.rs::896",
-    "684": "Variable at cs/src/gkr_circuits/delegation/blake2_round_with_extended_control/mod.rs::899",
+    "684": "Variable at cs/src/gkr_circuits/delegation/blake2_round_with_extended_control/mod.rs::922",
     "685": "Variable at cs/src/cs/circuit_impl.rs::896",
     "686": "Variable at cs/src/cs/circuit_impl.rs::896",
-    "687": "Variable at cs/src/gkr_circuits/delegation/blake2_round_with_extended_control/mod.rs::927",
-    "688": "Variable at cs/src/gkr_circuits/delegation/blake2_round_with_extended_control/mod.rs::928",
+    "687": "Variable at cs/src/gkr_circuits/delegation/blake2_round_with_extended_control/mod.rs::950",
+    "688": "Variable at cs/src/gkr_circuits/delegation/blake2_round_with_extended_control/mod.rs::951",
     "689": "Variable at cs/src/cs/circuit_impl.rs::896",
     "690": "Variable at cs/src/cs/circuit_impl.rs::896",
-    "691": "Variable at cs/src/gkr_circuits/delegation/blake2_round_with_extended_control/mod.rs::899",
+    "691": "Variable at cs/src/gkr_circuits/delegation/blake2_round_with_extended_control/mod.rs::922",
     "692": "Variable at cs/src/cs/circuit_impl.rs::896",
     "693": "Variable at cs/src/cs/circuit_impl.rs::896",
-    "694": "Variable at cs/src/gkr_circuits/delegation/blake2_round_with_extended_control/mod.rs::927",
-    "695": "Variable at cs/src/gkr_circuits/delegation/blake2_round_with_extended_control/mod.rs::928",
+    "694": "Variable at cs/src/gkr_circuits/delegation/blake2_round_with_extended_control/mod.rs::950",
+    "695": "Variable at cs/src/gkr_circuits/delegation/blake2_round_with_extended_control/mod.rs::951",
     "696": "Variable at cs/src/cs/circuit_impl.rs::896",
     "697": "Variable at cs/src/cs/circuit_impl.rs::896",
-    "698": "Variable at cs/src/gkr_circuits/delegation/blake2_round_with_extended_control/mod.rs::899",
+    "698": "Variable at cs/src/gkr_circuits/delegation/blake2_round_with_extended_control/mod.rs::922",
     "699": "Variable at cs/src/cs/circuit_impl.rs::896",
     "700": "Variable at cs/src/cs/circuit_impl.rs::896",
-    "701": "Variable at cs/src/gkr_circuits/delegation/blake2_round_with_extended_control/mod.rs::927",
-    "702": "Variable at cs/src/gkr_circuits/delegation/blake2_round_with_extended_control/mod.rs::928",
+    "701": "Variable at cs/src/gkr_circuits/delegation/blake2_round_with_extended_control/mod.rs::950",
+    "702": "Variable at cs/src/gkr_circuits/delegation/blake2_round_with_extended_control/mod.rs::951",
     "703": "Variable at cs/src/cs/circuit_impl.rs::896",
     "704": "Variable at cs/src/cs/circuit_impl.rs::896",
-    "705": "Variable at cs/src/gkr_circuits/delegation/blake2_round_with_extended_control/mod.rs::899",
+    "705": "Variable at cs/src/gkr_circuits/delegation/blake2_round_with_extended_control/mod.rs::922",
     "706": "Variable at cs/src/cs/circuit_impl.rs::896",
     "707": "Variable at cs/src/cs/circuit_impl.rs::896",
-    "708": "Variable at cs/src/gkr_circuits/delegation/blake2_round_with_extended_control/mod.rs::927",
-    "709": "Variable at cs/src/gkr_circuits/delegation/blake2_round_with_extended_control/mod.rs::928",
+    "708": "Variable at cs/src/gkr_circuits/delegation/blake2_round_with_extended_control/mod.rs::950",
+    "709": "Variable at cs/src/gkr_circuits/delegation/blake2_round_with_extended_control/mod.rs::951",
     "710": "Variable at cs/src/cs/circuit_impl.rs::896",
     "711": "Variable at cs/src/cs/circuit_impl.rs::896",
-    "712": "Variable at cs/src/gkr_circuits/delegation/blake2_round_with_extended_control/mod.rs::899",
+    "712": "Variable at cs/src/gkr_circuits/delegation/blake2_round_with_extended_control/mod.rs::922",
     "713": "Variable at cs/src/cs/circuit_impl.rs::896",
     "714": "Variable at cs/src/cs/circuit_impl.rs::896",
-    "715": "Variable at cs/src/gkr_circuits/delegation/blake2_round_with_extended_control/mod.rs::927",
-    "716": "Variable at cs/src/gkr_circuits/delegation/blake2_round_with_extended_control/mod.rs::928",
+    "715": "Variable at cs/src/gkr_circuits/delegation/blake2_round_with_extended_control/mod.rs::950",
+    "716": "Variable at cs/src/gkr_circuits/delegation/blake2_round_with_extended_control/mod.rs::951",
     "717": "Variable at cs/src/cs/circuit_impl.rs::896",
     "718": "Variable at cs/src/cs/circuit_impl.rs::896",
-    "719": "Variable at cs/src/gkr_circuits/delegation/blake2_round_with_extended_control/mod.rs::899",
+    "719": "Variable at cs/src/gkr_circuits/delegation/blake2_round_with_extended_control/mod.rs::922",
     "720": "Variable at cs/src/cs/circuit_impl.rs::896",
     "721": "Variable at cs/src/cs/circuit_impl.rs::896",
-    "722": "Variable at cs/src/gkr_circuits/delegation/blake2_round_with_extended_control/mod.rs::927",
-    "723": "Variable at cs/src/gkr_circuits/delegation/blake2_round_with_extended_control/mod.rs::928",
+    "722": "Variable at cs/src/gkr_circuits/delegation/blake2_round_with_extended_control/mod.rs::950",
+    "723": "Variable at cs/src/gkr_circuits/delegation/blake2_round_with_extended_control/mod.rs::951",
     "724": "Variable at cs/src/cs/circuit_impl.rs::896",
     "725": "Variable at cs/src/cs/circuit_impl.rs::896",
-    "726": "Variable at cs/src/gkr_circuits/delegation/blake2_round_with_extended_control/mod.rs::899",
+    "726": "Variable at cs/src/gkr_circuits/delegation/blake2_round_with_extended_control/mod.rs::922",
     "727": "Variable at cs/src/cs/circuit_impl.rs::896",
     "728": "Variable at cs/src/cs/circuit_impl.rs::896",
-    "729": "Variable at cs/src/gkr_circuits/delegation/blake2_round_with_extended_control/mod.rs::927",
-    "730": "Variable at cs/src/gkr_circuits/delegation/blake2_round_with_extended_control/mod.rs::928",
+    "729": "Variable at cs/src/gkr_circuits/delegation/blake2_round_with_extended_control/mod.rs::950",
+    "730": "Variable at cs/src/gkr_circuits/delegation/blake2_round_with_extended_control/mod.rs::951",
     "731": "Variable at cs/src/cs/circuit_impl.rs::896",
     "732": "Variable at cs/src/cs/circuit_impl.rs::896",
-    "733": "Variable at cs/src/gkr_circuits/delegation/blake2_round_with_extended_control/mod.rs::899",
+    "733": "Variable at cs/src/gkr_circuits/delegation/blake2_round_with_extended_control/mod.rs::922",
     "734": "Variable at cs/src/cs/circuit_impl.rs::896",
     "735": "Variable at cs/src/cs/circuit_impl.rs::896",
-    "736": "Variable at cs/src/gkr_circuits/delegation/blake2_round_with_extended_control/mod.rs::927",
-    "737": "Variable at cs/src/gkr_circuits/delegation/blake2_round_with_extended_control/mod.rs::928",
+    "736": "Variable at cs/src/gkr_circuits/delegation/blake2_round_with_extended_control/mod.rs::950",
+    "737": "Variable at cs/src/gkr_circuits/delegation/blake2_round_with_extended_control/mod.rs::951",
     "738": "Variable at cs/src/cs/circuit_impl.rs::896",
     "739": "Variable at cs/src/cs/circuit_impl.rs::896",
     "740": "ram or indirect query 0, register read_ts[0]",

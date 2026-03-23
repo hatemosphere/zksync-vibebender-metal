@@ -143,6 +143,7 @@ impl<F: PrimeField> GKRCompiler<F> {
         let mut ram_access_sets: Vec<RamQuery> = vec![];
         let mut ram_augmented_sets: Vec<(MemoryAccess, ShuffleRamTimestampComparisonPartialData)> =
             vec![];
+        let mut indirect_access_variable_offsets = BTreeMap::new();
         use crate::gkr_compiler::delegation_mem_accesses::compile_register_and_indirect_mem_accesses;
         compile_register_and_indirect_mem_accesses(
             &mut graph,
@@ -154,6 +155,7 @@ impl<F: PrimeField> GKRCompiler<F> {
             &mut variable_names,
             &mut ram_access_sets,
             &mut ram_augmented_sets,
+            &mut indirect_access_variable_offsets,
             &mut range_check_expressions,
         );
 
@@ -477,11 +479,23 @@ impl<F: PrimeField> GKRCompiler<F> {
             .map(|el| el as u32)
             .to_vec();
 
+        // assert continuous
+        for i in 0..indirect_access_variable_offsets.len() {
+            assert!(indirect_access_variable_offsets.contains_key(&i));
+        }
+
+        let indirect_access_variable_offsets = indirect_access_variable_offsets.into_iter().map(|(idx, place)| {
+            let GKRAddress::BaseLayerMemory(offset) = place else {
+                unreachable!()
+            };
+            offset
+        }).collect();
+
         let memory_layout = GKRMemoryLayout {
             ram_access_sets,
             machine_state: None,
             delegation_state: Some(delegation_state),
-            register_and_indirect_accesses: vec![],
+            indirect_access_variable_offsets,
             total_width: graph.base_layer_memory.len(),
             decoder_input: None,
         };

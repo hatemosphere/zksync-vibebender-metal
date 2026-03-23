@@ -22,8 +22,10 @@ pub struct RegisterOrRamAccessAddress {
 
 #[derive(Clone, Copy, Hash, Debug, serde::Serialize, serde::Deserialize)]
 pub struct IndirectRamAccessAddress {
-    pub base_offset_from_register: [usize; REGISTER_SIZE],
+    pub base_register_value: [usize; REGISTER_SIZE],
+    pub base_register_index: u16,
     pub constant_offset: u16,
+    pub indirect_access_idx_for_register: usize,
     pub variable_offset: Option<(u16, usize)>,
 }
 
@@ -66,12 +68,16 @@ pub enum RamQuery {
 }
 
 impl RamQuery {
-    // pub const fn max_offset(&self) -> usize {
-    //     match self {
-    //         Self::Readonly(el) => el.read_value[0] + REGISTER_SIZE,
-    //         Self::Write(el) => el.write_value + REGISTER_SIZE,
-    //     }
-    // }
+    pub fn local_timestamp_in_cycle(&self) -> u32 {
+        match self {
+            Self::Readonly(el) => {
+                debug_assert_eq!(el.in_cycle_write_index, 0);
+                
+                0
+            },
+            Self::Write(el) => el.in_cycle_write_index,
+        }
+    }
 
     pub const fn get_read_timestamp_columns(&self) -> [usize; NUM_TIMESTAMP_COLUMNS_FOR_RAM] {
         match self {

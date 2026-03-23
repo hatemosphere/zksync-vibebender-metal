@@ -280,18 +280,27 @@ impl<F: PrimeField, A: Allocator + Clone, B: Allocator + Clone> GKRFullWitnessTr
 
             // and witness should skip multiplicities
             for (idx, el) in self.column_major_witness_trace.iter_mut().enumerate() {
-                if idx
-                    == compiled_circuit
-                        .witness_layout
-                        .multiplicities_columns_for_range_check_16
-                    || idx
+                let is_range_check_16_multiplicity = compiled_circuit
+                    .witness_layout
+                    .multiplicities_columns_for_range_check_16
+                    .is_empty()
+                    == false
+                    && idx
                         == compiled_circuit
                             .witness_layout
-                            .multiplicities_columns_for_timestamp_range_check
-                    || compiled_circuit
+                            .multiplicities_columns_for_range_check_16
+                            .start;
+                let is_timestamp_range_check_multiplicity = idx
+                    == compiled_circuit
                         .witness_layout
-                        .multiplicities_columns_for_generic_lookup
-                        .contains(&idx)
+                        .multiplicities_columns_for_timestamp_range_check;
+                let is_generic_lookup_multiplicity = compiled_circuit
+                    .witness_layout
+                    .multiplicities_columns_for_generic_lookup
+                    .contains(&idx);
+                if is_range_check_16_multiplicity
+                    || is_timestamp_range_check_multiplicity
+                    || is_generic_lookup_multiplicity
                 {
                     el.resize(trace_len, F::ZERO);
                 } else {
@@ -474,6 +483,22 @@ pub fn evaluate_gkr_witness_for_executor_family<
     full_trace.set_initialized_and_pad(num_cycles, trace_len, compiled_circuit);
 
     // copy back multiplicities
+    if compiled_circuit
+        .witness_layout
+        .multiplicities_columns_for_range_check_16
+        .is_empty()
+    {
+        // effectively skip
+        range_16_multiplicity_subcounters.clear();
+    }
+    if compiled_circuit
+        .witness_layout
+        .multiplicities_columns_for_generic_lookup
+        .is_empty()
+    {
+        // effectively skip
+        general_purpose_multiplicity_subcounters.clear();
+    }
 
     unsafe {
         gkr_postprocess_multiplicities(
@@ -696,7 +721,8 @@ unsafe fn gkr_postprocess_multiplicities<
         unsafe {
             let offset = compiled_circuit
                 .witness_layout
-                .multiplicities_columns_for_range_check_16;
+                .multiplicities_columns_for_range_check_16
+                .start;
             let dst = &mut exec_trace.column_major_witness_trace[offset];
             assert_eq!(dst.len(), trace_len);
             assert!(trace_len >= 1 << 16);
