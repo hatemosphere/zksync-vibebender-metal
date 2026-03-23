@@ -32,10 +32,20 @@ pub enum MemoryAccessRequest {
     },
     // Register or RAM accesses reallocate addresses
     RegisterOrRamRead {
-        negate_address_space_var: bool,
+        // negate_address_space_var: bool,
+        is_register: Boolean,
+        address: [Variable; REGISTER_SIZE],
+        read_value_placeholder: Placeholder,
+        split_as_u8: bool,
     },
     RegisterOrRamReadWrite {
-        negate_address_space_var: bool,
+        // negate_address_space_var: bool,
+        is_register: Boolean,
+        address: [Variable; REGISTER_SIZE],
+        read_value_placeholder: Placeholder,
+        write_value_placeholder: Placeholder,
+        split_read_as_u8: bool,
+        split_write_as_u8: bool,
     },
 }
 

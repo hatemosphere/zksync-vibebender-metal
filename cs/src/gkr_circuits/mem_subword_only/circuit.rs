@@ -159,12 +159,16 @@ fn apply_mem_subword_only_inner<F: PrimeField, CS: Circuit<F>>(
         cs.add_constraint_allow_explicit_linear(Term::from(of_low) + Term::from(rs1_high) + Term::from(imm_high) - Term::from(high) - shift16*Term::from(of_high));
         [low, high]
     };
+    let funct3_from_mask: Constraint<F> = {
+        let is_unsigned = Constraint::from(decoder.is_unsigned());
+        let is_halfword = Constraint::from(decoder.is_byte().toggle());
+        is_unsigned * Term::from(4u32) + is_halfword
+    };
     let [b0, b1] = {
         let b0 = cs.add_named_variable("addr[0]");
         let b1 = cs.add_named_variable("addr[1]");
         let [addr_low, _] = addr;
-        let f3 = inputs.decoder_data.funct3.unwrap();
-        let inputs = &[addr_low, f3].map(LookupInput::from);
+        let inputs = &[addr_low, funct3_from_mask.clone()].map(LookupInput::from);
         let output_variables = &[b0, b1];
         let table_type = LookupQueryTableType::Constant(TableType::SubwordAddressCleanAndTrap);
         cs.set_variables_from_lookup_constrained(inputs, output_variables, table_type);
@@ -253,15 +257,14 @@ fn apply_mem_subword_only_inner<F: PrimeField, CS: Circuit<F>>(
             cs.add_intermediate_named_variable_from_constraint(Term::from(b1) * sel_hi + Constraint::from(b1.toggle()) * sel_lo, "selected low/high limb to use")
         };
         // let input_lo = 
-        let f3 = Constraint::from(inputs.decoder_data.funct3.unwrap());
         let tableid_lo = todo!();
         let tableid_hi = todo!();
         //
-        let inputs = &[limb_lo, offset, f3].map(LookupInput::from);
+        let inputs = &[limb_lo, offset, funct3_from_mask.clone()].map(LookupInput::from);
         let output_variables = &[lo];
         let table_type = LookupQueryTableType::Expression(LookupInput::from(tableid_lo));
         cs.set_variables_from_lookup_constrained(inputs, output_variables, table_type);
-        let inputs = &[limb_hi, offset, f3].map(LookupInput::from);
+        let inputs = &[limb_hi, offset, funct3_from_mask].map(LookupInput::from);
         let output_variables = &[lo];
         let table_type = LookupQueryTableType::Expression(LookupInput::from(tableid_lo));
         cs.set_variables_from_lookup_constrained(inputs, output_variables, table_type);
@@ -287,8 +290,7 @@ fn apply_mem_subword_only_inner<F: PrimeField, CS: Circuit<F>>(
 pub fn mem_subword_only_circuit_with_preprocessed_bytecode_for_gkr<F: PrimeField, CS: Circuit<F>>(
     cs: &mut CS,
 ) {
-    // TODO: we can do all of this without F3 but i don't think it will affect performance
-    let (input, bitmask) = cs.allocate_machine_state(true, false, SUBWORD_ONLY_MEMORY_FAMILY_NUM_FLAGS);
+    let (input, bitmask) = cs.allocate_machine_state(false, false, SUBWORD_ONLY_MEMORY_FAMILY_NUM_FLAGS);
     let bitmask: [_; SUBWORD_ONLY_MEMORY_FAMILY_NUM_FLAGS] = bitmask.try_into().unwrap();
     let bitmask = bitmask.map(|el| Boolean::Is(el));
     let decoder = SubwordOnlyMemoryFamilyCircuitMask::from_mask(bitmask);

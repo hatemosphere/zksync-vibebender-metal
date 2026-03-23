@@ -2,6 +2,8 @@ use super::*;
 use crate::types::Boolean;
 
 const WRITE_BIT: usize = 0;
+const BYTE_BIT: usize = 1;
+const UNSIGNED_BIT: usize = 2;
 
 #[derive(Clone, Copy, Debug)]
 pub struct SubwordOnlyMemoryFamilyDecoder;
@@ -13,14 +15,9 @@ pub struct SubwordOnlyMemoryFamilyCircuitMask {
 
 impl InstructionFamilyBitmaskCircuitParser for SubwordOnlyMemoryFamilyCircuitMask {
     fn parse<F: PrimeField, CS: Circuit<F>>(cs: &mut CS, input: Variable) -> Self {
-        use crate::constraint::Term;
-        // NOTE: even though it's 1-bit mask, we still constraint that input is indeed boolean
-        // as in case of padding rows malicious prover can substitute garbage here,
-        // while we assume that it's a true bit everywhere
-        cs.add_constraint((Term::from(1) - Term::from(input)) * Term::from(input));
-        Self {
-            inner: [Boolean::Is(input)],
-        }
+        let inner =
+            Boolean::split_into_bitmask::<_, _, SUBWORD_ONLY_MEMORY_FAMILY_NUM_FLAGS>(cs, Num::Var(input));
+        Self { inner }
     }
 }
 
@@ -28,6 +25,14 @@ impl SubwordOnlyMemoryFamilyCircuitMask {
     // getters for our opcodes
     pub fn perform_write(&self) -> Boolean {
         self.inner[WRITE_BIT]
+    }
+
+    pub fn is_byte(&self) -> Boolean {
+        self.inner[BYTE_BIT]
+    }
+
+    pub fn is_unsigned(&self) -> Boolean {
+        self.inner[UNSIGNED_BIT]
     }
 }
 
@@ -57,6 +62,7 @@ impl OpcodeFamilyDecoder for SubwordOnlyMemoryFamilyDecoder {
                 rs2_index = 0;
                 instruction_type = InstructionType::IType;
                 imm = instruction_type.parse_imm(opcode, false);
+                repr |= 1 << BYTE_BIT;
             }
             (OPERATION_LOAD, 0b001, _) => {
                 // LH
@@ -69,12 +75,15 @@ impl OpcodeFamilyDecoder for SubwordOnlyMemoryFamilyDecoder {
                 rs2_index = 0;
                 instruction_type = InstructionType::IType;
                 imm = instruction_type.parse_imm(opcode, false);
+                repr |= 1 << BYTE_BIT;
+                repr |= 1 << UNSIGNED_BIT;
             }
             (OPERATION_LOAD, 0b101, _) => {
                 // LHU
                 rs2_index = 0;
                 instruction_type = InstructionType::IType;
                 imm = instruction_type.parse_imm(opcode, false);
+                repr |= 1 << UNSIGNED_BIT;
             }
             (OPERATION_STORE, 0b000, _) => {
                 // SB
@@ -82,6 +91,7 @@ impl OpcodeFamilyDecoder for SubwordOnlyMemoryFamilyDecoder {
                 instruction_type = InstructionType::SType;
                 imm = instruction_type.parse_imm(opcode, false);
                 repr |= 1 << WRITE_BIT;
+                repr |= 1 << BYTE_BIT;
             }
             (OPERATION_STORE, 0b001, _) => {
                 // SH
