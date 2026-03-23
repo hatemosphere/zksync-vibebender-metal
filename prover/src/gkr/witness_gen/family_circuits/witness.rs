@@ -9,7 +9,7 @@ use field::PrimeField;
 use worker::Worker;
 use worker::WorkerGeometry;
 
-struct QuasiCell<T: Sized>(Box<[*mut T]>);
+pub(crate) struct QuasiCell<T: Sized>(pub(crate) Box<[*mut T]>);
 unsafe impl Send for QuasiCell<u32> {}
 unsafe impl Send for QuasiCell<u16> {}
 
@@ -561,7 +561,7 @@ unsafe fn gkr_evaluate_witness_for_executor_family_inner<'a, F: PrimeField, O: O
         // our witness evaluation would count multiplicities that result in explicit lookups, so we need only
         // to count ones that are from special range-checks
 
-        gkr_count_special_multiplicities_for_executor_family(
+        gkr_count_special_multiplicities(
             proxy,
             range_check_16_chunk,
             timestamp_range_check_chunk,
@@ -598,11 +598,7 @@ pub(crate) unsafe fn gkr_evaluate_witness_static_work_for_executor_family<
     gkr_process_shuffle_ram_accesses_in_executor_family::<F, O, true>(proxy, compiled_circuit);
 }
 
-pub(crate) unsafe fn gkr_count_special_multiplicities_for_executor_family<
-    'a,
-    F: PrimeField,
-    O: Oracle<F> + 'a,
->(
+pub(crate) unsafe fn gkr_count_special_multiplicities<'a, F: PrimeField, O: Oracle<F> + 'a>(
     proxy: &mut ColumnMajorWitnessProxy<'a, O, F>,
     range_check_16_chunk: &mut Box<[*mut u16]>,
     timestamp_range_check_chunk: &mut Box<[*mut u32]>,
@@ -688,7 +684,7 @@ pub(crate) unsafe fn gkr_count_special_multiplicities_for_executor_family<
     });
 }
 
-unsafe fn gkr_postprocess_multiplicities<
+pub(crate) unsafe fn gkr_postprocess_multiplicities<
     F: PrimeField,
     A: Allocator + Clone,
     B: Allocator + Clone,

@@ -12,5 +12,7 @@ use field::PrimeField;
 use worker::WorkerGeometry;
 
 mod memory;
+mod witness;
 
 pub use self::memory::evaluate_gkr_memory_witness_for_delegation_circuit;
+pub use self::witness::evaluate_gkr_witness_for_delegation_circuit;

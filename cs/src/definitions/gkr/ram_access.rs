@@ -70,11 +70,7 @@ pub enum RamQuery {
 impl RamQuery {
     pub fn local_timestamp_in_cycle(&self) -> u32 {
         match self {
-            Self::Readonly(el) => {
-                debug_assert_eq!(el.in_cycle_write_index, 0);
-                
-                0
-            },
+            Self::Readonly(el) => el.in_cycle_write_index,
             Self::Write(el) => el.in_cycle_write_index,
         }
     }

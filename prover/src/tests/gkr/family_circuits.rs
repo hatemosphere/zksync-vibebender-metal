@@ -4,6 +4,7 @@ use crate::gkr::prover::setup::GKRSetup;
 use crate::gkr::prover::GKRExternalChallenges;
 use crate::gkr::prover::WhirSchedule;
 use crate::gkr::witness_gen::delegation_circuits::evaluate_gkr_memory_witness_for_delegation_circuit;
+use crate::gkr::witness_gen::delegation_circuits::evaluate_gkr_witness_for_delegation_circuit;
 use crate::gkr::witness_gen::family_circuits::evaluate_gkr_memory_witness_for_executor_family;
 use crate::gkr::witness_gen::family_circuits::evaluate_gkr_witness_for_executor_family;
 use crate::gkr::witness_gen::oracles::NonMemoryCircuitOracle;
@@ -1630,25 +1631,25 @@ pub fn gkr_run_basic_unrolled_test_impl(
             Global,
         );
 
-        // let eval_fn = super::blake2_with_extended_control::witness_eval_fn;
+        let eval_fn = super::blake2_with_extended_control::witness_eval_fn;
 
-        // #[cfg(feature = "debug_logs")]
-        // println!(
-        //     "Evaluating witness for delegation circuit {}",
-        //     delegation_type
-        // );
-        // let full_witness = evaluate_gkr_witness_for_executor_family(
-        //     &circuit,
-        //     eval_fn,
-        //     NUM_DELEGATION_CYCLES,
-        //     &oracle,
-        //     &table_driver,
-        //     &worker,
-        //     Global,
-        //     Global,
-        // );
+        #[cfg(feature = "debug_logs")]
+        println!(
+            "Evaluating witness for delegation circuit {}",
+            delegation_type
+        );
+        let full_trace = evaluate_gkr_witness_for_delegation_circuit(
+            &circuit,
+            eval_fn,
+            NUM_DELEGATION_CYCLES,
+            &oracle,
+            &table_driver,
+            &worker,
+            Global,
+            Global,
+        );
 
-        // ensure_memory_trace_consistency(&memory_trace, &full_trace);
+        ensure_memory_trace_consistency(&memory_trace, &full_trace);
 
         // // parse_delegation_ram_accesses_from_full_trace(
         // //     &circuit,
@@ -1657,65 +1658,65 @@ pub fn gkr_run_basic_unrolled_test_impl(
         // //     &mut memory_read_set,
         // // );
 
-        // if CHECK_MEMORY_PERMUTATION_ONLY == false {
-        //     // println!("Will check constraints satisfiability");
-        //     // let is_satisfied = check_satisfied(&circuit, &full_trace);
-        //     // assert!(is_satisfied);
+        if CHECK_MEMORY_PERMUTATION_ONLY == false {
+            println!("Will check constraints satisfiability");
+            let is_satisfied = check_satisfied(&circuit, &full_trace);
+            assert!(is_satisfied);
 
-        //     println!("Preparing twiddles");
-        //     let twiddles: Twiddles<_, Global> = Twiddles::new(trace_len, &worker);
-        //     println!("Preparing setup");
-        //     let setup = GKRSetup::construct(&table_driver, &[], trace_len, &circuit);
+            println!("Preparing twiddles");
+            let twiddles: Twiddles<_, Global> = Twiddles::new(NUM_DELEGATION_CYCLES, &worker);
+            println!("Preparing setup");
+            let setup = GKRSetup::construct(&table_driver, &[], NUM_DELEGATION_CYCLES, &circuit);
 
-        //     let setup_commitment = setup.commit(
-        //         &twiddles,
-        //         2,
-        //         1,
-        //         tree_cap_size,
-        //         trace_len.trailing_zeros() as usize,
-        //         &worker,
-        //     );
+            let setup_commitment = setup.commit(
+                &twiddles,
+                2,
+                1,
+                tree_cap_size,
+                NUM_DELEGATION_CYCLES.trailing_zeros() as usize,
+                &worker,
+            );
 
-        //     // let lookup_mapping_for_gpu = if maybe_gpu_unrolled_comparison_hook.is_some() {
-        //     //     Some(full_trace.lookup_mapping.clone())
-        //     // } else {
-        //     //     None
-        //     // };
+            // let lookup_mapping_for_gpu = if maybe_gpu_unrolled_comparison_hook.is_some() {
+            //     Some(full_trace.lookup_mapping.clone())
+            // } else {
+            //     None
+            // };
 
-        //     let whir_schedule = WhirSchedule::default_for_tests_80_bits();
+            let whir_schedule = WhirSchedule::default_for_tests_80_bits();
 
-        //     println!("Trying to prove");
+            println!("Trying to prove");
 
-        //     let now = std::time::Instant::now();
-        //     let proof =
-        //         prove_configured_with_gkr::<BabyBearField, BabyBearExt4, DefaultTreeConstructor>(
-        //             &circuit,
-        //             &external_challenges,
-        //             full_trace,
-        //             &setup,
-        //             &setup_commitment,
-        //             &twiddles,
-        //             &whir_schedule,
-        //             None,
-        //             trace_len,
-        //             &worker,
-        //         );
-        //     println!("Proving time is {:?}", now.elapsed());
+            let now = std::time::Instant::now();
+            let proof =
+                prove_configured_with_gkr::<BabyBearField, BabyBearExt4, DefaultTreeConstructor>(
+                    &circuit,
+                    &external_challenges,
+                    full_trace,
+                    &setup,
+                    &setup_commitment,
+                    &twiddles,
+                    &whir_schedule,
+                    None,
+                    NUM_DELEGATION_CYCLES,
+                    &worker,
+                );
+            println!("Proving time is {:?}", now.elapsed());
 
-        //     println!(
-        //         "Estimated proof size without compression is {} bytes",
-        //         proof.estimate_size()
-        //     );
+            println!(
+                "Estimated proof size without compression is {} bytes",
+                proof.estimate_size()
+            );
 
-        //     if is_empty {
-        //         assert_eq!(proof.grand_product_accumulator_computed, BabyBearExt4::ONE);
-        //     }
+            if is_empty {
+                assert_eq!(proof.grand_product_accumulator_computed, BabyBearExt4::ONE);
+            }
 
-        //     serialize_to_file(
-        //         &proof,
-        //         "test_proofs/blake2_with_extended_control_gkr_proof.json",
-        //     );
-        // }
+            serialize_to_file(
+                &proof,
+                "test_proofs/blake2_with_extended_control_gkr_proof.json",
+            );
+        }
     }
 
     // if true {

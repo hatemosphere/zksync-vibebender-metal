@@ -540,7 +540,12 @@ impl<F: PrimeField> LookupTable<F> {
         total_width_including_id: usize,
     ) {
         assert!(total_width_including_id > 0);
-        assert!(self.width() < total_width_including_id);
+        assert!(
+            self.width() < total_width_including_id,
+            "trying to dump table of width {} into trace of width {} (with table ID)",
+            self.width(),
+            total_width_including_id
+        );
         let required_len = self.width() + id.is_some() as usize;
         assert!(required_len <= total_width_including_id);
         assert!(required_len <= MAX_TABLE_WIDTH);

@@ -102,7 +102,7 @@ impl<F: PrimeField> GKRCompiler<F> {
                 * trace_len as u64;
             assert!(total_generic_lookups < F::CHARACTERISTICS as u64, "total number of generic lookups in circuit is {} that is larger that field characteristics {}", total_generic_lookups, F::CHARACTERISTICS);
 
-            let max_width_without_decoder = generic_lookups
+            let max_practical_lookup_width_without_decoder = generic_lookups
                 .iter()
                 .map(|el| el.0.len())
                 .max()
@@ -113,13 +113,25 @@ impl<F: PrimeField> GKRCompiler<F> {
                 0
             };
 
-            let generic_lookup_width = if decoder_width > 0 && max_width_without_decoder > 0 {
+            let mut table_id_width = 0;
+            if decoder_width > 0 && max_practical_lookup_width_without_decoder > 0 {
                 // account for table ID
                 expect_table_id_for_generic_lookup = true;
-                core::cmp::max(decoder_width, max_width_without_decoder) + 1
-            } else {
-                core::cmp::max(decoder_width, max_width_without_decoder)
-            };
+                table_id_width = 1;
+            }
+
+            if generic_lookups.len() > 0 {
+                let t = &generic_lookups[0].1;
+                let all_same = generic_lookups.iter().map(|el| &el.1).all(|el| el == t);
+                if all_same == false {
+                    expect_table_id_for_generic_lookup = true;
+                    table_id_width = 1;
+                }
+            }
+
+            let generic_lookup_width =
+                core::cmp::max(decoder_width, max_practical_lookup_width_without_decoder)
+                    + table_id_width;
 
             println!(
                 "Generic lookup total tables in setup: {}",
@@ -484,12 +496,15 @@ impl<F: PrimeField> GKRCompiler<F> {
             assert!(indirect_access_variable_offsets.contains_key(&i));
         }
 
-        let indirect_access_variable_offsets = indirect_access_variable_offsets.into_iter().map(|(idx, place)| {
-            let GKRAddress::BaseLayerMemory(offset) = place else {
-                unreachable!()
-            };
-            offset
-        }).collect();
+        let indirect_access_variable_offsets = indirect_access_variable_offsets
+            .into_iter()
+            .map(|(idx, place)| {
+                let GKRAddress::BaseLayerMemory(offset) = place else {
+                    unreachable!()
+                };
+                offset
+            })
+            .collect();
 
         let memory_layout = GKRMemoryLayout {
             ram_access_sets,

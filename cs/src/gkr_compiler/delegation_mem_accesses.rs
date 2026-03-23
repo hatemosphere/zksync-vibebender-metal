@@ -303,7 +303,8 @@ pub(crate) fn compile_register_and_indirect_mem_accesses<F: PrimeField>(
                         all_variables_to_place,
                         layers_mapping,
                     );
-                    let existing = indirect_access_variable_offsets.insert(indirect_access_var_idx, offset_place);
+                    let existing = indirect_access_variable_offsets
+                        .insert(indirect_access_var_idx, offset_place);
                     assert!(existing.is_none());
                     let GKRAddress::BaseLayerMemory(offset_place) = offset_place else {
                         unreachable!()

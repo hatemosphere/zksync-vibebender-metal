@@ -337,8 +337,8 @@ mod shift_binary_ops {
 
 mod blake2_with_extended_control {
     use crate::gkr::witness_gen::column_major_proxy::ColumnMajorWitnessProxy;
-    use crate::gkr::witness_gen::oracles::NonMemoryCircuitOracle;
     use crate::gkr::witness_gen::witness_proxy::WitnessProxy;
+    use crate::tracers::oracles::transpiler_oracles::delegation::Blake2sDelegationOracle;
     use ::cs::oracle::Placeholder;
     use ::cs::witness_placer::WitnessTypeSet;
     use ::cs::witness_placer::{
@@ -352,11 +352,11 @@ mod blake2_with_extended_control {
     include!("../../../compiled_circuits/blake2_with_extended_control_generated_gkr.rs");
 
     pub fn witness_eval_fn<'a, 'b>(
-        proxy: &'_ mut ColumnMajorWitnessProxy<'a, NonMemoryCircuitOracle<'b>, BabyBearField>,
+        proxy: &'_ mut ColumnMajorWitnessProxy<'a, Blake2sDelegationOracle<'b>, BabyBearField>,
     ) {
         let fn_ptr = evaluate_witness_fn::<
             ScalarWitnessTypeSet<BabyBearField, true>,
-            ColumnMajorWitnessProxy<'a, NonMemoryCircuitOracle<'b>, BabyBearField>,
+            ColumnMajorWitnessProxy<'a, Blake2sDelegationOracle<'b>, BabyBearField>,
         >;
         (fn_ptr)(proxy);
     }
