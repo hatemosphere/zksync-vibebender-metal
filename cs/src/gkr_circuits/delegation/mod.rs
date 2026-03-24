@@ -5,7 +5,6 @@ use crate::tables::TableType;
 use crate::types::*;
 use field::PrimeField;
 
-// pub mod bigint_with_control;
+pub mod bigint_with_control;
 pub mod blake2_round_with_extended_control;
-// pub mod blake2_single_round;
 // pub mod keccak_special5;

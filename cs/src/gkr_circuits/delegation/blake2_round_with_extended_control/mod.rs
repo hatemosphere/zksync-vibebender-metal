@@ -36,9 +36,7 @@ pub fn all_table_types() -> Vec<TableType> {
 pub fn blake2_with_extended_control_delegation_circuit_create_table_driver<F: PrimeField>(
 ) -> TableDriver<F> {
     let mut table_driver = TableDriver::new();
-    for el in all_table_types() {
-        table_driver.materialize_table::<TOTAL_TABLE_WIDTH>(el);
-    }
+    blake2_with_extended_control_table_driver_fn(&mut table_driver);
 
     table_driver
 }

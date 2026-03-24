@@ -829,33 +829,26 @@ impl<F: PrimeField, W: WitnessPlacer<F>, const ASSUME_MEMORY_VALUES_ASSIGNED: bo
         table_type: TableType,
         skip_generating_multiplicity_counting_function: bool,
     ) {
-        todo!();
+        assert!(M < MAX_TABLE_WIDTH);
 
-        // assert_eq!(M, COMMON_TABLE_WIDTH);
+        // NOTE: we will add formal witness eval function here to ensure that we can use it for "act of lookup"
+        // if we want, and to count multiplicities
 
-        // let row = std::array::from_fn(|idx| inputs[idx].clone());
-        // // NOTE: we will add formal witness eval function here to ensure that we can use it for "act of lookup"
-        // // if we want, and to count multiplicities
+        let inputs_vars = inputs.clone();
+        let value_fn = move |placer: &mut Self::WitnessPlacer| {
+            let input_values: [_; M] = std::array::from_fn(|i| inputs_vars[i].evaluate(placer));
+            let table_id = <Self::WitnessPlacer as WitnessTypeSet<F>>::U16::constant(table_type as u16);
+            placer.lookup_enforce::<M>(&input_values, &table_id);
+        };
+        if Self::WitnessPlacer::MERGE_LOOKUP_AND_MULTIPLICITY_COUNT && skip_generating_multiplicity_counting_function == false {
+            self.set_values(value_fn);
+        }
 
-        // let inputs_vars = inputs.clone();
-        // let value_fn = move |placer: &mut Self::WitnessPlacer| {
-        //     let input_values: [_; M] = std::array::from_fn(|i| inputs_vars[i].evaluate(placer));
-        //     let table_id = <Self::WitnessPlacer as WitnessTypeSet<F>>::U16::constant(
-        //         table_type.to_table_id() as u16,
-        //     );
-        //     placer.lookup_enforce::<M>(&input_values, &table_id);
-        // };
-        // if Self::WitnessPlacer::MERGE_LOOKUP_AND_MULTIPLICITY_COUNT
-        //     && skip_generating_multiplicity_counting_function == false
-        // {
-        //     self.set_values(value_fn);
-        // }
-
-        // let query = LookupQuery {
-        //     row,
-        //     table: LookupQueryTableType::Constant(table_type),
-        // };
-        // self.lookup_storage.push(query);
+        let query = LookupQuery {
+            row: inputs.to_vec(),
+            table: LookupQueryTableType::Constant(table_type),
+        };
+        self.lookup_storage.push(query);
     }
 
     #[track_caller]
