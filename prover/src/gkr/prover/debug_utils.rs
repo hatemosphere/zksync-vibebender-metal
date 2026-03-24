@@ -276,8 +276,31 @@ fn evaluate_memory_tuple_from_claims<F: PrimeField, E: FieldExtension<F> + Field
         CompiledAddressStrict::U32SpaceGeneric(..) => {
             todo!();
         }
-        CompiledAddressStrict::U32SpaceSpecialIndirect { .. } => {
-            todo!();
+        CompiledAddressStrict::U32SpaceSpecialIndirect {
+            low_base,
+            low_dynamic_offset,
+            low_offset,
+            high,
+        } => {
+            {
+                let mut t = external_challenges.permutation_argument_linearization_challenges
+                    [MEM_ARGUMENT_CHALLENGE_POWERS_ADDRESS_LOW_IDX];
+                let mut low = claims[&GKRAddress::BaseLayerMemory(*low_base)];
+                low.add_assign_base(&F::from_u32_unchecked(*low_offset));
+                if let Some((c, offset)) = *low_dynamic_offset {
+                    let mut t = claims[&GKRAddress::BaseLayerMemory(offset)];
+                    t.mul_assign_by_base(&F::from_u32_unchecked(c as u32));
+                }
+                t.mul_assign(&low);
+                result.add_assign(&t);
+            }
+            {
+                let mut t = external_challenges.permutation_argument_linearization_challenges
+                    [MEM_ARGUMENT_CHALLENGE_POWERS_ADDRESS_HIGH_IDX];
+                let high = claims[&GKRAddress::BaseLayerMemory(*high)];
+                t.mul_assign(&high);
+                result.add_assign(&t);
+            }
         }
     }
     match rel.timestamp {

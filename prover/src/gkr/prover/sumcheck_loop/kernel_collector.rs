@@ -13,7 +13,7 @@ use crate::gkr::sumcheck::evaluation_kernels::{
     LookupRationalPairWithUnbalancedBaseGKRRelation,
     LookupRationalPairWithUnbalancedExtensionGKRRelation,
     LookupRationalPairWithUnbalancedExtensionGKRRelationKernel, MaskIntoIdentityProductGKRRelation,
-    MaxQuadraticGKRRelation, SameSizeProductGKRRelation,
+    MaterializeVectoLookupInputGKRRelation, MaxQuadraticGKRRelation, SameSizeProductGKRRelation,
 };
 use crate::worker::Worker;
 use field::{Field, FieldExtension, PrimeField};
@@ -120,6 +120,7 @@ define_kernel_variants! {
         MaskIdentity(MaskIntoIdentityProductGKRRelation),
         PairwiseProductDimensionReducing(PairwiseProductDimensionReducingGKRRelation),
         MaxQuadratic(MaxQuadraticGKRRelation::<F, E>),
+        MaterializeVectorLookupInput(MaterializeVectoLookupInputGKRRelation<F, E>),
     }
     // 2 challenges, two outputs
     pair {
@@ -144,10 +145,9 @@ impl<F: PrimeField, E: FieldExtension<F> + Field> KernelVariant<F, E> {
         relation: &NoFieldGKRRelation,
         layer_idx: usize,
         gkr_storage: &GKRStorage<F, E>,
+        lookup_challenges_multiplicative_part: E,
         lookup_challenges_additive_part: E,
         challenge_for_constraints: E,
-        num_base_layer_memory_polys: usize,
-        num_base_layer_witness_polys: usize,
         current_batch_challenge: &mut E,
         batch_challenge_base: &E,
     ) -> Self {
@@ -310,12 +310,7 @@ impl<F: PrimeField, E: FieldExtension<F> + Field> KernelVariant<F, E> {
             NoFieldGKRRelation::EnforceConstraintsMaxQuadratic { input } => {
                 let challenge = [get_challenge()];
                 Self::EnforceConstraintsMaxQuadratic(
-                    BatchConstraintEvalGKRRelation::new(
-                        input,
-                        num_base_layer_memory_polys,
-                        num_base_layer_witness_polys,
-                        challenge_for_constraints,
-                    ),
+                    BatchConstraintEvalGKRRelation::new(input, challenge_for_constraints),
                     challenge,
                 )
             }
@@ -358,6 +353,18 @@ impl<F: PrimeField, E: FieldExtension<F> + Field> KernelVariant<F, E> {
                     *output,
                 )
             }
+            NoFieldGKRRelation::MaterializedVectorLookupInput { input, output } => {
+                let challenges = [get_challenge()];
+                Self::MaterializeVectorLookupInput(
+                    MaterializeVectoLookupInputGKRRelation::new(
+                        input,
+                        *output,
+                        lookup_challenges_multiplicative_part,
+                    ),
+                    challenges,
+                    *output,
+                )
+            }
             // NoFieldGKRRelation::MaterializeSingleLookupInput { .. } => todo!(),
             // NoFieldGKRRelation::MaterializedVectorLookupInput { .. } => todo!(),
             // NoFieldGKRRelation::LookupPairFromBaseInputs { .. } => todo!(),
@@ -391,9 +398,9 @@ impl<F: PrimeField, E: FieldExtension<F> + Field> KernelCollector<F, E> {
     pub(super) fn register(&mut self, kernel: KernelVariant<F, E>) {
         // Kernels can have a bug in them, place to debug
         match kernel {
-            // KernelVariant::LookupVectorPair(..) => {},
+            // KernelVariant::MaterializeVectorLookupInput(..) => {},
             // KernelVariant::EnforceConstraintsMaxQuadratic(..) => {},
-            // KernelVariant::LookupMaskedVectorMinusSetup(..) => {},
+            // KernelVariant::LookupExtensionMinusMultiplicityByExtension(..) => {},
             _ => self.kernels.push(kernel),
         }
     }
@@ -410,10 +417,9 @@ impl<F: PrimeField, E: FieldExtension<F> + Field> KernelCollector<F, E> {
         layer_idx: usize,
         batch_challenge_base: E,
         gkr_storage: &GKRStorage<F, E>,
+        lookup_challenges_multiplicative_part: E,
         lookup_challenges_additive_part: E,
         challenge_for_constraints: E,
-        num_base_layer_memory_polys: usize,
-        num_base_layer_witness_polys: usize,
     ) -> Self {
         let mut collector = Self::new(batch_challenge_base);
 
@@ -430,10 +436,9 @@ impl<F: PrimeField, E: FieldExtension<F> + Field> KernelCollector<F, E> {
                 &gate.enforced_relation,
                 layer_idx,
                 gkr_storage,
+                lookup_challenges_multiplicative_part,
                 lookup_challenges_additive_part,
                 challenge_for_constraints,
-                num_base_layer_memory_polys,
-                num_base_layer_witness_polys,
                 &mut collector.current_batch_challenge,
                 &batch_base,
             );
@@ -830,6 +835,16 @@ impl<F: PrimeField, E: FieldExtension<F> + Field> KernelCollector<F, E> {
                         acc[j].add_assign(&val1);
                     }
                 }
+                KernelVariant::MaterializeVectorLookupInput(rel, challenge, _) => {
+                    for j in 0..2usize {
+                        let inputs_vec: Vec<E> =
+                            rel.inputs.iter().map(|addr| get(*addr, j)).collect();
+                        let [val] = rel.kernel.pointwise_eval(&inputs_vec);
+                        let mut contrib = val;
+                        contrib.mul_assign(&challenge[0]);
+                        acc[j].add_assign(&contrib);
+                    }
+                }
                 KernelVariant::MaxQuadratic(rel, challenge, _) => {
                     for j in 0..2usize {
                         let inputs_vec: Vec<E> =
@@ -840,7 +855,6 @@ impl<F: PrimeField, E: FieldExtension<F> + Field> KernelCollector<F, E> {
                         acc[j].add_assign(&contrib);
                     }
                 }
-
                 KernelVariant::EnforceConstraintsMaxQuadratic(rel, challenge) => {
                     // BatchConstraintEval: sum of quadratic/linear/constant terms over the input
                     // polys. For a valid circuit each pointwise evaluation is zero, so this

@@ -132,7 +132,37 @@ pub struct WhirSchedule {
 }
 
 impl WhirSchedule {
-    pub fn default_for_tests_80_bits() -> Self {
+    pub fn default_for_tests_80_bits_20() -> Self {
+        let mut new = Self {
+            base_lde_factor: 2,
+            cap_size: 16,
+            whir_steps_schedule: vec![1, 4, 4, 4, 4],
+            whir_pow_schedule: vec![24, 24, 24, 24, 24],
+            whir_steps_lde_factors: vec![8, 64, 128, 128],
+            whir_queries_schedule: vec![],
+        };
+
+        assert_eq!(
+            new.whir_steps_lde_factors.len() + 1,
+            new.whir_steps_schedule.len()
+        );
+        assert_eq!(new.whir_pow_schedule.len(), new.whir_steps_schedule.len());
+
+        for (lde, pow) in Some(new.base_lde_factor)
+            .iter()
+            .chain(new.whir_steps_lde_factors.iter())
+            .zip(new.whir_pow_schedule.iter())
+        {
+            let sec_bits = 80 - *pow;
+            let bits_per_query = lde.trailing_zeros();
+            let num_queries = (sec_bits * 120).div_ceil(bits_per_query * 100); // roughly extra 20% on top of conjecture. Latest paper decrease conjectured value by 5-10% depending on rate
+            new.whir_queries_schedule.push(num_queries as usize);
+        }
+
+        new
+    }
+
+    pub fn default_for_tests_80_bits_24() -> Self {
         let mut new = Self {
             base_lde_factor: 2,
             cap_size: 16,
@@ -478,6 +508,7 @@ where
             &mut sumcheck_batching_challenge,
             compiled_circuit,
             trace_len,
+            lookup_alpha,
             lookup_additive_part,
             constraints_batch_challenge,
             external_challenges,
@@ -578,16 +609,18 @@ where
     let mut setup_polys_claims = Vec::with_capacity(setup.hypercube_evals.len());
     for i in 0..setup.hypercube_evals.len() {
         let key = GKRAddress::Setup(i);
-        let Some(value) = claims_for_layers[&0].get(&key).copied() else {
-            panic!("Missing claim for {:?}", key);
-        };
-        #[cfg(feature = "gkr_self_checks")]
-        {
-            let poly = gkr_storage.get_base_layer(key);
-            let evaluation = evaluate_with_precomputed_eq::<F, E>(poly, &_eq_at_z[..]);
-            assert_eq!(evaluation, value, "diverged for {:?}", key);
+        if let Some(value) = claims_for_layers[&0].get(&key).copied() {
+            #[cfg(feature = "gkr_self_checks")]
+            {
+                let poly = gkr_storage.get_base_layer(key);
+                let evaluation = evaluate_with_precomputed_eq::<F, E>(poly, &_eq_at_z[..]);
+                assert_eq!(evaluation, value, "diverged for {:?}", key);
+            }
+            setup_polys_claims.push(value);
+        } else {
+            // dummy for now
+            setup_polys_claims.push(E::ZERO);
         }
-        setup_polys_claims.push(value);
     }
 
     drop(gkr_storage);

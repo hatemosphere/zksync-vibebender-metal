@@ -11,6 +11,7 @@ pub mod lookup_pair;
 pub mod lookup_rational_with_unbalanced_base;
 pub mod lookup_rational_with_unbalanced_ext;
 pub mod mask_into_identity;
+pub mod materialize_vector_lookup_input;
 pub mod max_quadratic_rel;
 pub mod pairwise_product;
 
@@ -25,5 +26,6 @@ pub use self::lookup_pair::*;
 pub use self::lookup_rational_with_unbalanced_base::*;
 pub use self::lookup_rational_with_unbalanced_ext::*;
 pub use self::mask_into_identity::*;
+pub use self::materialize_vector_lookup_input::*;
 pub use self::max_quadratic_rel::*;
 pub use self::pairwise_product::*;

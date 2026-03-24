@@ -399,7 +399,7 @@ pub fn gkr_run_basic_unrolled_test_impl(
             //     None
             // };
 
-            let whir_schedule = WhirSchedule::default_for_tests_80_bits();
+            let whir_schedule = WhirSchedule::default_for_tests_80_bits_24();
 
             println!("Trying to prove");
 
@@ -587,7 +587,7 @@ pub fn gkr_run_basic_unrolled_test_impl(
             //     None
             // };
 
-            let whir_schedule = WhirSchedule::default_for_tests_80_bits();
+            let whir_schedule = WhirSchedule::default_for_tests_80_bits_24();
 
             println!("Trying to prove");
 
@@ -773,7 +773,7 @@ pub fn gkr_run_basic_unrolled_test_impl(
             //     None
             // };
 
-            let whir_schedule = WhirSchedule::default_for_tests_80_bits();
+            let whir_schedule = WhirSchedule::default_for_tests_80_bits_24();
 
             println!("Trying to prove");
 
@@ -1683,7 +1683,7 @@ pub fn gkr_run_basic_unrolled_test_impl(
             //     None
             // };
 
-            let whir_schedule = WhirSchedule::default_for_tests_80_bits();
+            let whir_schedule = WhirSchedule::default_for_tests_80_bits_20();
 
             println!("Trying to prove");
 
