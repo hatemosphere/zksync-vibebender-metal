@@ -312,11 +312,11 @@ impl GraphHolder for GKRGraph {
                 offset,
             };
 
-            println!(
-                "Adding cache relation {:?} at {:?}",
-                rel,
-                core::panic::Location::caller()
-            );
+            // println!(
+            //     "Adding cache relation {:?} at {:?}",
+            //     rel,
+            //     core::panic::Location::caller()
+            // );
 
             rel
         }

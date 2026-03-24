@@ -18,6 +18,7 @@ pub(crate) mod lookup_from_vector_inputs;
 pub(crate) mod lookup_pair;
 pub(crate) mod mask_product;
 pub(crate) mod pairwise_product;
+pub(crate) mod utils;
 
 fn evaluate_cache_relation<F: PrimeField, E: FieldExtension<F> + Field>(
     layer_idx: usize,
@@ -191,7 +192,35 @@ fn evaluate_cache_relation<F: PrimeField, E: FieldExtension<F> + Field>(
                                     low_offset,
                                     high,
                                 } => {
-                                    todo!();
+                                    let mut low_offset = *low_offset;
+                                    if let Some((c, offset)) = *low_dynamic_offset {
+                                        let t = src_ref
+                                            .get_base_layer_mem(offset)
+                                            .get_unchecked(chunk_start + i)
+                                            .as_u32_reduced();
+                                        low_offset += t.wrapping_mul(c as u32);
+                                    }
+                                    {
+                                        let mut t = external_challenges
+                                            .permutation_argument_linearization_challenges
+                                            [MEM_ARGUMENT_CHALLENGE_POWERS_ADDRESS_LOW_IDX];
+                                        let mut el = *src_ref
+                                            .get_base_layer_mem(*low_base)
+                                            .get_unchecked(chunk_start + i);
+                                        el.add_assign(&F::from_u32_unchecked(low_offset));
+                                        t.mul_assign_by_base(&el);
+                                        result.add_assign(&t);
+                                    }
+                                    {
+                                        let mut t = external_challenges
+                                            .permutation_argument_linearization_challenges
+                                            [MEM_ARGUMENT_CHALLENGE_POWERS_ADDRESS_HIGH_IDX];
+                                        let el = src_ref
+                                            .get_base_layer_mem(*high)
+                                            .get_unchecked(chunk_start + i);
+                                        t.mul_assign_by_base(el);
+                                        result.add_assign(&t);
+                                    }
                                 }
                             }
                             // timestamp is a little special as we do add constant offset
@@ -292,38 +321,13 @@ fn evaluate_cache_relation<F: PrimeField, E: FieldExtension<F> + Field>(
                 );
             }
             NoFieldGKRCacheRelation::VectorizedLookup(rel) => {
-                // println!("Evaluating vectorized lookup cache relation {:?}", rel);
-
-                // we materialize it, but the good thing is that we have a cache of lookups
-                let lookup_set_index = rel.lookup_set_index;
-                let mut destination = Box::<[E], Global>::new_uninit_slice(trace_len);
-                let ext_destination = vec![&mut destination[..]];
-                let mapping_ref = if lookup_set_index != DECODER_LOOKUP_FORMAL_SET_INDEX {
-                    // println!("Mapping lookup access number {}", lookup_set_index);
-                    assert!(lookup_set_index < witness_trace.generic_lookup_mapping.len() - 1);
-                    &witness_trace.generic_lookup_mapping[lookup_set_index]
-                } else {
-                    // println!("Mapping decoder lookup");
-                    assert!(witness_trace.generic_lookup_mapping.len() > 0);
-                    witness_trace.generic_lookup_mapping.last().unwrap()
-                };
-                apply_row_wise::<F, _>(
-                    vec![],
-                    ext_destination,
+                let destination = utils::materialize_vector_lookup_input(
+                    rel,
+                    witness_trace,
                     trace_len,
+                    preprocessed_generic_lookup,
                     worker,
-                    |_, ext_dest, chunk_start, chunk_size| {
-                        assert_eq!(ext_dest.len(), 1);
-                        let mut ext_dest = ext_dest;
-                        let dest = ext_dest.pop().unwrap();
-                        for i in 0..chunk_size {
-                            let mapping_index = mapping_ref[chunk_start + i];
-                            let mapped_value = preprocessed_generic_lookup[mapping_index as usize];
-                            dest[i].write(mapped_value);
-                        }
-                    },
                 );
-                let destination = destination.assume_init();
                 address.assert_as_layer(layer_idx);
                 gkr_storage.insert_extension_at_layer(
                     layer_idx,
@@ -616,6 +620,37 @@ pub fn evaluate_layer<F: PrimeField, E: FieldExtension<F> + Field>(
                     println!("Need to evaluate {:?} -> {:?}", input, output);
                     todo!();
                 }
+            }
+            NoFieldGKRRelation::LookupFromMaterializedVectorInputWithSetup {
+                input,
+                setup,
+                output,
+            } => {
+                lookup_from_vector_inputs::forward_evaluate_lookup_from_vector_inputs_with_setup(
+                    *input,
+                    *setup,
+                    *output,
+                    gkr_storage,
+                    expected_output_layer,
+                    trace_len,
+                    lookup_challenges_additive_part,
+                    worker,
+                );
+            }
+            NoFieldGKRRelation::MaterializedVectorLookupInput { input, output } => {
+                let value = utils::materialize_vector_lookup_input(
+                    input,
+                    witness_trace,
+                    trace_len,
+                    preprocessed_generic_lookup,
+                    worker,
+                );
+                output.assert_as_layer(expected_output_layer);
+                gkr_storage.insert_extension_at_layer(
+                    expected_output_layer,
+                    *output,
+                    ExtensionFieldPoly::new(value),
+                );
             }
             rel @ _ => {
                 panic!("Should evaluate {:?}", rel);

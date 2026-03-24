@@ -404,18 +404,6 @@ where
         worker,
     );
 
-    // let (
-    //     claim_readset,
-    //     claim_writeset,
-    //     claim_rangechecknum,
-    //     claim_rangecheckden,
-    //     claim_timechecknum,
-    //     claim_timecheckden,
-    //     claim_lookupnum,
-    //     claim_lookupden,
-    //     evaluation_point,
-    // ) = debug_utils::mock_output_claims(compiled_circuit, &gkr_storage, trace_len);
-
     // let output_map = &compiled_circuit.global_output_map;
     let mut top_layer_claims: BTreeMap<GKRAddress, E> = BTreeMap::new();
     let output_map = &dimension_reducing_inputs[&initial_layer_for_sumcheck];
@@ -427,14 +415,10 @@ where
         output_map[&OutputType::PermutationProduct].output[1],
         claim_writeset,
     );
-    top_layer_claims.insert(
-        output_map[&OutputType::Lookup16Bits].output[0],
-        claim_rangechecknum,
-    );
-    top_layer_claims.insert(
-        output_map[&OutputType::Lookup16Bits].output[1],
-        claim_rangecheckden,
-    );
+    if let Some(k) = output_map.get(&OutputType::Lookup16Bits) {
+        top_layer_claims.insert(k.output[0], claim_rangechecknum);
+        top_layer_claims.insert(k.output[1], claim_rangecheckden);
+    }
     top_layer_claims.insert(
         output_map[&OutputType::LookupTimestamps].output[0],
         claim_timechecknum,

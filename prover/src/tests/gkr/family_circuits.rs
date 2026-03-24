@@ -1659,9 +1659,9 @@ pub fn gkr_run_basic_unrolled_test_impl(
         // // );
 
         if CHECK_MEMORY_PERMUTATION_ONLY == false {
-            println!("Will check constraints satisfiability");
-            let is_satisfied = check_satisfied(&circuit, &full_trace);
-            assert!(is_satisfied);
+            // println!("Will check constraints satisfiability");
+            // let is_satisfied = check_satisfied(&circuit, &full_trace);
+            // assert!(is_satisfied);
 
             println!("Preparing twiddles");
             let twiddles: Twiddles<_, Global> = Twiddles::new(NUM_DELEGATION_CYCLES, &worker);

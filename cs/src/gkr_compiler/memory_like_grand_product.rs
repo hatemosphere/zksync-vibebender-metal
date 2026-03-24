@@ -428,15 +428,10 @@ pub(crate) fn accumulate_memory_like_grand_product(
     let mut next_read_set = vec![];
     let mut next_write_set = vec![];
 
+    let mut output_layer = 2;
     copied_predicate_for_grand_product_masking =
         graph.copy_intermediate_layer_variable(copied_predicate_for_grand_product_masking);
-
-    let GKRAddress::InnerLayer { layer, .. } = copied_predicate_for_grand_product_masking else {
-        unreachable!()
-    };
-    let mut placement_layer = layer;
-    // accumulation only starts at layer 2
-    assert_eq!(placement_layer, 2);
+    copied_predicate_for_grand_product_masking.assert_as_layer(output_layer);
 
     assert!(grand_product_read_accumulation_nodes.len() > 1);
     assert_eq!(
@@ -446,36 +441,33 @@ pub(crate) fn accumulate_memory_like_grand_product(
 
     println!(
         "Starting grand product accumulation at layer {} for {} read/write contribution pairs",
-        placement_layer,
+        output_layer - 1,
         grand_product_read_accumulation_nodes.len()
     );
 
-    for [a, b] in grand_product_read_accumulation_nodes
-        .as_chunks::<2>()
-        .0
-        .iter()
-    {
-        let el = GrandProductAccumulationStep::Aggregation {
-            lhs: *a,
-            rhs: *b,
-            is_write: false,
-        };
-        let el = el.add_at_layer(graph, placement_layer);
-        next_read_set.push(el);
-    }
-
-    for [a, b] in grand_product_write_accumulation_nodes
-        .as_chunks::<2>()
-        .0
-        .iter()
-    {
-        let el = GrandProductAccumulationStep::Aggregation {
-            lhs: *a,
-            rhs: *b,
-            is_write: true,
-        };
-        let el = el.add_at_layer(graph, placement_layer);
-        next_write_set.push(el);
+    for (is_write, source, dst) in [
+        (
+            false,
+            &grand_product_read_accumulation_nodes,
+            &mut next_read_set,
+        ),
+        (
+            true,
+            &grand_product_write_accumulation_nodes,
+            &mut next_write_set,
+        ),
+    ] {
+        for [a, b] in source.as_chunks::<2>().0.iter() {
+            a.assert_as_dependency_for_layer(output_layer);
+            b.assert_as_dependency_for_layer(output_layer);
+            let el = GrandProductAccumulationStep::Aggregation {
+                lhs: *a,
+                rhs: *b,
+                is_write,
+            };
+            let el = el.add_at_layer(graph, output_layer);
+            dst.push(el);
+        }
     }
 
     let mut current_read_set = next_read_set;
@@ -511,75 +503,89 @@ pub(crate) fn accumulate_memory_like_grand_product(
 
     assert!(current_read_set.len() > 0);
     if current_read_set.len() > 1 || current_write_set.len() > 1 {
+        assert!(current_read_remainder.is_none());
+        assert!(current_write_remainder.is_none());
+
         loop {
             assert_eq!(current_read_set.len(), current_write_set.len());
 
             if current_read_set.len() == 1 && current_read_remainder.is_none() {
+                assert_eq!(current_write_set.len(), 1);
+                assert!(current_write_remainder.is_none());
                 break;
             }
+
+            output_layer += 1;
 
             let initial_len = current_read_set.len() + current_read_remainder.is_some() as usize;
             copied_predicate_for_grand_product_masking =
                 graph.copy_intermediate_layer_variable(copied_predicate_for_grand_product_masking);
-
-            placement_layer += 1;
-            let GKRAddress::InnerLayer { layer, .. } = copied_predicate_for_grand_product_masking
-            else {
-                unreachable!()
-            };
-            assert_eq!(placement_layer, layer);
+            copied_predicate_for_grand_product_masking.assert_as_layer(output_layer);
 
             println!(
-                "Continuing grand product accumulation at layer {} for {} read/write contribution pairs",
-                placement_layer,
-                current_read_set.len()
+                "Continuing grand product accumulation at layer {} for {} read/write contribution pairs and remainder = {}",
+                output_layer - 1,
+                current_read_set.len(),
+                current_read_remainder.is_some()
             );
 
-            for [a, b] in current_read_set.as_chunks::<2>().0.iter() {
-                let el = GrandProductAccumulationStep::Aggregation {
-                    lhs: a.0,
-                    rhs: b.0,
-                    is_write: false,
-                };
-                let el = el.add_at_layer(graph, placement_layer);
-                next_read_set.push(el);
-            }
-
-            for [a, b] in current_write_set.as_chunks::<2>().0.iter() {
-                let el = GrandProductAccumulationStep::Aggregation {
-                    lhs: a.0,
-                    rhs: b.0,
-                    is_write: true,
-                };
-                let el = el.add_at_layer(graph, placement_layer);
-                next_write_set.push(el);
-            }
-
-            if current_read_set.as_chunks::<2>().1.len() > 0 {
-                if let Some(current_read_remainder) = current_read_remainder.take() {
+            for (is_write, source, dst) in [
+                (false, &current_read_set, &mut next_read_set),
+                (true, &current_write_set, &mut next_write_set),
+            ] {
+                for [a, b] in source.as_chunks::<2>().0.iter() {
+                    a.0.assert_as_dependency_for_layer(output_layer);
+                    b.0.assert_as_dependency_for_layer(output_layer);
                     let el = GrandProductAccumulationStep::Aggregation {
-                        lhs: current_read_set.as_chunks::<2>().1[0].0.clone(),
-                        rhs: current_read_remainder,
-                        is_write: false,
+                        lhs: a.0,
+                        rhs: b.0,
+                        is_write,
                     };
-                    let el = el.add_at_layer(graph, placement_layer);
-                    next_read_set.push(el);
-                } else {
-                    next_read_remainder = Some(current_read_set.as_chunks::<2>().1[0].0.clone());
+                    let el = el.add_at_layer(graph, output_layer);
+                    dst.push(el);
                 }
             }
 
-            if current_write_set.as_chunks::<2>().1.len() > 0 {
-                if let Some(current_write_remainder) = current_write_remainder.take() {
-                    let el = GrandProductAccumulationStep::Aggregation {
-                        lhs: current_write_set.as_chunks::<2>().1[0].0.clone(),
-                        rhs: current_write_remainder,
-                        is_write: false,
-                    };
-                    let el = el.add_at_layer(graph, placement_layer);
-                    next_write_set.push(el);
-                } else {
-                    next_write_remainder = Some(current_write_set.as_chunks::<2>().1[0].0.clone());
+            for (is_write, source, source_remainder, dst, rem_dst) in [
+                (
+                    false,
+                    &current_read_set,
+                    &mut current_read_remainder,
+                    &mut next_read_set,
+                    &mut next_read_remainder,
+                ),
+                (
+                    true,
+                    &current_write_set,
+                    &mut current_write_remainder,
+                    &mut next_write_set,
+                    &mut next_write_remainder,
+                ),
+            ] {
+                match source.as_chunks::<2>().1 {
+                    [] => {}
+                    [remainder] => {
+                        if let Some(source_remainder) = source_remainder.take() {
+                            remainder.0.assert_as_dependency_for_layer(output_layer);
+                            source_remainder.assert_as_dependency_for_layer(output_layer);
+                            let el = GrandProductAccumulationStep::Aggregation {
+                                lhs: remainder.0.clone(),
+                                rhs: source_remainder,
+                                is_write,
+                            };
+                            let el = el.add_at_layer(graph, output_layer);
+                            dst.push(el);
+                        } else {
+                            // copy and assign
+                            remainder.0.assert_as_dependency_for_layer(output_layer);
+                            let copied_remainder =
+                                graph.copy_intermediate_layer_variable(remainder.0);
+                            *rem_dst = Some(copied_remainder);
+                        }
+                    }
+                    _ => {
+                        unreachable!()
+                    }
                 }
             }
 
@@ -596,7 +602,9 @@ pub(crate) fn accumulate_memory_like_grand_product(
             if current_read_set.len() == initial_len {
                 panic!(
                     "Placer is stuck at layer {}: read set = {:?}, write set = {:?}",
-                    placement_layer, &current_read_set, &current_write_set
+                    output_layer - 1,
+                    &current_read_set,
+                    &current_write_set
                 );
             }
         }
@@ -610,21 +618,24 @@ pub(crate) fn accumulate_memory_like_grand_product(
     let read_node = current_read_set.pop().unwrap();
     let write_node = current_write_set.pop().unwrap();
 
-    placement_layer += 1;
+    output_layer += 1;
+    copied_predicate_for_grand_product_masking.assert_as_dependency_for_layer(output_layer);
+    read_node.0.assert_as_dependency_for_layer(output_layer);
+    write_node.0.assert_as_dependency_for_layer(output_layer);
 
     let read_mask = GrandProductAccumulationMaskingNode {
         lhs: read_node.0,
         mask: copied_predicate_for_grand_product_masking,
         is_write: false,
     };
-    let read_output = read_mask.add_at_layer(graph, placement_layer);
+    let read_output = read_mask.add_at_layer(graph, output_layer);
 
     let write_mask = GrandProductAccumulationMaskingNode {
         lhs: write_node.0,
         mask: copied_predicate_for_grand_product_masking,
         is_write: true,
     };
-    let write_output = write_mask.add_at_layer(graph, placement_layer);
+    let write_output = write_mask.add_at_layer(graph, output_layer);
 
     (read_output, write_output)
 }

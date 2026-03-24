@@ -77,7 +77,6 @@ impl<F: PrimeField> GKRCompiler<F> {
         assert!(total_lookups_for_range_checks_16 < F::CHARACTERISTICS as u64, "total number of range-check-16 lookups in circuit is {} that is larger that field characteristics {}", total_lookups_for_range_checks_16, F::CHARACTERISTICS);
 
         let mut expect_table_id_for_generic_lookup = false;
-        let mut decode_table_columns_mask = Vec::new();
 
         let (generic_lookup_width, decoder_lookup_pair) = {
             // and then all lookups from circuit + decoder are "generic" ones
@@ -88,14 +87,6 @@ impl<F: PrimeField> GKRCompiler<F> {
 
             let decoder_lookup_pair: Option<(Variable, Vec<LookupInput<F>>)> = None;
             let decoder_table_width = 0;
-
-            assert_eq!(
-                decode_table_columns_mask
-                    .iter()
-                    .filter(|el| **el == true)
-                    .count(),
-                decoder_table_width
-            );
 
             let total_generic_lookups = (generic_lookups.len() as u64
                 + decoder_lookup_pair.is_some() as u64)
@@ -621,8 +612,8 @@ impl<F: PrimeField> GKRCompiler<F> {
             placement_data,
             generic_lookup_tables_width: generic_lookup_width,
             tables_ids_in_generic_lookups: expect_table_id_for_generic_lookup,
-            decode_table_columns_mask,
-            has_decoder_lookup: true,
+            decode_table_columns_mask: Vec::new(),
+            has_decoder_lookup: false,
 
             degree_2_constraints,
             degree_1_constraints,

@@ -163,11 +163,15 @@ pub(crate) fn compute_initial_sumcheck_claims<F: PrimeField, E: FieldExtension<F
         OutputType::LookupTimestamps,
         OutputType::GenericLookup,
     ] {
-        let addresses = &output_layer[&key];
-        for address in addresses.output.iter() {
-            let poly = gkr_storage.get_ext_poly(*address);
-            let evaluation = evaluate_with_precomputed_eq_ext::<E>(poly, &eq[..]);
-            evals.push(evaluation);
+        if let Some(addresses) = &output_layer.get(&key) {
+            for address in addresses.output.iter() {
+                let poly = gkr_storage.get_ext_poly(*address);
+                let evaluation = evaluate_with_precomputed_eq_ext::<E>(poly, &eq[..]);
+                evals.push(evaluation);
+            }
+        } else {
+            evals.push(E::ZERO);
+            evals.push(E::ZERO);
         }
     }
 
