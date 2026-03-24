@@ -412,13 +412,16 @@ pub fn evaluate_layer<F: PrimeField, E: FieldExtension<F> + Field>(
                             "trying to fill {:?} from scratch space, but it's source is empty",
                             place
                         );
-                        let poly = core::mem::replace(poly, vec![]);
-                        gkr_storage.insert_base_field_at_layer(
-                            layer_idx,
-                            *place,
-                            BaseFieldPoly::new(poly.into_boxed_slice()),
-                        );
-                        println!("Filled intermediate poly {:?} from scratch space", place);
+                        if gkr_storage.try_get_base_poly(*place).is_none() {
+                            // some Copy relations could already fill it
+                            let poly = core::mem::replace(poly, vec![]);
+                            gkr_storage.insert_base_field_at_layer(
+                                layer_idx,
+                                *place,
+                                BaseFieldPoly::new(poly.into_boxed_slice()),
+                            );
+                            println!("Filled intermediate poly {:?} from scratch space", place);
+                        }
                     }
                 }
             }

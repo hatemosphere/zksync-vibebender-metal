@@ -164,6 +164,12 @@ impl<F: PrimeField, E: FieldExtension<F> + Field> KernelVariant<F, E> {
                     .base_field_inputs
                     .contains_key(input);
                 if is_base_field {
+                    assert!(
+                        gkr_storage.layers[layer_idx]
+                            .extension_field_inputs
+                            .contains_key(input)
+                            == false
+                    );
                     Self::BaseCopy(
                         BaseFieldCopyGKRRelation {
                             input: *input,
@@ -173,6 +179,12 @@ impl<F: PrimeField, E: FieldExtension<F> + Field> KernelVariant<F, E> {
                         *output,
                     )
                 } else {
+                    assert!(
+                        gkr_storage.layers[layer_idx]
+                            .base_field_inputs
+                            .contains_key(input)
+                            == false
+                    );
                     Self::ExtCopy(
                         ExtensionCopyGKRRelation {
                             input: *input,

@@ -757,21 +757,24 @@ impl TableType {
             // TableType::U16SplitAsBytes => {
             //     LookupWrapper::Dimensional3(create_u16_split_into_bytes_table(id))
             // }
-            // TableType::RangeCheck9x9 => LookupWrapper::Dimensional3(
-            //     create_formal_width_3_range_check_table_for_two_tuple::<F, 9>(id),
-            // ),
-            // TableType::RangeCheck10x10 => LookupWrapper::Dimensional3(
-            //     create_formal_width_3_range_check_table_for_two_tuple::<F, 10>(id),
-            // ),
-            // TableType::RangeCheck11 => LookupWrapper::Dimensional3(
-            //     create_formal_width_3_range_check_table_for_single_entry::<F, 11>(id),
-            // ),
-            // TableType::RangeCheck12 => LookupWrapper::Dimensional3(
-            //     create_formal_width_3_range_check_table_for_single_entry::<F, 12>(id),
-            // ),
-            // TableType::RangeCheck13 => LookupWrapper::Dimensional3(
-            //     create_formal_width_3_range_check_table_for_single_entry::<F, 13>(id),
-            // ),
+            TableType::RangeCheck9x9 => {
+                LookupWrapper::Initialized(create_range_check_table_for_two_tuple::<F, 9>(id))
+            }
+            TableType::RangeCheck10x10 => {
+                LookupWrapper::Initialized(create_range_check_table_for_two_tuple::<F, 10>(id))
+            }
+            TableType::RangeCheck11 => {
+                LookupWrapper::Initialized(create_range_check_table_for_single_entry::<F, 11>(id))
+            }
+            TableType::RangeCheck12 => {
+                LookupWrapper::Initialized(create_range_check_table_for_single_entry::<F, 12>(id))
+            }
+            TableType::RangeCheck13 => {
+                LookupWrapper::Initialized(create_range_check_table_for_single_entry::<F, 13>(id))
+            }
+            TableType::U16GetLowByte => {
+                LookupWrapper::Initialized(create_u16_get_low_byte_table::<F>(id))
+            }
             // TableType::ShiftImplementation => {
             //     LookupWrapper::Dimensional3(create_shift_implementation_table::<F>(id))
             // }

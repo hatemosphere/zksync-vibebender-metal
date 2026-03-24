@@ -162,6 +162,36 @@ impl WhirSchedule {
         new
     }
 
+    pub fn default_for_tests_80_bits_22() -> Self {
+        let mut new = Self {
+            base_lde_factor: 2,
+            cap_size: 16,
+            whir_steps_schedule: vec![1, 4, 4, 4, 4, 2],
+            whir_pow_schedule: vec![24, 24, 24, 24, 24, 24],
+            whir_steps_lde_factors: vec![8, 64, 128, 128, 128],
+            whir_queries_schedule: vec![],
+        };
+
+        assert_eq!(
+            new.whir_steps_lde_factors.len() + 1,
+            new.whir_steps_schedule.len()
+        );
+        assert_eq!(new.whir_pow_schedule.len(), new.whir_steps_schedule.len());
+
+        for (lde, pow) in Some(new.base_lde_factor)
+            .iter()
+            .chain(new.whir_steps_lde_factors.iter())
+            .zip(new.whir_pow_schedule.iter())
+        {
+            let sec_bits = 80 - *pow;
+            let bits_per_query = lde.trailing_zeros();
+            let num_queries = (sec_bits * 120).div_ceil(bits_per_query * 100); // roughly extra 20% on top of conjecture. Latest paper decrease conjectured value by 5-10% depending on rate
+            new.whir_queries_schedule.push(num_queries as usize);
+        }
+
+        new
+    }
+
     pub fn default_for_tests_80_bits_24() -> Self {
         let mut new = Self {
             base_lde_factor: 2,

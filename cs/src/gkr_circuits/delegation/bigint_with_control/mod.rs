@@ -14,12 +14,12 @@ const TOTAL_TABLE_WIDTH: usize = 2;
 
 pub fn all_table_types() -> Vec<TableType> {
     vec![
-        // TableType::U16GetLowByte,
-        // TableType::RangeCheck9x9,
-        // TableType::RangeCheck10x10,
-        // TableType::RangeCheck11,
-        // TableType::RangeCheck12,
-        // TableType::RangeCheck13,
+        TableType::U16GetLowByte,
+        TableType::RangeCheck9x9,
+        TableType::RangeCheck10x10,
+        TableType::RangeCheck11,
+        TableType::RangeCheck12,
+        TableType::RangeCheck13,
     ]
 }
 
@@ -696,7 +696,11 @@ pub fn define_bigint_with_extended_control_delegation_circuit<F: PrimeField, CS:
             if remainder.len() > 0 {
                 let a = &remainder[0];
                 let a = LookupInput::from(a.clone());
-                cs.enforce_lookup_tuple_for_fixed_table(&[a], table_type, false);
+                cs.enforce_lookup_tuple_for_fixed_table(
+                    &[a, LookupInput::empty()],
+                    table_type,
+                    false,
+                );
             }
         } else {
             let table_type = match width {
@@ -707,11 +711,7 @@ pub fn define_bigint_with_extended_control_delegation_circuit<F: PrimeField, CS:
             };
             for a in checks.iter() {
                 let a = LookupInput::from(a.clone());
-                cs.enforce_lookup_tuple_for_fixed_table(
-                    &[a, LookupInput::empty(), LookupInput::empty()],
-                    table_type,
-                    false,
-                );
+                cs.enforce_lookup_tuple_for_fixed_table(&[a], table_type, false);
             }
         }
     }

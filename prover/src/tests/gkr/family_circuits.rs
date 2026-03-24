@@ -34,7 +34,8 @@ use worker::Worker;
 
 const INITIAL_PC: u32 = 0;
 const NUM_INIT_AND_TEARDOWN_SETS: usize = 8;
-const NUM_DELEGATION_CYCLES: usize = 1 << 20;
+const BLAKE_NUM_DELEGATION_CYCLES: usize = 1 << 20;
+const BIGINT_NUM_DELEGATION_CYCLES: usize = 1 << 22;
 
 // #[ignore = "test has explicit panic inside"]
 #[test]
@@ -1565,7 +1566,7 @@ pub fn gkr_run_basic_unrolled_test_impl(
     // }
 
     // now prove delegation circuits
-    if true {
+    if false {
         println!("Will try to prove Blake delegation");
 
         let circuit: GKRCircuitArtifact<BabyBearField> = {
@@ -1624,7 +1625,7 @@ pub fn gkr_run_basic_unrolled_test_impl(
         );
         let memory_trace = evaluate_gkr_memory_witness_for_delegation_circuit(
             &circuit,
-            NUM_DELEGATION_CYCLES,
+            BLAKE_NUM_DELEGATION_CYCLES,
             &oracle,
             &worker,
             Global,
@@ -1641,7 +1642,7 @@ pub fn gkr_run_basic_unrolled_test_impl(
         let full_trace = evaluate_gkr_witness_for_delegation_circuit(
             &circuit,
             eval_fn,
-            NUM_DELEGATION_CYCLES,
+            BLAKE_NUM_DELEGATION_CYCLES,
             &oracle,
             &table_driver,
             &worker,
@@ -1664,16 +1665,17 @@ pub fn gkr_run_basic_unrolled_test_impl(
             // assert!(is_satisfied);
 
             println!("Preparing twiddles");
-            let twiddles: Twiddles<_, Global> = Twiddles::new(NUM_DELEGATION_CYCLES, &worker);
+            let twiddles: Twiddles<_, Global> = Twiddles::new(BLAKE_NUM_DELEGATION_CYCLES, &worker);
             println!("Preparing setup");
-            let setup = GKRSetup::construct(&table_driver, &[], NUM_DELEGATION_CYCLES, &circuit);
+            let setup =
+                GKRSetup::construct(&table_driver, &[], BLAKE_NUM_DELEGATION_CYCLES, &circuit);
 
             let setup_commitment = setup.commit(
                 &twiddles,
                 2,
                 1,
                 tree_cap_size,
-                NUM_DELEGATION_CYCLES.trailing_zeros() as usize,
+                BLAKE_NUM_DELEGATION_CYCLES.trailing_zeros() as usize,
                 &worker,
             );
 
@@ -1698,7 +1700,7 @@ pub fn gkr_run_basic_unrolled_test_impl(
                     &twiddles,
                     &whir_schedule,
                     None,
-                    NUM_DELEGATION_CYCLES,
+                    BLAKE_NUM_DELEGATION_CYCLES,
                     &worker,
                 );
             println!("Proving time is {:?}", now.elapsed());
@@ -1715,6 +1717,162 @@ pub fn gkr_run_basic_unrolled_test_impl(
             serialize_to_file(
                 &proof,
                 "test_proofs/blake2_with_extended_control_gkr_proof.json",
+            );
+        }
+    }
+
+    if true {
+        println!("Will try to prove Bigint delegation");
+
+        let circuit: GKRCircuitArtifact<BabyBearField> = {
+            deserialize_from_file(
+                "../cs/compiled_circuits/bigint_with_extended_control_layout_gkr.json",
+            )
+        };
+
+        let mut table_driver = TableDriver::<BabyBearField>::new();
+        cs::gkr_circuits::delegation::bigint_with_control::bigint_with_extended_control_delegation_circuit_table_driver_fn(&mut table_driver);
+
+        dbg!(table_driver.total_tables_len);
+
+        let num_calls = counters.bigint_calls;
+        dbg!(num_calls);
+
+        let mut state = snapshotter.initial_snapshot.state;
+        let mut ram_log_buffers = snapshotter
+            .reads_buffer
+            .make_range(0..snapshotter.reads_buffer.len());
+
+        let mut ram = ReplayerRam::<{ common_constants::ROM_SECOND_WORD_BITS }> {
+            ram_log: &mut ram_log_buffers,
+        };
+
+        let mut buffer = vec![DelegationWitness::empty(); num_calls];
+        let mut buffers = vec![&mut buffer[..]];
+        let mut tracer = BigintDelegationDestinationHolder {
+            buffers: &mut buffers[..],
+        };
+
+        ReplayerVM::<CountersT>::replay_basic_unrolled::<_, _, BabyBearField>(
+            &mut state,
+            &mut ram,
+            &tape,
+            &mut (),
+            cycles_bound,
+            &mut tracer,
+        );
+        assert_eq!(expected_final_state, state);
+
+        // evaluate a witness and memory-only witness for each
+
+        let delegation_type = BIGINT_OPS_WITH_CONTROL_CSR_REGISTER as u16;
+        let oracle = BigintDelegationOracle {
+            cycle_data: &buffer,
+            marker: core::marker::PhantomData,
+        };
+
+        let is_empty = oracle.cycle_data.is_empty();
+
+        #[cfg(feature = "debug_logs")]
+        println!(
+            "Evaluating memory-only witness for delegation circuit {}",
+            delegation_type
+        );
+        let memory_trace = evaluate_gkr_memory_witness_for_delegation_circuit(
+            &circuit,
+            BIGINT_NUM_DELEGATION_CYCLES,
+            &oracle,
+            &worker,
+            Global,
+            Global,
+        );
+
+        let eval_fn = super::bigint_with_extended_control::witness_eval_fn;
+
+        #[cfg(feature = "debug_logs")]
+        println!(
+            "Evaluating witness for delegation circuit {}",
+            delegation_type
+        );
+        let full_trace = evaluate_gkr_witness_for_delegation_circuit(
+            &circuit,
+            eval_fn,
+            BIGINT_NUM_DELEGATION_CYCLES,
+            &oracle,
+            &table_driver,
+            &worker,
+            Global,
+            Global,
+        );
+
+        ensure_memory_trace_consistency(&memory_trace, &full_trace);
+
+        // // parse_delegation_ram_accesses_from_full_trace(
+        // //     &circuit,
+        // //     &full_witness,
+        // //     &mut memory_write_set,
+        // //     &mut memory_read_set,
+        // // );
+
+        if CHECK_MEMORY_PERMUTATION_ONLY == false {
+            // println!("Will check constraints satisfiability");
+            // let is_satisfied = check_satisfied(&circuit, &full_trace);
+            // assert!(is_satisfied);
+
+            println!("Preparing twiddles");
+            let twiddles: Twiddles<_, Global> =
+                Twiddles::new(BIGINT_NUM_DELEGATION_CYCLES, &worker);
+            println!("Preparing setup");
+            let setup =
+                GKRSetup::construct(&table_driver, &[], BIGINT_NUM_DELEGATION_CYCLES, &circuit);
+
+            let setup_commitment = setup.commit(
+                &twiddles,
+                2,
+                1,
+                tree_cap_size,
+                BIGINT_NUM_DELEGATION_CYCLES.trailing_zeros() as usize,
+                &worker,
+            );
+
+            // let lookup_mapping_for_gpu = if maybe_gpu_unrolled_comparison_hook.is_some() {
+            //     Some(full_trace.lookup_mapping.clone())
+            // } else {
+            //     None
+            // };
+
+            let whir_schedule = WhirSchedule::default_for_tests_80_bits_22();
+
+            println!("Trying to prove");
+
+            let now = std::time::Instant::now();
+            let proof =
+                prove_configured_with_gkr::<BabyBearField, BabyBearExt4, DefaultTreeConstructor>(
+                    &circuit,
+                    &external_challenges,
+                    full_trace,
+                    &setup,
+                    &setup_commitment,
+                    &twiddles,
+                    &whir_schedule,
+                    None,
+                    BIGINT_NUM_DELEGATION_CYCLES,
+                    &worker,
+                );
+            println!("Proving time is {:?}", now.elapsed());
+
+            println!(
+                "Estimated proof size without compression is {} bytes",
+                proof.estimate_size()
+            );
+
+            if is_empty {
+                assert_eq!(proof.grand_product_accumulator_computed, BabyBearExt4::ONE);
+            }
+
+            serialize_to_file(
+                &proof,
+                "test_proofs/bigint_with_extended_control_gkr_proof.json",
             );
         }
     }
