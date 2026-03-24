@@ -50,20 +50,33 @@ pub fn no_field_gkr_max_quadratic_from_constraint<F: PrimeField>(
     mut constraint: Constraint<F>,
     output: GKRAddress,
 ) -> NoFieldGKRRelation {
+    constraint.normalize();
+    let (quadratic_part, linear_part, constant) = constraint.clone().split_max_quadratic();
+
+    if constraint.degree() == 1 && constraint.stable_variable_set().len() == 1 {
+        // maybe copy is enough
+        if quadratic_part.is_empty() && constant.is_zero() {
+            assert_eq!(linear_part.len(), 1);
+            let (c, var) = linear_part[0];
+            if c.is_one() {
+                // just copy
+                let input = graph.get_address_for_variable(var);
+                return NoFieldGKRRelation::Copy { input, output };
+            }
+        }
+    }
+
     let mut quadratic_sorted = BTreeMap::new();
     let mut linear_sorted = BTreeMap::new();
-
-    constraint.normalize();
-    let (quadratic_part, linear_part, constant) = constraint.split_max_quadratic();
 
     for (coeff, a, b) in quadratic_part.iter() {
         let a = graph.get_address_for_variable(*a);
         let b = graph.get_address_for_variable(*b);
-        let exising = quadratic_sorted
+        let existing = quadratic_sorted
             .entry(a)
             .or_insert(BTreeMap::new())
-            .insert(coeff.as_u32_reduced() as u64, b);
-        assert!(exising.is_none());
+            .insert(b, coeff.as_u32_reduced() as u64);
+        assert!(existing.is_none());
     }
     for (coeff, a) in linear_part.into_iter() {
         let a = graph.get_address_for_variable(a);
@@ -73,7 +86,15 @@ pub fn no_field_gkr_max_quadratic_from_constraint<F: PrimeField>(
 
     let quadratic_terms = quadratic_sorted
         .into_iter()
-        .map(|(k, v)| (k, v.into_iter().collect::<Vec<_>>().into_boxed_slice()))
+        .map(|(k, v)| {
+            (
+                k,
+                v.into_iter()
+                    .map(|(k, v)| (v, k))
+                    .collect::<Vec<_>>()
+                    .into_boxed_slice(),
+            )
+        })
         .collect::<Vec<_>>()
         .into_boxed_slice();
 

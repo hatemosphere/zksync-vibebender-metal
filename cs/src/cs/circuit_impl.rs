@@ -837,10 +837,13 @@ impl<F: PrimeField, W: WitnessPlacer<F>, const ASSUME_MEMORY_VALUES_ASSIGNED: bo
         let inputs_vars = inputs.clone();
         let value_fn = move |placer: &mut Self::WitnessPlacer| {
             let input_values: [_; M] = std::array::from_fn(|i| inputs_vars[i].evaluate(placer));
-            let table_id = <Self::WitnessPlacer as WitnessTypeSet<F>>::U16::constant(table_type as u16);
+            let table_id =
+                <Self::WitnessPlacer as WitnessTypeSet<F>>::U16::constant(table_type as u16);
             placer.lookup_enforce::<M>(&input_values, &table_id);
         };
-        if Self::WitnessPlacer::MERGE_LOOKUP_AND_MULTIPLICITY_COUNT && skip_generating_multiplicity_counting_function == false {
+        if Self::WitnessPlacer::MERGE_LOOKUP_AND_MULTIPLICITY_COUNT
+            && skip_generating_multiplicity_counting_function == false
+        {
             self.set_values(value_fn);
         }
 

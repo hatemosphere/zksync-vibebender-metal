@@ -3,12 +3,12 @@ use std::collections::BTreeMap;
 use super::*;
 use crate::cs::circuit::*;
 use crate::cs::circuit_trait::Invariant;
-use crate::gkr_circuits::*;
 use crate::cs::utils::collapse_max_quadratic_constraint_into;
-use crate::witness_placer::*;
 use crate::definitions::REGISTER_SIZE;
+use crate::gkr_circuits::*;
 use crate::types::Boolean;
 use crate::types::Num;
+use crate::witness_placer::*;
 
 const TOTAL_TABLE_WIDTH: usize = 2;
 
@@ -39,7 +39,12 @@ pub fn bigint_with_extended_control_delegation_circuit_table_driver_fn<F: PrimeF
     }
 }
 
-pub fn bigint_with_extended_control_delegation_circuit_table_addition_fn<F: PrimeField, CS: Circuit<F>>(cs: &mut CS) {
+pub fn bigint_with_extended_control_delegation_circuit_table_addition_fn<
+    F: PrimeField,
+    CS: Circuit<F>,
+>(
+    cs: &mut CS,
+) {
     for el in all_table_types() {
         cs.materialize_table::<TOTAL_TABLE_WIDTH>(el);
     }
@@ -48,7 +53,8 @@ pub fn bigint_with_extended_control_delegation_circuit_table_addition_fn<F: Prim
 pub fn define_bigint_with_extended_control_delegation_circuit<F: PrimeField, CS: Circuit<F>>(
     cs: &mut CS,
 ) -> (Vec<[Variable; 2]>, [Variable; REGISTER_SIZE]) {
-    let (_execute, _invication_ts) = cs.allocate_delegation_state(BIGINT_OPS_WITH_CONTROL_CSR_REGISTER as u16);
+    let (_execute, _invication_ts) =
+        cs.allocate_delegation_state(BIGINT_OPS_WITH_CONTROL_CSR_REGISTER as u16);
 
     let dst_accesses = (0..8)
         .into_iter()
@@ -91,7 +97,7 @@ pub fn define_bigint_with_extended_control_delegation_circuit<F: PrimeField, CS:
         indirect_accesses: vec![],
     };
 
-        let x10_and_indirects = cs.request_register_and_indirect_memory_accesses(
+    let x10_and_indirects = cs.request_register_and_indirect_memory_accesses(
         x10_request,
         "state read/write from x10",
         2,
@@ -504,10 +510,7 @@ pub fn define_bigint_with_extended_control_delegation_circuit<F: PrimeField, CS:
     let mut a_bytes = Vec::with_capacity(32);
     let mut b_bytes = Vec::with_capacity(32);
 
-    for (src, dst) in [
-        (&a_limbs, &mut a_bytes),
-        (&b_limbs, &mut b_bytes)
-    ] {
+    for (src, dst) in [(&a_limbs, &mut a_bytes), (&b_limbs, &mut b_bytes)] {
         for el in src.iter() {
             let [l] = cs.get_variables_from_lookup_constrained::<1, 1>(
                 &[LookupInput::from(*el)],
@@ -569,7 +572,8 @@ pub fn define_bigint_with_extended_control_delegation_circuit<F: PrimeField, CS:
         for a_byte_idx in 0..32 {
             for b_byte_idx in 0..32 {
                 if a_byte_idx + b_byte_idx == 2 * i {
-                    product_constraint = product_constraint + (a_bytes[a_byte_idx].clone() * b_bytes[b_byte_idx].clone());
+                    product_constraint = product_constraint
+                        + (a_bytes[a_byte_idx].clone() * b_bytes[b_byte_idx].clone());
                     product_range += 255u64 * 255u64;
                 } else if a_byte_idx + b_byte_idx == 2 * i + 1 {
                     let mut t = a_bytes[a_byte_idx].clone() * b_bytes[b_byte_idx].clone();
@@ -647,7 +651,11 @@ pub fn define_bigint_with_extended_control_delegation_circuit<F: PrimeField, CS:
     // merge range checks between additive results and multiplicative result low,
     // and we can push it into intermediate layer
     {
-        for (i, (a, b)) in additive_ops_result.into_iter().zip(product_low.into_iter()).enumerate() {
+        for (i, (a, b)) in additive_ops_result
+            .into_iter()
+            .zip(product_low.into_iter())
+            .enumerate()
+        {
             let mut constraint = Constraint::empty();
             constraint = constraint + Term::from(perform_add) * Term::from(a);
             constraint = constraint + Term::from(perform_sub) * Term::from(a);
@@ -657,7 +665,10 @@ pub fn define_bigint_with_extended_control_delegation_circuit<F: PrimeField, CS:
             constraint = constraint + Term::from(perform_mul_low) * Term::from(b);
             constraint = constraint + Term::from(perform_mul_high) * Term::from(b);
 
-            let t = cs.add_intermediate_named_variable_from_constraint(constraint, &format!("range check selection for limb {}", i));
+            let t = cs.add_intermediate_named_variable_from_constraint(
+                constraint,
+                &format!("range check selection for limb {}", i),
+            );
             cs.require_invariant(t, Invariant::RangeChecked { width: 16 });
         }
     }
@@ -680,20 +691,12 @@ pub fn define_bigint_with_extended_control_delegation_circuit<F: PrimeField, CS:
             for [a, b] in &mut it {
                 let a = LookupInput::from(a.clone());
                 let b = LookupInput::from(b.clone());
-                cs.enforce_lookup_tuple_for_fixed_table(
-                    &[a, b],
-                    table_type,
-                    false,
-                );
+                cs.enforce_lookup_tuple_for_fixed_table(&[a, b], table_type, false);
             }
             if remainder.len() > 0 {
                 let a = &remainder[0];
                 let a = LookupInput::from(a.clone());
-                cs.enforce_lookup_tuple_for_fixed_table(
-                    &[a],
-                    table_type,
-                    false,
-                );
+                cs.enforce_lookup_tuple_for_fixed_table(&[a], table_type, false);
             }
         } else {
             let table_type = match width {
@@ -766,11 +769,16 @@ pub fn define_bigint_with_extended_control_delegation_circuit<F: PrimeField, CS:
             .into_iter()
             .zip(product_high.into_iter())
         {
-            accumulation_constraint = accumulation_constraint + (Term::from(perform_eq) * Term::from(comparison_output));
-            accumulation_constraint = accumulation_constraint + (Term::from(perform_mul_low) * Term::from(product_high));
+            accumulation_constraint =
+                accumulation_constraint + (Term::from(perform_eq) * Term::from(comparison_output));
+            accumulation_constraint =
+                accumulation_constraint + (Term::from(perform_mul_low) * Term::from(product_high));
         }
 
-        cs.add_intermediate_named_variable_from_constraint(accumulation_constraint, "sum for zero-check")
+        cs.add_intermediate_named_variable_from_constraint(
+            accumulation_constraint,
+            "sum for zero-check",
+        )
     };
 
     let all_zeroes = {
@@ -791,12 +799,21 @@ pub fn define_bigint_with_extended_control_delegation_circuit<F: PrimeField, CS:
 
         // now we need to copy first, and then add constraint
 
-        let var_inv_copied = cs.add_intermediate_named_variable_from_constraint(Constraint::from(var_inv), "inv var for zero check copy");
-        let zero_flag_var_copied = cs.add_intermediate_named_variable_from_constraint(Constraint::from(zero_flag_var), "is zero var for zero check copy");
+        let var_inv_copied = cs.add_intermediate_named_variable_from_constraint(
+            Constraint::from(var_inv),
+            "inv var for zero check copy",
+        );
+        let zero_flag_var_copied = cs.add_intermediate_named_variable_from_constraint(
+            Constraint::from(zero_flag_var),
+            "is zero var for zero check copy",
+        );
 
-        cs.add_constraint(Term::from(zero_check_input_in_intermediate_layer) * Term::from(zero_flag_var_copied));
         cs.add_constraint(
-            Term::from(zero_check_input_in_intermediate_layer) * Term::from(var_inv_copied) + Term::from(zero_flag_var_copied)
+            Term::from(zero_check_input_in_intermediate_layer) * Term::from(zero_flag_var_copied),
+        );
+        cs.add_constraint(
+            Term::from(zero_check_input_in_intermediate_layer) * Term::from(var_inv_copied)
+                + Term::from(zero_flag_var_copied)
                 - Term::from(1),
         );
 
@@ -824,8 +841,8 @@ pub fn define_bigint_with_extended_control_delegation_circuit<F: PrimeField, CS:
     constraint = constraint + (Term::from(perform_add) * Term::from(result_of_variable));
     constraint = constraint + (Term::from(perform_sub) * Term::from(result_of_variable));
     constraint = constraint + (Term::from(perform_sub_negate) * Term::from(result_of_variable));
-    constraint = constraint
-        + (Term::from(perform_eq) * Term::from(perform_eq_bit.get_variable().unwrap()));
+    constraint =
+        constraint + (Term::from(perform_eq) * Term::from(perform_eq_bit.get_variable().unwrap()));
     constraint = constraint
         + (Term::from(perform_mul_low)
             * (Term::from(1u32) - Term::from(all_zeroes.get_variable().unwrap())));
