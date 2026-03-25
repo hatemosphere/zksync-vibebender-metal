@@ -227,7 +227,6 @@ fn gpu_worker(
 
     is_initialized.send(()).unwrap();
     drop(is_initialized);
-
     for request in requests {
         let result = if let Some(request) = request {
             let (batch_id, circuit_type, circuit_sequence) = match &request {

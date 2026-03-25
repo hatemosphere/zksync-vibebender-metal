@@ -9,7 +9,7 @@ use super::stage_1::StageOneOutput;
 use super::stage_2_kernels::*;
 use super::trace_holder::{flatten_tree_caps, TraceHolder, TreesCacheMode};
 use super::{BF, E4};
-use crate::metal_runtime::{MetalBuffer, MetalResult};
+use crate::metal_runtime::{MetalBuffer, MetalCommandBuffer, MetalResult};
 use crate::ops_cub::device_reduce::{segmented_reduce_bf, ReduceOperation};
 use crate::ops_cub::device_scan::{get_scan_temp_storage_elems, scan_e4, ScanOperation};
 use blake2s_u32::BLAKE2S_DIGEST_SIZE_U32_WORDS;
@@ -26,7 +26,8 @@ use prover::transcript::Seed;
 pub(crate) struct StageTwoOutput {
     pub(crate) trace_holder: TraceHolder<BF>,
     pub(crate) lookup_challenges: Option<HostAllocation<LookupChallenges>>,
-    pub(crate) last_row: Option<HostAllocation<[BF]>>,
+    pub(crate) grand_product_accumulator: E4,
+    pub(crate) delegation_argument_accumulator: Option<E4>,
     pub(crate) offset_for_grand_product_poly: usize,
     pub(crate) offset_for_sum_over_delegation_poly: Option<usize>,
 }
@@ -60,7 +61,8 @@ impl StageTwoOutput {
         Ok(Self {
             trace_holder,
             lookup_challenges: None,
-            last_row: None,
+            grand_product_accumulator: E4::ZERO,
+            delegation_argument_accumulator: None,
             offset_for_grand_product_poly: 0,
             offset_for_sum_over_delegation_poly: None,
         })
@@ -81,7 +83,6 @@ impl StageTwoOutput {
         let log_domain_size = trace_len.trailing_zeros();
         let layout = circuit.stage_2_layout;
         let num_stage_2_cols = layout.total_width;
-
         // Derive lookup challenges from transcript
         let mut lookup_challenges = LookupChallenges::default();
         {
@@ -112,8 +113,10 @@ impl StageTwoOutput {
         let trace_holder = &mut self.trace_holder;
         let evaluations = trace_holder.get_uninit_evaluations_mut();
 
+        let cmd_buf = context.new_command_buffer()?;
         // Compute stage 2 arguments on main domain
-        compute_stage_2_args_on_main_domain(
+        compute_stage_2_args_on_main_domain_into(
+            &cmd_buf,
             &setup_evaluations,
             &witness_evaluations,
             &memory_evaluations,
@@ -127,22 +130,18 @@ impl StageTwoOutput {
             context,
         )?;
 
-        // Extend to full LDE and commit
         trace_holder.allocate_to_full(context)?;
-        trace_holder.extend_and_commit(0, context)?;
+        let batched = trace_holder.extend_and_commit_into(0, &cmd_buf, context)?;
+        cmd_buf.commit_and_wait();
+        if batched {
+            trace_holder.transfer_existing_tree_caps();
+        } else {
+            trace_holder.extend_and_commit(0, context)?;
+        }
 
-        // Copy last row to host for accumulator values
+        // Copy only the last-row accumulator values needed by later CPU stages.
         let evaluations = trace_holder.get_evaluations(context)?;
         let eval_slice = unsafe { evaluations.as_slice() };
-        let mut last_row = unsafe { HostAllocation::new_uninit_slice(num_stage_2_cols) };
-        {
-            let accessor = last_row.get_mut_accessor();
-            let lr = unsafe { accessor.get_mut() };
-            for col in 0..num_stage_2_cols {
-                lr[col] = eval_slice[col * trace_len + trace_len - 1];
-            }
-        }
-        self.last_row = Some(last_row);
 
         // Store offsets for grand product and delegation polys
         let offset_for_grand_product_poly = layout
@@ -157,6 +156,16 @@ impl StageTwoOutput {
                 None
             };
         self.offset_for_sum_over_delegation_poly = offset_for_sum_over_delegation_poly;
+        self.grand_product_accumulator = read_last_row_e4(
+            eval_slice,
+            trace_len,
+            offset_for_grand_product_poly,
+        );
+        self.delegation_argument_accumulator = offset_for_sum_over_delegation_poly.map(|offset| {
+            let mut value = read_last_row_e4(eval_slice, trace_len, offset);
+            value.negate();
+            value
+        });
 
         // Store lookup challenges
         let mut lc_host: HostAllocation<LookupChallenges> =
@@ -174,22 +183,17 @@ impl StageTwoOutput {
             .delegation_processing_aux_poly
             .is_some();
         let tree_caps_accessors = trace_holder.get_tree_caps_accessors();
-        let last_row_accessor = self.last_row.as_ref().unwrap().get_accessor();
-        let last_row_slice = unsafe { last_row_accessor.get() };
         let mut transcript_input = vec![];
         transcript_input.extend(flatten_tree_caps(&tree_caps_accessors));
         transcript_input.extend(
-            Self::get_grand_product_accumulator(offset_for_grand_product_poly, last_row_slice)
+            self.grand_product_accumulator
                 .into_coeffs_in_base()
                 .iter()
                 .map(BF::to_reduced_u32),
         );
         if has_delegation_processing_aux_poly {
             transcript_input.extend(
-                Self::get_sum_over_delegation_poly(
-                    offset_for_sum_over_delegation_poly,
-                    last_row_slice,
-                )
+                self.delegation_argument_accumulator
                 .unwrap_or_default()
                 .into_coeffs_in_base()
                 .iter()
@@ -222,10 +226,52 @@ impl StageTwoOutput {
     }
 }
 
+#[inline(always)]
+fn read_last_row_e4(evaluations: &[BF], trace_len: usize, base_col: usize) -> E4 {
+    let row_idx = trace_len - 1;
+    E4::from_array_of_base(std::array::from_fn(|i| {
+        evaluations[(base_col + i) * trace_len + row_idx]
+    }))
+}
+
 /// Compute stage 2 arguments on the main domain.
 /// This orchestrates the kernel dispatches for lookup, memory, and delegation arguments.
 #[allow(clippy::too_many_arguments)]
 fn compute_stage_2_args_on_main_domain(
+    setup_evals: &MetalBuffer<BF>,
+    witness_evals: &MetalBuffer<BF>,
+    memory_evals: &MetalBuffer<BF>,
+    generic_lookup_map: &MetalBuffer<u32>,
+    stage_2_evals: &mut MetalBuffer<BF>,
+    lookup_challenges: &LookupChallenges,
+    cached_data: &ProverCachedData,
+    circuit: &CompiledCircuitArtifact<BF>,
+    num_generic_table_rows: usize,
+    log_n: u32,
+    context: &ProverContext,
+) -> MetalResult<()> {
+    let cmd_buf = context.new_command_buffer()?;
+    compute_stage_2_args_on_main_domain_into(
+        &cmd_buf,
+        setup_evals,
+        witness_evals,
+        memory_evals,
+        generic_lookup_map,
+        stage_2_evals,
+        lookup_challenges,
+        cached_data,
+        circuit,
+        num_generic_table_rows,
+        log_n,
+        context,
+    )?;
+    cmd_buf.commit_and_wait();
+    Ok(())
+}
+
+#[allow(clippy::too_many_arguments)]
+fn compute_stage_2_args_on_main_domain_into(
+    cmd_buf: &MetalCommandBuffer,
     setup_evals: &MetalBuffer<BF>,
     witness_evals: &MetalBuffer<BF>,
     memory_evals: &MetalBuffer<BF>,
@@ -340,11 +386,6 @@ fn compute_stage_2_args_on_main_domain(
     let num_range_check_16_rows = 1u32 << 16;
     let range_check_16_multiplicities_dst_col =
         translate_e4_offset(range_check_16_multiplicities_dst) as u32;
-    // ALL stage 2 dispatches share ONE command buffer.
-    // Metal guarantees sequential execution of compute encoders within a cmd buffer,
-    // so data dependencies (entry invs → lookup → negate → scan) are naturally satisfied.
-    let cmd_buf = context.new_command_buffer()?;
-
     let num_timestamp_range_check_rows = 1u32 << TIMESTAMP_COLUMNS_NUM_BITS;
     let timestamp_range_check_multiplicities_dst_col =
         translate_e4_offset(timestamp_range_check_multiplicities_dst) as u32;
@@ -778,9 +819,6 @@ fn compute_stage_2_args_on_main_domain(
             )?;
         }
     }
-
-    // ONE sync point for entire stage 2 argument computation
-    cmd_buf.commit_and_wait();
 
     Ok(())
 }

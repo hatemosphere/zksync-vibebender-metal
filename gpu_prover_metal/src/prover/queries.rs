@@ -279,6 +279,7 @@ impl QueriesOutput {
         Ok(d_leafs)
     }
 
+
     /// Read back gathered leafs from GPU buffer + gather merkle paths on CPU.
     fn finish_gather(
         d_leafs: &MetalBuffer<BF>,

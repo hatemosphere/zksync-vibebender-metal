@@ -391,11 +391,11 @@ pub fn blake2s_pow(
     max_nonce: u64,
     result_lo: &MetalBuffer<u32>,
     result_hi: &MetalBuffer<u32>,
+    num_groups: u32,
 ) -> MetalResult<()> {
     assert_eq!(seed.len(), STATE_SIZE);
     // Use a reasonable number of threads for PoW search
     let threads_per_group = (SIMD_GROUP_SIZE * 4) as u32;
-    let num_groups = 256u32; // Heuristic: enough to saturate the GPU
     let config = MetalLaunchConfig::basic_1d(num_groups, threads_per_group);
     dispatch::dispatch_kernel(
         device,

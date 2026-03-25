@@ -682,7 +682,7 @@ mod pow_tests {
 
             // Search with pow_bits=1 (accept ~50% of hashes) to avoid UB with bits=0
             let cmd_buf = context.new_command_buffer().unwrap();
-            blake2s_pow(device, &cmd_buf, &d_seed, 1, nonce, nonce + 1, &d_nonce_lo, &d_nonce_hi).unwrap();
+            blake2s_pow(device, &cmd_buf, &d_seed, 1, nonce, nonce + 1, &d_nonce_lo, &d_nonce_hi, 1024).unwrap();
             cmd_buf.commit_and_wait();
 
             let found_lo = unsafe { *d_nonce_lo.as_ptr() };
@@ -728,7 +728,7 @@ mod pow_tests {
         let d_nonce_hi = context.alloc_from_slice(&[0xFFFFFFFFu32]).unwrap();
 
         let cmd_buf = context.new_command_buffer().unwrap();
-        blake2s_pow(device, &cmd_buf, &d_seed, pow_bits, 0, cpu_nonce + 1, &d_nonce_lo, &d_nonce_hi).unwrap();
+        blake2s_pow(device, &cmd_buf, &d_seed, pow_bits, 0, cpu_nonce + 1, &d_nonce_lo, &d_nonce_hi, 1024).unwrap();
         cmd_buf.commit_and_wait();
 
         let found_lo = unsafe { *d_nonce_lo.as_ptr() };

@@ -87,17 +87,10 @@ impl StageThreeOutput {
             materialize_powers_serial_starting_with_one::<_, Global>(beta, BETA_POWERS_COUNT);
 
         // Get stage 2 data
-        let stage_2_last_row = stage_2_output.last_row.as_ref().unwrap();
-        let stage_2_last_row_slice: &[BF] = &stage_2_last_row.0;
-        let grand_product_accumulator = StageTwoOutput::get_grand_product_accumulator(
-            stage_2_output.offset_for_grand_product_poly,
-            stage_2_last_row_slice,
-        );
-        let sum_over_delegation_poly = StageTwoOutput::get_sum_over_delegation_poly(
-            stage_2_output.offset_for_sum_over_delegation_poly,
-            stage_2_last_row_slice,
-        )
-        .unwrap_or_default();
+        let grand_product_accumulator = stage_2_output.grand_product_accumulator;
+        let sum_over_delegation_poly = stage_2_output
+            .delegation_argument_accumulator
+            .unwrap_or_default();
 
         let lookup_challenges_ref: &LookupChallenges = &stage_2_output
             .lookup_challenges

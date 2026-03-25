@@ -45,7 +45,9 @@ pub fn commit_memory<'a>(
         true,
         true,
         false,
-        TreesCacheMode::CacheFull,
+        // Memory commitment only returns caps, so retaining full trees here
+        // inflates peak unified-memory usage without helping later stages.
+        TreesCacheMode::CacheNone,
         context,
     )?;
 

@@ -7,7 +7,7 @@
 use super::context::{HostAllocation, ProverContext, UnsafeAccessor};
 use super::{BF, E4};
 use crate::blake2s::{self, Digest};
-use crate::metal_runtime::{MetalBuffer, MetalResult};
+use crate::metal_runtime::{MetalBuffer, MetalCommandBuffer, MetalResult};
 use itertools::Itertools;
 use prover::merkle_trees::MerkleTreeCapVarLength;
 use prover::prover_stages::Transcript;
@@ -195,6 +195,192 @@ impl TraceHolder<BF> {
         &mut self,
         context: &ProverContext,
     ) -> MetalResult<()> {
+        if self.tree_caps.is_none() && self.log_lde_factor == 1 {
+            match (&mut self.cosets, &mut self.trees) {
+                (CosetsHolder::Full(evaluations), TreesHolder::Full(trees))
+                | (CosetsHolder::Full(evaluations), TreesHolder::Partial(trees)) => {
+                    if evaluations.len() == 2 && trees.len() == 2 {
+                        let tree_caps = allocate_tree_caps(self.log_lde_factor, self.log_tree_cap_size);
+                        assert!(self.tree_caps.replace(tree_caps).is_none());
+                        let cmd_buf = context.new_command_buffer()?;
+
+                        let (src_evals, dst_evals) = evaluations.split_at_mut(1);
+                        let src_eval = &mut src_evals[0];
+                        let dst_eval = &mut dst_evals[0];
+                        let (tree0s, tree1s) = trees.split_at_mut(1);
+                        let tree0 = &mut tree0s[0];
+                        let tree1 = &mut tree1s[0];
+
+                        make_evaluations_sum_to_zero_into(
+                            &cmd_buf,
+                            src_eval,
+                            self.log_domain_size,
+                            self.columns_count,
+                            self.padded_to_even,
+                            context,
+                        )?;
+                        let src_eval_ref = unsafe { &*(src_eval as *const MetalBuffer<BF>) };
+                        commit_trace_into(
+                            &cmd_buf,
+                            src_eval_ref,
+                            tree0,
+                            self.log_domain_size,
+                            self.log_lde_factor,
+                            self.log_rows_per_leaf,
+                            self.log_tree_cap_size,
+                            self.columns_count,
+                            context,
+                        )?;
+                        compute_coset_evaluations_into(
+                            &cmd_buf,
+                            src_eval_ref,
+                            dst_eval,
+                            0,
+                            self.log_domain_size,
+                            self.log_lde_factor,
+                            self.compressed_coset,
+                            context,
+                        )?;
+                        let dst_eval_ref = unsafe { &*(dst_eval as *const MetalBuffer<BF>) };
+                        commit_trace_into(
+                            &cmd_buf,
+                            dst_eval_ref,
+                            tree1,
+                            self.log_domain_size,
+                            self.log_lde_factor,
+                            self.log_rows_per_leaf,
+                            self.log_tree_cap_size,
+                            self.columns_count,
+                            context,
+                        )?;
+                        cmd_buf.commit_and_wait();
+                        let caps = self.tree_caps.as_mut().unwrap();
+                        transfer_tree_cap(tree0, &mut caps[0], self.log_lde_factor, self.log_tree_cap_size);
+                        transfer_tree_cap(tree1, &mut caps[1], self.log_lde_factor, self.log_tree_cap_size);
+                        return Ok(());
+                    }
+                }
+                (CosetsHolder::Full(evaluations), TreesHolder::None) => {
+                    if evaluations.len() == 2 {
+                        let tree_caps = allocate_tree_caps(self.log_lde_factor, self.log_tree_cap_size);
+                        assert!(self.tree_caps.replace(tree_caps).is_none());
+                        let cmd_buf = context.new_command_buffer()?;
+
+                        let (src_evals, dst_evals) = evaluations.split_at_mut(1);
+                        let src_eval = &mut src_evals[0];
+                        let dst_eval = &mut dst_evals[0];
+                        let mut tree0 = allocate_tree(self.log_domain_size, self.log_rows_per_leaf, context)?;
+                        let mut tree1 = allocate_tree(self.log_domain_size, self.log_rows_per_leaf, context)?;
+
+                        make_evaluations_sum_to_zero_into(
+                            &cmd_buf,
+                            src_eval,
+                            self.log_domain_size,
+                            self.columns_count,
+                            self.padded_to_even,
+                            context,
+                        )?;
+                        let src_eval_ref = unsafe { &*(src_eval as *const MetalBuffer<BF>) };
+                        commit_trace_into(
+                            &cmd_buf,
+                            src_eval_ref,
+                            &mut tree0,
+                            self.log_domain_size,
+                            self.log_lde_factor,
+                            self.log_rows_per_leaf,
+                            self.log_tree_cap_size,
+                            self.columns_count,
+                            context,
+                        )?;
+                        compute_coset_evaluations_into(
+                            &cmd_buf,
+                            src_eval_ref,
+                            dst_eval,
+                            0,
+                            self.log_domain_size,
+                            self.log_lde_factor,
+                            self.compressed_coset,
+                            context,
+                        )?;
+                        let dst_eval_ref = unsafe { &*(dst_eval as *const MetalBuffer<BF>) };
+                        commit_trace_into(
+                            &cmd_buf,
+                            dst_eval_ref,
+                            &mut tree1,
+                            self.log_domain_size,
+                            self.log_lde_factor,
+                            self.log_rows_per_leaf,
+                            self.log_tree_cap_size,
+                            self.columns_count,
+                            context,
+                        )?;
+                        cmd_buf.commit_and_wait();
+                        let caps = self.tree_caps.as_mut().unwrap();
+                        transfer_tree_cap(&tree0, &mut caps[0], self.log_lde_factor, self.log_tree_cap_size);
+                        transfer_tree_cap(&tree1, &mut caps[1], self.log_lde_factor, self.log_tree_cap_size);
+                        return Ok(());
+                    }
+                }
+                (CosetsHolder::Single { current_coset_index, evaluations }, TreesHolder::None) => {
+                    if *current_coset_index == 0 {
+                        let tree_caps = allocate_tree_caps(self.log_lde_factor, self.log_tree_cap_size);
+                        assert!(self.tree_caps.replace(tree_caps).is_none());
+                        let cmd_buf = context.new_command_buffer()?;
+                        let mut tree0 = allocate_tree(self.log_domain_size, self.log_rows_per_leaf, context)?;
+                        let mut tree1 = allocate_tree(self.log_domain_size, self.log_rows_per_leaf, context)?;
+
+                        make_evaluations_sum_to_zero_into(
+                            &cmd_buf,
+                            evaluations,
+                            self.log_domain_size,
+                            self.columns_count,
+                            self.padded_to_even,
+                            context,
+                        )?;
+                        let eval_ref = unsafe { &*(evaluations as *const MetalBuffer<BF>) };
+                        commit_trace_into(
+                            &cmd_buf,
+                            eval_ref,
+                            &mut tree0,
+                            self.log_domain_size,
+                            self.log_lde_factor,
+                            self.log_rows_per_leaf,
+                            self.log_tree_cap_size,
+                            self.columns_count,
+                            context,
+                        )?;
+                        switch_coset_evaluations_in_place_into(
+                            &cmd_buf,
+                            evaluations,
+                            0,
+                            self.log_domain_size,
+                            self.log_lde_factor,
+                            self.compressed_coset,
+                            context,
+                        )?;
+                        let switched_eval_ref = unsafe { &*(evaluations as *const MetalBuffer<BF>) };
+                        commit_trace_into(
+                            &cmd_buf,
+                            switched_eval_ref,
+                            &mut tree1,
+                            self.log_domain_size,
+                            self.log_lde_factor,
+                            self.log_rows_per_leaf,
+                            self.log_tree_cap_size,
+                            self.columns_count,
+                            context,
+                        )?;
+                        cmd_buf.commit_and_wait();
+                        *current_coset_index = 1;
+                        let caps = self.tree_caps.as_mut().unwrap();
+                        transfer_tree_cap(&tree0, &mut caps[0], self.log_lde_factor, self.log_tree_cap_size);
+                        transfer_tree_cap(&tree1, &mut caps[1], self.log_lde_factor, self.log_tree_cap_size);
+                        return Ok(());
+                    }
+                }
+                _ => {}
+            }
+        }
         self.make_evaluations_sum_to_zero(context)?;
         self.extend_and_commit(0, context)?;
         Ok(())
@@ -423,7 +609,17 @@ impl<T> TraceHolder<T> {
                 )?;
                 trees.extend(new_trees);
             }
-            TreesHolder::None => {}
+            TreesHolder::None => {
+                // For evaluation-only holders, allocating trees here allows later
+                // commit paths to encode tree construction and cap extraction
+                // against stable buffers.
+                self.trees = TreesHolder::Full(allocate_trees(
+                    instances_count,
+                    self.log_domain_size,
+                    self.log_rows_per_leaf,
+                    context,
+                )?);
+            }
         }
         Ok(())
     }
@@ -435,6 +631,18 @@ impl<T> TraceHolder<T> {
             .iter()
             .map(|h| <HostAllocation<[Digest]>>::get_accessor(h))
             .collect_vec()
+    }
+
+    pub(crate) fn transfer_existing_tree_caps(&mut self) {
+        let caps = self.tree_caps.as_mut().unwrap();
+        match &self.trees {
+            TreesHolder::Full(trees) | TreesHolder::Partial(trees) => {
+                for (tree, cap) in trees.iter().zip(caps.iter_mut()) {
+                    transfer_tree_cap(tree, cap, self.log_lde_factor, self.log_tree_cap_size);
+                }
+            }
+            TreesHolder::None => unreachable!(),
+        }
     }
 
     pub(crate) fn get_update_seed_fn(&self, seed: &mut Seed) -> impl FnOnce() + Send {
@@ -457,6 +665,75 @@ impl<T> TraceHolder<T> {
                 assert_eq!(*current_coset_index, coset_index);
                 evaluations
             }
+        }
+    }
+}
+
+impl TraceHolder<BF> {
+    pub(crate) fn extend_and_commit_into(
+        &mut self,
+        source_coset_index: usize,
+        cmd_buf: &MetalCommandBuffer,
+        context: &ProverContext,
+    ) -> MetalResult<bool> {
+        if self.tree_caps.is_some() || self.log_lde_factor != 1 {
+            return Ok(false);
+        }
+        match (&mut self.cosets, &mut self.trees) {
+            (CosetsHolder::Full(evaluations), TreesHolder::Full(trees))
+            | (CosetsHolder::Full(evaluations), TreesHolder::Partial(trees)) => {
+                if evaluations.len() != 2 || trees.len() != 2 {
+                    return Ok(false);
+                }
+                let tree_caps = allocate_tree_caps(self.log_lde_factor, self.log_tree_cap_size);
+                assert!(self.tree_caps.replace(tree_caps).is_none());
+
+                let (src_evals, dst_evals) = evaluations.split_at_mut(1);
+                let (tree0s, tree1s) = trees.split_at_mut(1);
+                let (src_eval, dst_eval, tree_src, tree_dst) =
+                    if source_coset_index == 0 {
+                        (&mut src_evals[0], &mut dst_evals[0], &mut tree0s[0], &mut tree1s[0])
+                    } else {
+                        (&mut dst_evals[0], &mut src_evals[0], &mut tree1s[0], &mut tree0s[0])
+                    };
+
+                let src_eval_ref = unsafe { &*(src_eval as *const MetalBuffer<BF>) };
+                commit_trace_into(
+                    cmd_buf,
+                    src_eval_ref,
+                    tree_src,
+                    self.log_domain_size,
+                    self.log_lde_factor,
+                    self.log_rows_per_leaf,
+                    self.log_tree_cap_size,
+                    self.columns_count,
+                    context,
+                )?;
+                compute_coset_evaluations_into(
+                    cmd_buf,
+                    src_eval_ref,
+                    dst_eval,
+                    source_coset_index,
+                    self.log_domain_size,
+                    self.log_lde_factor,
+                    self.compressed_coset,
+                    context,
+                )?;
+                let dst_eval_ref = unsafe { &*(dst_eval as *const MetalBuffer<BF>) };
+                commit_trace_into(
+                    cmd_buf,
+                    dst_eval_ref,
+                    tree_dst,
+                    self.log_domain_size,
+                    self.log_lde_factor,
+                    self.log_rows_per_leaf,
+                    self.log_tree_cap_size,
+                    self.columns_count,
+                    context,
+                )?;
+                Ok(true)
+            }
+            _ => Ok(false),
         }
     }
 }
@@ -715,7 +992,6 @@ fn make_evaluations_sum_to_zero(
     let num_cols = columns_count as u32;
     let stride = domain_size as u32;
     let d_col_sums: MetalBuffer<BF> = context.alloc(columns_count)?;
-
     let cmd_buf = context.new_command_buffer()?;
     crate::ops_cub::device_reduce::segmented_reduce_bf(
         device, &cmd_buf,
@@ -762,8 +1038,69 @@ fn make_evaluations_sum_to_zero(
             },
         )?;
     }
-
     cmd_buf.commit_and_wait();
+    Ok(())
+}
+
+fn make_evaluations_sum_to_zero_into(
+    cmd_buf: &MetalCommandBuffer,
+    evaluations: &mut MetalBuffer<BF>,
+    log_domain_size: u32,
+    columns_count: usize,
+    padded_to_even: bool,
+    context: &ProverContext,
+) -> MetalResult<()> {
+    let domain_size = 1usize << log_domain_size;
+    let device = context.device();
+
+    let num_cols = columns_count as u32;
+    let stride = domain_size as u32;
+    let d_col_sums: MetalBuffer<BF> = context.alloc(columns_count)?;
+    crate::ops_cub::device_reduce::segmented_reduce_bf(
+        device, cmd_buf,
+        crate::ops_cub::device_reduce::ReduceOperation::Sum,
+        evaluations,
+        &d_col_sums,
+        stride,
+        num_cols,
+        stride - 1,
+    )?;
+    let config = crate::metal_runtime::dispatch::MetalLaunchConfig::basic_1d(
+        (num_cols + 255) / 256, 256,
+    );
+    crate::metal_runtime::dispatch::dispatch_kernel(
+        device, cmd_buf,
+        "ab_negate_and_scatter_to_last_row_kernel",
+        &config,
+        |encoder| {
+            crate::metal_runtime::dispatch::set_buffer(encoder, 0, d_col_sums.raw(), 0);
+            crate::metal_runtime::dispatch::set_buffer(encoder, 1, evaluations.raw(), 0);
+            unsafe {
+                crate::metal_runtime::dispatch::set_bytes(encoder, 2, &num_cols);
+                crate::metal_runtime::dispatch::set_bytes(encoder, 3, &stride);
+            }
+        },
+    )?;
+
+    if padded_to_even && columns_count % 2 != 0 {
+        let count = domain_size as u32;
+        let pad_offset = columns_count * domain_size * std::mem::size_of::<BF>();
+        let config = crate::metal_runtime::dispatch::MetalLaunchConfig::basic_1d(
+            (count + 255) / 256, 256,
+        );
+        crate::metal_runtime::dispatch::dispatch_kernel(
+            device, cmd_buf, "ab_memset_zero_u32_kernel", &config,
+            |encoder| {
+                crate::metal_runtime::dispatch::set_buffer(
+                    encoder, 0, evaluations.raw(), pad_offset,
+                );
+                unsafe {
+                    crate::metal_runtime::dispatch::set_bytes(encoder, 1, &count);
+                }
+            },
+        )?;
+    }
+
     Ok(())
 }
 
@@ -827,6 +1164,54 @@ pub(crate) fn compute_coset_evaluations(
     Ok(())
 }
 
+fn compute_coset_evaluations_into(
+    cmd_buf: &MetalCommandBuffer,
+    src: &MetalBuffer<BF>,
+    dst: &mut MetalBuffer<BF>,
+    source_coset_index: usize,
+    log_domain_size: u32,
+    log_lde_factor: u32,
+    compressed_coset: bool,
+    context: &ProverContext,
+) -> MetalResult<()> {
+    assert_eq!(log_lde_factor, 1);
+    let len = src.len();
+    assert_eq!(len, dst.len());
+    let domain_size = 1usize << log_domain_size;
+    assert_eq!(len & ((domain_size << 1) - 1), 0);
+    let num_bf_cols = (len >> log_domain_size) as u32;
+    let log_n = log_domain_size;
+    let stride = domain_size as u32;
+    let device = context.device();
+    let twiddles = context.ntt_twiddles();
+
+    if source_coset_index == 0 {
+        crate::ntt::natural_trace_main_evals_to_bitrev_Z(
+            device, cmd_buf, src, dst, stride, log_n, num_bf_cols, twiddles,
+        )?;
+        let const_dst = unsafe { &*(dst as *const MetalBuffer<BF>) };
+        crate::ntt::bitrev_Z_to_natural_trace_coset_evals(
+            device, cmd_buf, const_dst, dst, stride, log_n, num_bf_cols, twiddles,
+        )?;
+    } else {
+        assert_eq!(source_coset_index, 1);
+        if compressed_coset {
+            crate::ntt::natural_compressed_coset_evals_to_bitrev_Z(
+                device, cmd_buf, src, dst, stride, log_n, num_bf_cols, twiddles,
+            )?;
+        } else {
+            crate::ntt::natural_composition_coset_evals_to_bitrev_Z(
+                device, cmd_buf, src, dst, stride, log_n, num_bf_cols, twiddles,
+            )?;
+        }
+        let const_dst = unsafe { &*(dst as *const MetalBuffer<BF>) };
+        crate::ntt::bitrev_Z_to_natural_composition_main_evals(
+            device, cmd_buf, const_dst, dst, stride, log_n, num_bf_cols, twiddles,
+        )?;
+    }
+    Ok(())
+}
+
 fn switch_coset_evaluations_in_place(
     evals: &mut MetalBuffer<BF>,
     source_coset_index: usize,
@@ -839,6 +1224,28 @@ fn switch_coset_evaluations_in_place(
     // mirroring the CUDA version's approach with raw pointers.
     let const_evals = unsafe { &*(evals as *const MetalBuffer<BF>) };
     compute_coset_evaluations(
+        const_evals,
+        evals,
+        source_coset_index,
+        log_domain_size,
+        log_lde_factor,
+        compressed_coset,
+        context,
+    )
+}
+
+fn switch_coset_evaluations_in_place_into(
+    cmd_buf: &MetalCommandBuffer,
+    evals: &mut MetalBuffer<BF>,
+    source_coset_index: usize,
+    log_domain_size: u32,
+    log_lde_factor: u32,
+    compressed_coset: bool,
+    context: &ProverContext,
+) -> MetalResult<()> {
+    let const_evals = unsafe { &*(evals as *const MetalBuffer<BF>) };
+    compute_coset_evaluations_into(
+        cmd_buf,
         const_evals,
         evals,
         source_coset_index,
@@ -938,6 +1345,81 @@ pub(crate) fn commit_trace(
     Ok(())
 }
 
+fn commit_trace_into(
+    cmd_buf: &MetalCommandBuffer,
+    lde: &MetalBuffer<BF>,
+    tree: &mut MetalBuffer<Digest>,
+    log_domain_size: u32,
+    log_lde_factor: u32,
+    log_rows_per_leaf: u32,
+    log_tree_cap_size: u32,
+    columns_count: usize,
+    context: &ProverContext,
+) -> MetalResult<()> {
+    assert!(log_tree_cap_size >= log_lde_factor);
+    let tree_len = 1usize << (log_domain_size + 1 - log_rows_per_leaf);
+    assert_eq!(tree.len(), tree_len);
+    let log_coset_tree_cap_size = log_tree_cap_size - log_lde_factor;
+    let layers_count = log_domain_size + 1 - log_rows_per_leaf - log_coset_tree_cap_size;
+    let device = context.device();
+
+    let domain_size = 1usize << log_domain_size;
+    let leaves_count = domain_size >> log_rows_per_leaf;
+    let digest_size = std::mem::size_of::<blake2s::Digest>();
+    let nodes_byte_offset = leaves_count * digest_size;
+
+    let bf_len_for_hash = columns_count * domain_size;
+    blake2s::build_merkle_tree_leaves_raw(
+        device,
+        cmd_buf,
+        lde.raw(),
+        bf_len_for_hash,
+        tree,
+        leaves_count,
+        log_rows_per_leaf,
+    )?;
+
+    {
+        let log_leaves = (leaves_count as u32).trailing_zeros();
+        let count = leaves_count as u32;
+        let cols = 1u32;
+        let temp_buf: crate::metal_runtime::MetalBuffer<Digest> = context.alloc(leaves_count)?;
+        let config = crate::metal_runtime::dispatch::MetalLaunchConfig::basic_2d(
+            ((count + 127) / 128, 1), (128, 1));
+        crate::metal_runtime::dispatch::dispatch_kernel(
+            device, cmd_buf, "ab_bit_reverse_naive_dg_kernel", &config,
+            |encoder| {
+                crate::metal_runtime::dispatch::set_buffer(encoder, 0, tree.raw(), 0);
+                unsafe {
+                    crate::metal_runtime::dispatch::set_bytes(encoder, 1, &count);
+                }
+                crate::metal_runtime::dispatch::set_buffer(encoder, 2, temp_buf.raw(), 0);
+                unsafe {
+                    crate::metal_runtime::dispatch::set_bytes(encoder, 3, &count);
+                    crate::metal_runtime::dispatch::set_bytes(encoder, 4, &log_leaves);
+                    crate::metal_runtime::dispatch::set_bytes(encoder, 5, &cols);
+                }
+            },
+        )?;
+        let copy_bytes = leaves_count * digest_size;
+        crate::ops_simple::memcpy_gpu(device, cmd_buf, temp_buf.raw(), tree.raw(), copy_bytes)?;
+    }
+
+    if layers_count > 0 {
+        blake2s::build_merkle_tree_nodes_with_offset(
+            device,
+            cmd_buf,
+            tree,
+            0,
+            leaves_count,
+            tree,
+            nodes_byte_offset,
+            layers_count - 1,
+        )?;
+    }
+    Ok(())
+}
+
 /// Commit an E4 trace buffer to a Merkle tree.
 /// The E4 buffer is passed as raw MTLBuffer with explicit BF column count,
 /// since E4 = [BF; 4] and the blake2s kernel operates on BF data.
@@ -957,7 +1439,6 @@ fn commit_trace_e4(
     let layers_count = log_domain_size + 1 - log_rows_per_leaf - log_coset_tree_cap_size;
     let device = context.device();
     let cmd_buf = context.new_command_buffer()?;
-
     let bf_len = lde.len() * 4;
     let num_leaves = tree_len / 2;
     let digest_size = std::mem::size_of::<blake2s::Digest>();
@@ -971,9 +1452,6 @@ fn commit_trace_e4(
         log_rows_per_leaf,
     )?;
 
-    // E4 trees: no bit-reversal of leaf hashes here.
-    // The caller is responsible for bit-reversing E4 DATA before calling this
-    // (done in stage_4 and stage_5, matching CUDA's bit_reverse_in_place).
     if layers_count > 0 {
         blake2s::build_merkle_tree_nodes_with_offset(
             device,
@@ -986,7 +1464,6 @@ fn commit_trace_e4(
             layers_count - 1,
         )?;
     }
-
     cmd_buf.commit_and_wait();
     Ok(())
 }
@@ -1012,7 +1489,7 @@ pub(crate) fn flatten_tree_caps(
 ) -> impl Iterator<Item = u32> + use<'_> {
     accessors
         .iter()
-        .flat_map(|accessor| unsafe { accessor.get().to_vec() })
+        .flat_map(|accessor| unsafe { accessor.get().iter().copied() })
         .flatten()
 }
 

@@ -8,6 +8,7 @@ use fft::GoodAllocator;
 use log::{error, info, trace};
 use std::process::exit;
 use std::thread;
+use std::collections::VecDeque;
 
 pub struct GpuWorkBatch<A: GoodAllocator> {
     pub batch_id: u64,
@@ -71,18 +72,12 @@ impl Drop for GpuManager {
     }
 }
 
-/// Simple sequential manager loop for Metal.
+/// Simple bounded pipeline manager loop for Metal.
 ///
-/// Unlike the CUDA version which uses a complex Select-based event loop
-/// with double-buffered pipeline and async overlap, Metal's synchronous
-/// execution model works best with sequential request processing:
-///
-/// 1. Receive a batch of work requests
-/// 2. For each request in the batch:
-///    a. Send request to worker
-///    b. Wait for result
-///    c. Send result back to batch sender
-/// 3. Repeat for next batch
+/// We still keep a single GPU worker and preserve FIFO execution, but allow one
+/// extra request to queue behind the currently executing one. This reduces CPU
+/// handoff stalls between consecutive requests without increasing unbounded GPU
+/// queue depth or changing proof semantics.
 fn run_manager(
     batches_receiver: Receiver<GpuWorkBatch<ConcurrentStaticHostAllocator>>,
     setups_to_cache: Vec<SetupToCache>,
@@ -92,7 +87,7 @@ fn run_manager(
     trace!("GPU_MANAGER spawning");
 
     // Create worker channel pair
-    let (request_sender, request_receiver) = bounded::<Option<GpuWorkRequest<ConcurrentStaticHostAllocator>>>(1);
+    let (request_sender, request_receiver) = bounded::<Option<GpuWorkRequest<ConcurrentStaticHostAllocator>>>(2);
     let (result_sender, result_receiver) = bounded::<Option<WorkerResult<ConcurrentStaticHostAllocator>>>(1);
 
     // Wait for worker initialization
@@ -131,27 +126,37 @@ fn run_manager(
         } = batch;
         trace!("BATCH[{batch_id}] GPU_MANAGER received new batch");
 
-        // Process each work request in the batch
-        for request in work_requests {
-            let request_type = match &request {
-                GpuWorkRequest::MemoryCommitment(_) => "memory commitment",
-                GpuWorkRequest::Proof(_) => "proof",
-            };
-            trace!("BATCH[{batch_id}] GPU_MANAGER sending {request_type} request to worker");
+        let mut pending_requests = work_requests.into_iter();
+        let mut inflight_request_types = VecDeque::new();
 
-            // Send request to worker
-            request_sender.send(Some(request)).unwrap();
+        loop {
+            while inflight_request_types.len() < 2 {
+                let Some(request) = pending_requests.next() else {
+                    break;
+                };
+                let request_type = match &request {
+                    GpuWorkRequest::MemoryCommitment(_) => "memory commitment",
+                    GpuWorkRequest::Proof(_) => "proof",
+                };
+                trace!("BATCH[{batch_id}] GPU_MANAGER sending {request_type} request to worker");
+                request_sender.send(Some(request)).unwrap();
+                inflight_request_types.push_back(request_type);
+            }
 
-            // Wait for result
+            if inflight_request_types.is_empty() {
+                break;
+            }
+
+            let expected_type = inflight_request_types.pop_front().unwrap();
             let result = result_receiver.recv().unwrap();
 
             if let Some(result) = result {
                 match &result {
                     WorkerResult::MemoryCommitment(_r) => {
-                        trace!("BATCH[{batch_id}] GPU_MANAGER received memory commitment result");
+                        trace!("BATCH[{batch_id}] GPU_MANAGER received {expected_type} result");
                     }
                     WorkerResult::Proof(_r) => {
-                        trace!("BATCH[{batch_id}] GPU_MANAGER received proof result");
+                        trace!("BATCH[{batch_id}] GPU_MANAGER received {expected_type} result");
                     }
                     _ => {}
                 }

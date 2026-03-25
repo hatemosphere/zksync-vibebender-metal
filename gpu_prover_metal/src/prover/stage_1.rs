@@ -18,7 +18,7 @@ use cs::definitions::{
     BoundaryConstraintLocation, COMMON_TABLE_WIDTH, NUM_COLUMNS_FOR_COMMON_TABLE_WIDTH_SETUP,
     TIMESTAMP_COLUMNS_NUM_BITS,
 };
-use cs::one_row_compiler::{read_value, ColumnAddress, CompiledCircuitArtifact, LookupExpression};
+use cs::one_row_compiler::{ColumnAddress, CompiledCircuitArtifact, LookupExpression};
 use fft::GoodAllocator;
 use field::Field;
 use prover::prover_stages::cached_data::{
@@ -295,57 +295,46 @@ impl StageOneOutput {
             return Ok(());
         }
         let holder = &mut self.witness_holder;
-        let columns_count = holder.columns_count;
         let trace_len = 1 << holder.log_domain_size;
         let evaluations = holder.get_evaluations(context)?;
         let eval_slice = unsafe { evaluations.as_slice() };
-
-        // Extract first row and one-before-last row for each column
-        let mut witness_first_row = vec![BF::default(); columns_count];
-        let mut witness_one_before_last_row = vec![BF::default(); columns_count];
-
-        for col in 0..columns_count {
-            let col_start = col * trace_len;
-            witness_first_row[col] = eval_slice[col_start];
-            witness_one_before_last_row[col] = eval_slice[col_start + trace_len - 2];
-        }
-
-        let mut first_row_public_inputs = vec![];
-        let mut one_before_last_row_public_inputs = vec![];
-        for (location, column_address) in circuit.public_inputs.iter() {
-            match location {
-                BoundaryConstraintLocation::FirstRow => {
-                    let value = read_value(*column_address, &witness_first_row, &[]);
-                    first_row_public_inputs.push(value);
-                }
-                BoundaryConstraintLocation::OneBeforeLastRow => {
-                    let value =
-                        read_value(*column_address, &witness_one_before_last_row, &[]);
-                    one_before_last_row_public_inputs.push(value);
-                }
-                BoundaryConstraintLocation::LastRow => {
-                    panic!("public inputs on the last row are not supported");
-                }
-            }
-        }
-
-        let total_len = first_row_public_inputs.len() + one_before_last_row_public_inputs.len();
+        let total_len = circuit.public_inputs.len();
         let mut public_inputs = unsafe { HostAllocation::new_uninit_slice(total_len) };
         {
             let accessor = public_inputs.get_mut_accessor();
             let pi_slice = unsafe { accessor.get_mut() };
-            let mut idx = 0;
-            for v in first_row_public_inputs {
-                pi_slice[idx] = v;
-                idx += 1;
-            }
-            for v in one_before_last_row_public_inputs {
-                pi_slice[idx] = v;
-                idx += 1;
+            for (idx, (location, column_address)) in circuit.public_inputs.iter().enumerate() {
+                let row_idx = match location {
+                    BoundaryConstraintLocation::FirstRow => 0,
+                    BoundaryConstraintLocation::OneBeforeLastRow => trace_len - 2,
+                    BoundaryConstraintLocation::LastRow => {
+                        panic!("public inputs on the last row are not supported");
+                    }
+                };
+                pi_slice[idx] =
+                    read_public_input_value_at_row(*column_address, eval_slice, trace_len, row_idx);
             }
         }
         self.public_inputs = Some(public_inputs);
         Ok(())
+    }
+}
+
+#[inline(always)]
+fn read_public_input_value_at_row(
+    column_address: ColumnAddress,
+    eval_slice: &[BF],
+    trace_len: usize,
+    row_idx: usize,
+) -> BF {
+    match column_address {
+        ColumnAddress::WitnessSubtree(offset) => eval_slice[offset * trace_len + row_idx],
+        ColumnAddress::MemorySubtree(_) => {
+            panic!("memory public inputs are not supported in Metal stage_1")
+        }
+        ColumnAddress::SetupSubtree(_) | ColumnAddress::OptimizedOut(_) => {
+            panic!("unsupported public input column address in Metal stage_1")
+        }
     }
 }
 

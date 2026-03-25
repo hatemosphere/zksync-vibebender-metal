@@ -27,10 +27,14 @@ impl PowOutput {
         let d_nonce_lo = context.alloc_from_slice(&[0xFFFFFFFFu32])?;
         let d_nonce_hi = context.alloc_from_slice(&[0xFFFFFFFFu32])?;
 
-        let grid_size: u64 = 256 * 128; // 32768 threads
-        // Each thread checks ~512 nonces per dispatch via inner loop.
+        let num_groups: u32 = 1024;
+        let threads_per_group: u32 = 128;
+        let grid_size: u64 = num_groups as u64 * threads_per_group as u64;
+        // Higher occupancy with fewer iterations per thread.
+        // Keeps total chunk size roughly similar to the old setting while
+        // reducing per-thread loop length.
         // blake2s.metal compiled at -O0 to avoid Metal compiler optimization bug.
-        let nonces_per_chunk: u64 = grid_size * 512;
+        let nonces_per_chunk: u64 = grid_size * 128;
         let mut chunk_start: u64 = 0;
         let mut chunks_done: u64 = 0;
         let t = std::time::Instant::now();
@@ -41,7 +45,17 @@ impl PowOutput {
         loop {
             let chunk_end = chunk_start.saturating_add(nonces_per_chunk).min(u64::MAX);
             let cmd_buf = context.new_command_buffer()?;
-            blake2s_pow(device, &cmd_buf, &d_seed, pow_bits, chunk_start, chunk_end, &d_nonce_lo, &d_nonce_hi)?;
+            blake2s_pow(
+                device,
+                &cmd_buf,
+                &d_seed,
+                pow_bits,
+                chunk_start,
+                chunk_end,
+                &d_nonce_lo,
+                &d_nonce_hi,
+                num_groups,
+            )?;
             cmd_buf.commit_and_wait();
             chunks_done += 1;
 

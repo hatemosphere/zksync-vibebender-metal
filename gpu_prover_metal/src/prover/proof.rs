@@ -368,28 +368,8 @@ fn create_proof(
     let stage_2_tree_caps =
         get_tree_caps(&stage_2_output.trace_holder.get_tree_caps_accessors());
 
-    let memory_grand_product_accumulator = match stage_2_output.last_row.as_ref() {
-        Some(last_row) => {
-            let accessor = last_row.get_accessor();
-            let slice = unsafe { accessor.get() };
-            StageTwoOutput::get_grand_product_accumulator(
-                stage_2_output.offset_for_grand_product_poly,
-                slice,
-            )
-        }
-        None => super::E4::default(),
-    };
-    let delegation_argument_accumulator = match stage_2_output.last_row.as_ref() {
-        Some(last_row) => {
-            let accessor = last_row.get_accessor();
-            let slice = unsafe { accessor.get() };
-            StageTwoOutput::get_sum_over_delegation_poly(
-                stage_2_output.offset_for_sum_over_delegation_poly,
-                slice,
-            )
-        }
-        None => None,
-    };
+    let memory_grand_product_accumulator = stage_2_output.grand_product_accumulator;
+    let delegation_argument_accumulator = stage_2_output.delegation_argument_accumulator;
 
     let quotient_tree_caps =
         get_tree_caps(&stage_3_output.trace_holder.get_tree_caps_accessors());
@@ -447,4 +427,3 @@ fn create_proof(
         delegation_type,
     }
 }
-
