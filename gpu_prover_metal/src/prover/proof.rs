@@ -401,7 +401,7 @@ fn create_proof(
             .map(|v| canonicalize_e4(*v))
             .collect();
 
-    let queries = queries_output.produce_query_sets();
+    let queries = queries_output.into_query_sets();
     let pow_nonce = pow_output.nonce;
     let circuit_sequence = circuit_sequence as u16;
     let delegation_type = delegation_processing_type;
