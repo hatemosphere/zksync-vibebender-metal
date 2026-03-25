@@ -86,6 +86,10 @@ pub fn create_proofs(
 
     let non_determinism_data = input_data.unwrap_or_default();
 
+    // Set GPU profiler output directory (if profiling feature enabled)
+    #[cfg(feature = "gpu_profile")]
+    gpu_prover::metal_runtime::profiler::set_trace_dir(output_dir);
+
     // Serialization and deserialization of artifacts
     // (as requested by user arguments) can take a lot of time,
     // and typically won't be needed in production.

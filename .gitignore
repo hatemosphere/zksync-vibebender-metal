@@ -1,6 +1,10 @@
 /.idea
 /target
-/output
+/output*
 rustc-ice-*.*
 .DS_Store
 **/.DS_Store
+reference/
+gpu_prove_log*.txt
+cpu_prove_log*.txt
+METAL_SWAP.md
