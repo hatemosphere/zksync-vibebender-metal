@@ -78,9 +78,15 @@ impl<'a> SetupPrecomputations<'a> {
     }
 
     fn extend(&mut self, context: &ProverContext) -> MetalResult<()> {
-        self.transfer.ensure_transferred(context)?;
-        self.trace_holder
-            .make_evaluations_sum_to_zero_and_extend(context)?;
+        {
+            let _g = crate::cpu_scoped!("setup_transfer");
+            self.transfer.ensure_transferred(context)?;
+        }
+        {
+            let _g = crate::cpu_scoped!("setup_extend");
+            self.trace_holder
+                .make_evaluations_sum_to_zero_and_extend(context)?;
+        }
         self.is_extended = true;
         Ok(())
     }

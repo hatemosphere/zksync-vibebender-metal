@@ -75,6 +75,7 @@ impl QueriesOutput {
         folding_description: &FoldingDescription,
         context: &ProverContext,
     ) -> MetalResult<Self> {
+        let _g = crate::cpu_scoped!("queries_index_gen");
         let tree_index_bits = log_domain_size;
         let tree_index_mask = (1u32 << tree_index_bits) - 1;
         let coset_index_bits = log_lde_factor;
@@ -102,6 +103,7 @@ impl QueriesOutput {
                 tree_indexes[i] = tree_index;
             }
         }
+        drop(_g);
 
         // Cache column counts before mutable borrows in the loop
         let witness_cols = stage_1_output.witness_holder.columns_count;
@@ -112,6 +114,7 @@ impl QueriesOutput {
 
         let mut leafs_and_digest_sets = Vec::with_capacity(lde_factor);
         for coset_idx in 0..lde_factor {
+            let _g = crate::cpu_scoped!("queries_coset_gather");
             let mut current_tree_indexes = tree_indexes.clone();
             let mut log_dom = log_domain_size;
             let mut layers_count = log_domain_size - log_coset_tree_cap_size;
@@ -159,7 +162,6 @@ impl QueriesOutput {
                 &cmd_buf, &d_indexes, stage_3_evals.raw(),
                 domain_size, stage_3_cols_count as u32, queries_count,
                 0, true, log_dom, context)?;
-
             cmd_buf.commit_and_wait();
 
             let witness_tree_slice = unsafe { witness_tree.as_buffer().as_slice() };
@@ -279,7 +281,6 @@ impl QueriesOutput {
         Ok(d_leafs)
     }
 
-
     /// Read back gathered leafs from GPU buffer + gather merkle paths on CPU.
     fn finish_gather(
         d_leafs: &MetalBuffer<BF>,
@@ -398,6 +399,11 @@ impl QueriesOutput {
         let digests = gather_merkle_paths_from_slice(tree_indexes, tree, layers_count);
 
         Ok(LeafsAndDigests { leafs, digests, columns_count })
+    }
+
+    pub fn into_query_sets(self) -> Vec<QuerySet> {
+        let _g = crate::cpu_scoped!("queries_assembly");
+        self.produce_query_sets()
     }
 
     pub fn produce_query_sets(&self) -> Vec<QuerySet> {

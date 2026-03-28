@@ -4,7 +4,7 @@ use crate::metal_runtime::dispatch::{dispatch_kernel, set_buffer, set_bytes, Met
 use crate::metal_runtime::error::MetalResult;
 use crate::metal_runtime::MetalBuffer;
 use objc2::runtime::ProtocolObject;
-use objc2_metal::MTLDevice;
+use objc2_metal::{MTLBlitCommandEncoder as _, MTLCommandBuffer as _, MTLCommandEncoder as _, MTLDevice};
 
 type BF = BaseField;
 type E2 = Ext2Field;
@@ -67,18 +67,51 @@ pub fn memset_zero(
     buffer: &ProtocolObject<dyn objc2_metal::MTLBuffer>,
     byte_len: usize,
 ) -> MetalResult<()> {
-    assert_eq!(byte_len % 4, 0);
-    let count = (byte_len / 4) as u32;
-    if count == 0 {
+    let _ = device;
+    if byte_len == 0 {
         return Ok(());
     }
-    let threads_per_group = 256u32;
-    let threadgroups = (count + threads_per_group - 1) / threads_per_group;
-    let config = MetalLaunchConfig::basic_1d(threadgroups, threads_per_group);
-    dispatch_kernel(device, cmd_buf, "ab_memset_zero_u32_kernel", &config, |encoder| {
-        set_buffer(encoder, 0, buffer, 0);
-        unsafe { set_bytes(encoder, 1, &count); }
-    })
+    let encoder = cmd_buf.raw().blitCommandEncoder().ok_or_else(|| {
+        crate::metal_runtime::error::MetalError::ResourceCreationFailed(
+            "Failed to create blit command encoder".into(),
+        )
+    })?;
+    encoder.fillBuffer_range_value(
+        buffer,
+        objc2_foundation::NSRange::new(0, byte_len),
+        0,
+    );
+    encoder.endEncoding();
+    cmd_buf.maybe_auto_commit();
+    Ok(())
+}
+
+/// GPU zero-fill for a subrange of a buffer.
+/// `byte_offset` and `byte_len` must be multiples of 4.
+pub fn memset_zero_offset(
+    device: &ProtocolObject<dyn MTLDevice>,
+    cmd_buf: &MetalCommandBuffer,
+    buffer: &ProtocolObject<dyn objc2_metal::MTLBuffer>,
+    byte_offset: usize,
+    byte_len: usize,
+) -> MetalResult<()> {
+    let _ = device;
+    if byte_len == 0 {
+        return Ok(());
+    }
+    let encoder = cmd_buf.raw().blitCommandEncoder().ok_or_else(|| {
+        crate::metal_runtime::error::MetalError::ResourceCreationFailed(
+            "Failed to create blit command encoder".into(),
+        )
+    })?;
+    encoder.fillBuffer_range_value(
+        buffer,
+        objc2_foundation::NSRange::new(byte_offset, byte_len),
+        0,
+    );
+    encoder.endEncoding();
+    cmd_buf.maybe_auto_commit();
+    Ok(())
 }
 
 /// GPU buffer copy: replaces CPU memcpy on unified memory.
@@ -90,19 +123,27 @@ pub fn memcpy_gpu(
     dst: &ProtocolObject<dyn objc2_metal::MTLBuffer>,
     byte_len: usize,
 ) -> MetalResult<()> {
-    assert_eq!(byte_len % 4, 0);
-    let count = (byte_len / 4) as u32;
-    if count == 0 {
+    let _ = device;
+    if byte_len == 0 {
         return Ok(());
     }
-    let threads_per_group = 256u32;
-    let threadgroups = (count + threads_per_group - 1) / threads_per_group;
-    let config = MetalLaunchConfig::basic_1d(threadgroups, threads_per_group);
-    dispatch_kernel(device, cmd_buf, "ab_memcpy_u32_kernel", &config, |encoder| {
-        set_buffer(encoder, 0, src, 0);
-        set_buffer(encoder, 1, dst, 0);
-        unsafe { set_bytes(encoder, 2, &count); }
-    })
+    let encoder = cmd_buf.raw().blitCommandEncoder().ok_or_else(|| {
+        crate::metal_runtime::error::MetalError::ResourceCreationFailed(
+            "Failed to create blit command encoder".into(),
+        )
+    })?;
+    unsafe {
+        encoder.copyFromBuffer_sourceOffset_toBuffer_destinationOffset_size(
+            src,
+            0,
+            dst,
+            0,
+            byte_len,
+        );
+    }
+    encoder.endEncoding();
+    cmd_buf.maybe_auto_commit();
+    Ok(())
 }
 
 /// GPU transpose: 4 column-major BF columns → row-major E4.

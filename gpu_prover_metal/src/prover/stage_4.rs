@@ -71,6 +71,7 @@ impl StageFourOutput {
         let num_evals = num_evals_at_z + num_evals_at_z_omega;
 
         // Draw z challenge from transcript (synchronous on Metal)
+        let _g = crate::cpu_scoped!("s4_challenge_and_alloc");
         let mut transcript_challenges =
             [0u32; (1usize * 4).next_multiple_of(BLAKE2S_DIGEST_SIZE_U32_WORDS)];
         Transcript::draw_randomness(seed, &mut transcript_challenges);
@@ -90,8 +91,10 @@ impl StageFourOutput {
         let d_z = context.alloc_from_slice(std::slice::from_ref(&z))?;
         let d_common_factor = context.alloc::<E4>(1)?;
         let d_lagrange_coeffs = context.alloc::<E4>(trace_len)?;
+        drop(_g);
 
         // Get coset evaluations for all traces (main domain, coset 0)
+        let _g = crate::cpu_scoped!("s4_coset_evals");
         let d_setup_cols = setup
             .trace_holder
             .get_coset_evaluations(COSET_INDEX, context)?;
@@ -108,6 +111,7 @@ impl StageFourOutput {
             .trace_holder
             .get_coset_evaluations(COSET_INDEX, context)?;
 
+        drop(_g);
         // Precompute Lagrange coefficients
         let cmd_buf = context.new_command_buffer()?;
         let device = context.device();
@@ -289,10 +293,13 @@ impl StageFourOutput {
         }
 
         // Read back evals
+        let _g = crate::cpu_scoped!("s4_evals_readback");
         let mut values_at_z = unsafe { HostAllocation::<[E4]>::new_uninit_slice(num_evals) };
         unsafe { d_evals.copy_to_slice(&mut *values_at_z) };
+        drop(_g);
 
         // Draw alpha challenge from transcript (after committing eval results)
+        let _g = crate::cpu_scoped!("s4_transcript_commit");
         let transcript_input = values_at_z
             .iter()
             .map(|el| el.into_coeffs_in_base())
@@ -312,6 +319,7 @@ impl StageFourOutput {
             .map(BF::from_nonreduced_u32);
         let alpha = E4::from_coeffs_in_base(&alpha_coeffs);
 
+        drop(_g);
         // Deep denom + quotient: dispatch denom, do CPU metadata work in parallel, then quotient.
         // Merged into ONE command buffer (saves 1 sync point).
         let d_denom_at_z = context.alloc::<E4>(trace_len)?;
@@ -326,6 +334,7 @@ impl StageFourOutput {
             device_ctx,
         )?;
         // CPU metadata computation overlaps with GPU denom computation
+        let _g = crate::cpu_scoped!("s4_deep_metadata");
         let omega_inv = PRECOMPUTATIONS.omegas_inv[log_domain_size as usize];
         let e4_scratch_elems = get_e4_scratch_count_for_deep_quotiening();
         let mut h_e4_scratch = vec![E4::ZERO; e4_scratch_elems];
@@ -343,6 +352,8 @@ impl StageFourOutput {
             &mut h_non_witness_challenges_at_z_omega,
         );
 
+        drop(_g);
+        let _g = crate::cpu_scoped!("s4_deep_quotient_dispatch");
         let d_e4_scratch = context.alloc_from_slice(&h_e4_scratch)?;
         let d_challenges_times_evals =
             context.alloc_from_slice(std::slice::from_ref(&h_challenges_times_evals))?;
@@ -411,6 +422,7 @@ impl StageFourOutput {
             )?;
         }
         cmd_buf.commit_and_wait();
+        drop(_g);
 
         // For each coset: transpose BF column-major → E4 row-major, bit-reverse, build tree
         let coset_bf_bufs = [&d_quotient_bf, &d_quotient_bf_coset1];
@@ -422,6 +434,7 @@ impl StageFourOutput {
 
         let mut tree_caps = super::trace_holder::allocate_tree_caps(log_lde_factor, log_tree_cap_size);
 
+        let _g = crate::cpu_scoped!("s4_coset_trees");
         for coset_idx in 0..2usize {
             // ALL coset ops in ONE command buffer: transpose → bit-reverse → merkle tree
             let d_coset_e4: &mut crate::metal_runtime::MetalBuffer<E4> = match &mut trace_holder.cosets {
@@ -478,6 +491,7 @@ impl StageFourOutput {
                 tree, &mut tree_caps[coset_idx], log_lde_factor, log_tree_cap_size,
             );
         }
+        drop(_g);
         trace_holder.tree_caps = Some(tree_caps);
 
         let update_seed_fn = trace_holder.get_update_seed_fn(seed);

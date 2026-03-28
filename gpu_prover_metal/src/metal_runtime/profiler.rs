@@ -8,11 +8,13 @@ use std::sync::Mutex;
 use std::time::Instant;
 
 /// CPU span timing — records start/end of named CPU operations.
+/// Supports nesting via `depth` field for hierarchical visualization.
 #[derive(Clone, Debug)]
 pub struct CpuSpan {
     pub label: String,
     pub start_us: u64,
     pub end_us: u64,
+    pub depth: u32,
 }
 
 /// A single profiling event (one commit_and_wait boundary).
@@ -30,6 +32,8 @@ pub struct GpuEvent {
 pub struct GpuProfiler {
     events: Vec<GpuEvent>,
     cpu_spans: Vec<CpuSpan>,
+    /// Stack of open span indices for nesting
+    open_span_stack: Vec<usize>,
     epoch: Instant,
     /// Stack of active labels (set by push_label/pop_label)
     label_stack: Vec<String>,
@@ -47,6 +51,7 @@ impl GpuProfiler {
         Self {
             events: Vec::new(),
             cpu_spans: Vec::new(),
+            open_span_stack: Vec::new(),
             epoch: Instant::now(),
             label_stack: Vec::new(),
             pending_dispatches: Vec::new(),
@@ -76,15 +81,16 @@ pub fn init() {
     *PROFILER.lock().unwrap() = Some(profiler);
 }
 
-/// Mark a CPU span boundary. Closes the previous span (if any) and starts a new one.
+/// Mark a CPU span boundary. Closes the previous depth-0 span (if any) and starts a new one.
 /// Call at the start of each stage. Call `cpu_mark_end()` after the last stage.
 pub fn cpu_mark(label: &str) {
     if let Some(ref mut p) = *PROFILER.lock().unwrap() {
         let now = p.epoch.elapsed().as_micros() as u64;
-        // Close previous open span
-        if let Some(last) = p.cpu_spans.last_mut() {
-            if last.end_us == 0 {
-                last.end_us = now;
+        // Close previous open span at depth 0 (search backwards past any nested spans)
+        for span in p.cpu_spans.iter_mut().rev() {
+            if span.depth == 0 && span.end_us == 0 {
+                span.end_us = now;
+                break;
             }
         }
         // Start new span
@@ -92,19 +98,87 @@ pub fn cpu_mark(label: &str) {
             label: label.to_string(),
             start_us: now,
             end_us: 0, // open until next mark
+            depth: 0,
         });
     }
 }
 
-/// Close the last open CPU span.
+/// Close the last open depth-0 CPU span.
 pub fn cpu_mark_end() {
     if let Some(ref mut p) = *PROFILER.lock().unwrap() {
         let now = p.epoch.elapsed().as_micros() as u64;
-        if let Some(last) = p.cpu_spans.last_mut() {
-            if last.end_us == 0 {
-                last.end_us = now;
+        for span in p.cpu_spans.iter_mut().rev() {
+            if span.depth == 0 && span.end_us == 0 {
+                span.end_us = now;
+                break;
             }
         }
+    }
+}
+
+/// Begin a nested CPU span. Returns a span index for matching `cpu_span_end`.
+/// Nested spans appear on separate tracks in the Chrome trace.
+pub fn cpu_span_begin(label: &str) -> usize {
+    if let Some(ref mut p) = *PROFILER.lock().unwrap() {
+        let now = p.epoch.elapsed().as_micros() as u64;
+        let depth = p.open_span_stack.len() as u32 + 1; // +1 because depth 0 is for cpu_mark
+        let idx = p.cpu_spans.len();
+        p.cpu_spans.push(CpuSpan {
+            label: label.to_string(),
+            start_us: now,
+            end_us: 0,
+            depth,
+        });
+        p.open_span_stack.push(idx);
+        idx
+    } else {
+        usize::MAX
+    }
+}
+
+/// End a nested CPU span by index.
+pub fn cpu_span_end(idx: usize) {
+    if let Some(ref mut p) = *PROFILER.lock().unwrap() {
+        let now = p.epoch.elapsed().as_micros() as u64;
+        if idx < p.cpu_spans.len() {
+            p.cpu_spans[idx].end_us = now;
+        }
+        if let Some(top) = p.open_span_stack.last() {
+            if *top == idx {
+                p.open_span_stack.pop();
+            }
+        }
+    }
+}
+
+/// RAII guard for a nested CPU span. Ends the span on drop.
+/// When profiling is disabled, acts as a zero-size no-op.
+pub struct CpuSpanGuard {
+    #[cfg(feature = "log_gpu_stages_timings")]
+    idx: usize,
+}
+
+impl Drop for CpuSpanGuard {
+    #[inline(always)]
+    fn drop(&mut self) {
+        #[cfg(feature = "log_gpu_stages_timings")]
+        cpu_span_end(self.idx);
+    }
+}
+
+/// Start a scoped CPU span that ends when the returned guard is dropped.
+#[inline(always)]
+pub fn cpu_span_scoped(label: &str) -> CpuSpanGuard {
+    #[cfg(feature = "log_gpu_stages_timings")]
+    {
+        CpuSpanGuard {
+            idx: cpu_span_begin(label),
+        }
+    }
+    #[cfg(not(feature = "log_gpu_stages_timings"))]
+    {
+        let _ = label;
+        CpuSpanGuard {}
     }
 }
 
@@ -114,6 +188,17 @@ macro_rules! cpu_span {
     ($label:expr) => {
         #[cfg(feature = "log_gpu_stages_timings")]
         $crate::metal_runtime::profiler::cpu_mark($label);
+    };
+}
+
+/// Convenience macro for scoped CPU spans.
+/// Creates a guard that ends the span when it goes out of scope.
+/// When the `log_gpu_stages_timings` feature is disabled, this is a zero-cost no-op.
+/// Usage: `let _guard = cpu_scoped!("my_operation");`
+#[macro_export]
+macro_rules! cpu_scoped {
+    ($label:expr) => {
+        $crate::metal_runtime::profiler::cpu_span_scoped($label)
     };
 }
 
@@ -231,18 +316,22 @@ pub fn finish_and_report() {
         eprintln!("{:=<90}", "");
         eprintln!("  CPU SPANS");
         eprintln!("{:=<90}", "");
-        eprintln!("{:<55} {:>8}", "Operation", "CPU(ms)");
+        eprintln!("{:<60} {:>8}", "Operation", "CPU(ms)");
         eprintln!("{:-<90}", "");
         let mut total_cpu_ms = 0.0f64;
         for span in &profiler.cpu_spans {
             let ms = (span.end_us - span.start_us) as f64 / 1000.0;
             if ms >= 0.1 {
-                eprintln!("{:<55} {:>7.1}", truncate_label(&span.label, 55), ms);
+                let indent = "  ".repeat(span.depth as usize);
+                let label = format!("{}{}", indent, span.label);
+                eprintln!("{:<60} {:>7.1}", truncate_label(&label, 60), ms);
             }
-            total_cpu_ms += ms;
+            if span.depth == 0 {
+                total_cpu_ms += ms;
+            }
         }
         eprintln!("{:-<90}", "");
-        eprintln!("{:<55} {:>7.1}", "TOTAL CPU SPANS", total_cpu_ms);
+        eprintln!("{:<60} {:>7.1}", "TOTAL CPU SPANS (top-level)", total_cpu_ms);
         eprintln!("{:=<90}\n", "");
     }
 
@@ -266,19 +355,26 @@ pub fn finish_and_report() {
                     dur
                 );
             }
-            // CPU spans on tid=2
+            // CPU spans on tid=2+ (one tid per depth level)
             for span in &profiler.cpu_spans {
                 if !first { let _ = write!(file, ","); }
                 first = false;
                 let dur = span.end_us - span.start_us;
+                let tid = 2 + span.depth;
                 let _ = write!(
                     file,
-                    r#"{{"name":"{}","cat":"cpu","ph":"X","ts":{},"dur":{},"pid":1,"tid":2}}"#,
+                    r#"{{"name":"{}","cat":"cpu","ph":"X","ts":{},"dur":{},"pid":1,"tid":{}}}"#,
                     span.label.replace('"', "'"),
                     span.start_us,
-                    dur
+                    dur,
+                    tid,
                 );
             }
+            // Thread name metadata for readability
+            let _ = write!(file, r#",{{"name":"thread_name","ph":"M","pid":1,"tid":1,"args":{{"name":"GPU"}}}}"#);
+            let _ = write!(file, r#",{{"name":"thread_name","ph":"M","pid":1,"tid":2,"args":{{"name":"CPU stages"}}}}"#);
+            let _ = write!(file, r#",{{"name":"thread_name","ph":"M","pid":1,"tid":3,"args":{{"name":"CPU detail"}}}}"#);
+            let _ = write!(file, r#",{{"name":"thread_name","ph":"M","pid":1,"tid":4,"args":{{"name":"CPU detail 2"}}}}"#);
             let _ = write!(file, "]");
             eprintln!("Trace written to: {}", trace_path);
             eprintln!("Open in: chrome://tracing or https://ui.perfetto.dev\n");

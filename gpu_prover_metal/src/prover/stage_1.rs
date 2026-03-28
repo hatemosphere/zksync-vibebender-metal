@@ -87,6 +87,7 @@ impl StageOneOutput {
         circuit_sequence: usize,
         context: &ProverContext,
     ) -> MetalResult<()> {
+        let _g = crate::cpu_scoped!("s1_witness_prep");
         let trace_len = circuit.trace_len;
         assert!(trace_len.is_power_of_two());
         let log_domain_size = trace_len.trailing_zeros();
@@ -273,11 +274,20 @@ impl StageOneOutput {
         callbacks: &mut Callbacks,
         context: &ProverContext,
     ) -> MetalResult<()> {
-        self.memory_holder
-            .make_evaluations_sum_to_zero_extend_and_commit(context)?;
-        self.witness_holder
-            .make_evaluations_sum_to_zero_extend_and_commit(context)?;
-        self.produce_public_inputs(circuit, callbacks, context)?;
+        {
+            let _g = crate::cpu_scoped!("s1_memory_extend_commit");
+            self.memory_holder
+                .make_evaluations_sum_to_zero_extend_and_commit(context)?;
+        }
+        {
+            let _g = crate::cpu_scoped!("s1_witness_extend_commit");
+            self.witness_holder
+                .make_evaluations_sum_to_zero_extend_and_commit(context)?;
+        }
+        {
+            let _g = crate::cpu_scoped!("s1_public_inputs");
+            self.produce_public_inputs(circuit, callbacks, context)?;
+        }
         Ok(())
     }
 
@@ -348,6 +358,7 @@ fn generate_range_check_multiplicities_gpu(
     trace_len: usize,
     context: &ProverContext,
 ) -> MetalResult<()> {
+    let _g = crate::cpu_scoped!("s1_range_check_mults");
     assert!(trace_len.is_power_of_two());
 
     // Build layout structs (same as stage_3_kernels Metadata::new)
@@ -464,6 +475,7 @@ fn generate_range_check_multiplicities_gpu(
     cmd_buf.commit_and_wait();
 
     // Copy histograms to witness multiplicities columns
+    let _g2 = crate::cpu_scoped!("s1_rc_hist_copy");
     let witness_slice = unsafe { witness_evals.as_mut_slice() };
 
     // RC16 multiplicities

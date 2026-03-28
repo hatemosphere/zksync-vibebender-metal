@@ -1532,6 +1532,46 @@ pub fn compute_stage_3_composition_quotient_on_coset(
     log_n: u32,
     context: &ProverContext,
 ) -> MetalResult<()> {
+    let cmd_buf = context.new_command_buffer()?;
+    compute_stage_3_composition_quotient_on_coset_into(
+        &cmd_buf,
+        cached_data,
+        circuit,
+        metadata,
+        setup_cols,
+        witness_cols,
+        memory_cols,
+        stage_2_cols,
+        d_alpha_powers,
+        d_beta_powers,
+        d_helpers,
+        d_constants_times_challenges,
+        quotient,
+        log_n,
+        context,
+    )?;
+    cmd_buf.commit_and_wait();
+    Ok(())
+}
+
+#[allow(clippy::too_many_arguments)]
+pub fn compute_stage_3_composition_quotient_on_coset_into(
+    cmd_buf: &MetalCommandBuffer,
+    cached_data: &ProverCachedData,
+    circuit: &CompiledCircuitArtifact<BF>,
+    metadata: Metadata,
+    setup_cols: &MetalBuffer<BF>,
+    witness_cols: &MetalBuffer<BF>,
+    memory_cols: &MetalBuffer<BF>,
+    stage_2_cols: &MetalBuffer<BF>,
+    d_alpha_powers: &MetalBuffer<E4>,
+    d_beta_powers: &MetalBuffer<E4>,
+    d_helpers: &MetalBuffer<E4>,
+    d_constants_times_challenges: &MetalBuffer<ConstantsTimesChallenges>,
+    quotient: &mut MetalBuffer<BF>,
+    log_n: u32,
+    context: &ProverContext,
+) -> MetalResult<()> {
     let n = 1usize << log_n;
     let _num_setup_cols = circuit.setup_layout.total_width;
     let _num_witness_cols = circuit.witness_layout.total_width;
@@ -1589,7 +1629,6 @@ pub fn compute_stage_3_composition_quotient_on_coset(
     } = alpha_powers_layout;
 
     let device = context.device();
-    let cmd_buf = context.new_command_buffer()?;
 
     // Compute strides: each column has n rows
     let stride = n as u32;
@@ -1606,14 +1645,11 @@ pub fn compute_stage_3_composition_quotient_on_coset(
 
     // Launch generic constraints kernel
     // Zero the quotient buffer first
-    {
-        let q_slice = unsafe { quotient.as_mut_slice() };
-        for v in q_slice.iter_mut() { *v = BF::ZERO; }
-    }
+    crate::ops_simple::memset_zero(device, cmd_buf, quotient.raw(), quotient.byte_len())?;
     let generic_alphas_byte_offset = generic_alpha_start * std::mem::size_of::<E4>();
     launch_generic_constraints(
         device,
-        &cmd_buf,
+        cmd_buf,
         &d_generic_metadata,
         witness_cols,
         stride,
@@ -1626,8 +1662,6 @@ pub fn compute_stage_3_composition_quotient_on_coset(
         log_n,
         e4_byte_offset,
     )?;
-    cmd_buf.commit_and_wait();
-    let cmd_buf = context.new_command_buffer()?;
 
     // Launch delegated width 3 lookups kernel if needed
     if process_delegations {
@@ -1636,7 +1670,7 @@ pub fn compute_stage_3_composition_quotient_on_coset(
         // stage_2_e4_cols is a sub-region of stage_2_cols
         launch_delegated_width_3_lookups(
             device,
-            &cmd_buf,
+            cmd_buf,
             &d_delegated_layout,
             witness_cols,
             stride,
@@ -1728,7 +1762,7 @@ pub fn compute_stage_3_composition_quotient_on_coset(
 
     launch_hardcoded_constraints(
         device,
-        &cmd_buf,
+        cmd_buf,
         setup_cols,
         witness_cols,
         memory_cols,
@@ -1764,9 +1798,6 @@ pub fn compute_stage_3_composition_quotient_on_coset(
         &device_ctx.powers_of_w_coarsest,
         &hardcoded_params,
     )?;
-
-    cmd_buf.commit_and_wait();
-
     Ok(())
 }
 

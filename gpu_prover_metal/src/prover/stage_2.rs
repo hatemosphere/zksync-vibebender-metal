@@ -84,6 +84,7 @@ impl StageTwoOutput {
         let layout = circuit.stage_2_layout;
         let num_stage_2_cols = layout.total_width;
         // Derive lookup challenges from transcript
+        let _g = crate::cpu_scoped!("s2_challenges");
         let mut lookup_challenges = LookupChallenges::default();
         {
             let mut transcript_challenges = [0u32;
@@ -97,6 +98,7 @@ impl StageTwoOutput {
                 std::array::from_fn(|_| get_challenge());
             lookup_challenges.gamma = get_challenge();
         }
+        drop(_g);
 
         let num_stage_2_bf_cols = layout.num_base_field_polys();
         let num_stage_2_e4_cols = layout.num_ext4_field_polys();
@@ -115,31 +117,38 @@ impl StageTwoOutput {
 
         let cmd_buf = context.new_command_buffer()?;
         // Compute stage 2 arguments on main domain
-        compute_stage_2_args_on_main_domain_into(
-            &cmd_buf,
-            &setup_evaluations,
-            &witness_evaluations,
-            &memory_evaluations,
-            &generic_lookup_mappings,
-            evaluations,
-            &lookup_challenges,
-            cached_data,
-            circuit,
-            circuit.total_tables_size,
-            log_domain_size,
-            context,
-        )?;
+        {
+            let _g = crate::cpu_scoped!("s2_args_dispatch");
+            compute_stage_2_args_on_main_domain_into(
+                &cmd_buf,
+                &setup_evaluations,
+                &witness_evaluations,
+                &memory_evaluations,
+                &generic_lookup_mappings,
+                evaluations,
+                &lookup_challenges,
+                cached_data,
+                circuit,
+                circuit.total_tables_size,
+                log_domain_size,
+                context,
+            )?;
+        }
 
-        trace_holder.allocate_to_full(context)?;
-        let batched = trace_holder.extend_and_commit_into(0, &cmd_buf, context)?;
-        cmd_buf.commit_and_wait();
-        if batched {
-            trace_holder.transfer_existing_tree_caps();
-        } else {
-            trace_holder.extend_and_commit(0, context)?;
+        {
+            let _g = crate::cpu_scoped!("s2_extend_commit");
+            trace_holder.allocate_to_full(context)?;
+            let batched = trace_holder.extend_and_commit_into(0, &cmd_buf, context)?;
+            cmd_buf.commit_and_wait();
+            if batched {
+                trace_holder.transfer_existing_tree_caps();
+            } else {
+                trace_holder.extend_and_commit(0, context)?;
+            }
         }
 
         // Copy only the last-row accumulator values needed by later CPU stages.
+        let _g = crate::cpu_scoped!("s2_accumulators");
         let evaluations = trace_holder.get_evaluations(context)?;
         let eval_slice = unsafe { evaluations.as_slice() };
 
@@ -177,7 +186,9 @@ impl StageTwoOutput {
         }
         self.lookup_challenges = Some(lc_host);
 
+        drop(_g);
         // Update seed with stage 2 tree caps and accumulator values
+        let _g = crate::cpu_scoped!("s2_seed_update");
         let has_delegation_processing_aux_poly = circuit
             .stage_2_layout
             .delegation_processing_aux_poly
@@ -335,14 +346,17 @@ fn compute_stage_2_args_on_main_domain_into(
     // We need to create sub-buffers or use the full buffer with offset.
 
     // Zero padding columns between num_stage_2_bf_cols and e4_cols_offset
-    {
-        let stage_2_slice = unsafe { stage_2_evals.as_mut_slice() };
-        for padding_col in num_stage_2_bf_cols..e4_cols_offset {
-            let col_start = padding_col * n;
-            for row in 0..n {
-                stage_2_slice[col_start + row] = BF::ZERO;
-            }
-        }
+    if num_stage_2_bf_cols < e4_cols_offset {
+        let padding_cols = e4_cols_offset - num_stage_2_bf_cols;
+        let padding_byte_offset = num_stage_2_bf_cols * n * std::mem::size_of::<BF>();
+        let padding_byte_len = padding_cols * n * std::mem::size_of::<BF>();
+        crate::ops_simple::memset_zero_offset(
+            device,
+            cmd_buf,
+            stage_2_evals.raw(),
+            padding_byte_offset,
+            padding_byte_len,
+        )?;
     }
 
     // Clone cached data fields

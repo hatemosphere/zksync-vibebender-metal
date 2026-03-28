@@ -3,7 +3,8 @@ use super::error::{MetalError, MetalResult};
 use super::pipeline;
 use objc2::runtime::ProtocolObject;
 use objc2_metal::{
-    MTLBuffer, MTLCommandBuffer, MTLCommandEncoder, MTLComputeCommandEncoder, MTLDevice, MTLSize,
+    MTLBuffer, MTLCommandBuffer, MTLCommandEncoder, MTLComputeCommandEncoder,
+    MTLDevice, MTLSize,
 };
 
 /// Grid and threadgroup dimensions for kernel dispatch,

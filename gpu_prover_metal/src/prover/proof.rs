@@ -149,6 +149,7 @@ pub fn prove<'a>(
 
     // Seed initialization
     crate::cpu_span!("seed_init");
+    let _g_seed = crate::cpu_scoped!("seed_init_detail");
     let mut seed = initialize_seed(
         &circuit,
         external_values.clone(),
@@ -157,6 +158,8 @@ pub fn prove<'a>(
         setup,
         &stage_1_output,
     );
+
+    drop(_g_seed);
 
     // Stage 2: argument polynomial computation
     crate::cpu_span!("stage2");

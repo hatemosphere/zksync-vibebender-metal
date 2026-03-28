@@ -8,3 +8,4 @@ reference/
 gpu_prove_log*.txt
 cpu_prove_log*.txt
 METAL_SWAP.md
+gpu_prover_metal/profiling_output/

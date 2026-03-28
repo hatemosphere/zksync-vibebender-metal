@@ -2,7 +2,36 @@ use super::buffer::MetalBuffer;
 use super::command_queue::MetalCommandBuffer;
 use super::error::MetalResult;
 use objc2::runtime::ProtocolObject;
-use objc2_metal::{MTLBlitCommandEncoder, MTLCommandBuffer, MTLCommandEncoder, MTLDevice};
+use objc2_metal::{MTLBlitCommandEncoder, MTLBuffer, MTLCommandBuffer, MTLCommandEncoder, MTLDevice};
+
+pub fn buffer_copy_raw(
+    cmd_buf: &MetalCommandBuffer,
+    src: &ProtocolObject<dyn MTLBuffer>,
+    src_offset: usize,
+    dst: &ProtocolObject<dyn MTLBuffer>,
+    dst_offset: usize,
+    byte_len: usize,
+) -> MetalResult<()> {
+    if byte_len == 0 {
+        return Ok(());
+    }
+    let encoder = cmd_buf.raw().blitCommandEncoder().ok_or_else(|| {
+        super::error::MetalError::ResourceCreationFailed(
+            "Failed to create blit command encoder".into(),
+        )
+    })?;
+    unsafe {
+        encoder.copyFromBuffer_sourceOffset_toBuffer_destinationOffset_size(
+            src,
+            src_offset,
+            dst,
+            dst_offset,
+            byte_len,
+        );
+    }
+    encoder.endEncoding();
+    Ok(())
+}
 
 /// Copy data between two Metal buffers using a blit encoder.
 ///
@@ -19,22 +48,7 @@ pub fn buffer_copy<T>(
     if byte_len == 0 {
         return Ok(());
     }
-    let encoder = cmd_buf.raw().blitCommandEncoder().ok_or_else(|| {
-        super::error::MetalError::ResourceCreationFailed(
-            "Failed to create blit command encoder".into(),
-        )
-    })?;
-    unsafe {
-        encoder.copyFromBuffer_sourceOffset_toBuffer_destinationOffset_size(
-            src.raw(),
-            0,
-            dst.raw(),
-            0,
-            byte_len,
-        );
-    }
-    encoder.endEncoding();
-    Ok(())
+    buffer_copy_raw(cmd_buf, src.raw(), 0, dst.raw(), 0, byte_len)
 }
 
 /// Fill a Metal buffer with zeros using a blit encoder.

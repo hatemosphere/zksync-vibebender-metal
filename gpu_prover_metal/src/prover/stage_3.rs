@@ -71,6 +71,7 @@ impl StageThreeOutput {
             .coset_offset;
 
         // Draw challenges from transcript
+        let _g = crate::cpu_scoped!("s3_challenges_and_powers");
         let mut transcript_challenges =
             [0u32; (2usize * 4).next_multiple_of(BLAKE2S_DIGEST_SIZE_U32_WORDS)];
         Transcript::draw_randomness(seed, &mut transcript_challenges);
@@ -85,6 +86,7 @@ impl StageThreeOutput {
         alpha_powers.reverse();
         let beta_powers =
             materialize_powers_serial_starting_with_one::<_, Global>(beta, BETA_POWERS_COUNT);
+        drop(_g);
 
         // Get stage 2 data
         let grand_product_accumulator = stage_2_output.grand_product_accumulator;
@@ -103,6 +105,7 @@ impl StageThreeOutput {
         let omega = PRECOMPUTATIONS.omegas[omega_index];
         let omega_inv = PRECOMPUTATIONS.omegas_inv[omega_index];
 
+        let _g = crate::cpu_scoped!("s3_metadata");
         let mut helpers = Vec::with_capacity(MAX_HELPER_VALUES);
         let mut constants_times_challenges = ConstantsTimesChallenges::default();
 
@@ -124,14 +127,18 @@ impl StageThreeOutput {
             &mut constants_times_challenges,
         );
 
+        drop(_g);
         // Upload data to GPU buffers
+        let _g = crate::cpu_scoped!("s3_buffer_upload");
         let d_alpha_powers = context.alloc_from_slice(&alpha_powers)?;
         let d_beta_powers = context.alloc_from_slice(&beta_powers)?;
         let d_helpers = context.alloc_from_slice(&helpers)?;
         let d_constants_times_challenges =
             context.alloc_from_slice(std::slice::from_ref(&constants_times_challenges))?;
 
+        drop(_g);
         // Get coset evaluations for all traces
+        let _g = crate::cpu_scoped!("s3_coset_evals");
         let d_setup_cols = setup
             .trace_holder
             .get_coset_evaluations(COSET_INDEX, context)?;
@@ -146,8 +153,13 @@ impl StageThreeOutput {
             .get_coset_evaluations(COSET_INDEX, context)?;
 
         let d_quotient = trace_holder.get_uninit_coset_evaluations_mut(COSET_INDEX);
+        drop(_g);
 
-        compute_stage_3_composition_quotient_on_coset(
+        let cmd_buf = context.new_command_buffer()?;
+        {
+        let _g = crate::cpu_scoped!("s3_quotient_dispatch");
+        compute_stage_3_composition_quotient_on_coset_into(
+            &cmd_buf,
             cached_data,
             &circuit,
             metadata,
@@ -163,8 +175,17 @@ impl StageThreeOutput {
             log_domain_size,
             context,
         )?;
-
-        trace_holder.extend_and_commit(COSET_INDEX, context)?;
+        }
+        {
+        let _g = crate::cpu_scoped!("s3_extend_commit");
+        let batched = trace_holder.extend_and_commit_into(COSET_INDEX, &cmd_buf, context)?;
+        cmd_buf.commit_and_wait();
+        if batched {
+            trace_holder.transfer_existing_tree_caps();
+        } else {
+            trace_holder.extend_and_commit(COSET_INDEX, context)?;
+        }
+        }
 
         let update_seed_fn = trace_holder.get_update_seed_fn(seed);
         callbacks.schedule(update_seed_fn);

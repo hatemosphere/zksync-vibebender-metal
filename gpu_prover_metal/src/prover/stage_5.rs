@@ -95,6 +95,7 @@ impl StageFiveOutput {
             };
 
             // Compute folding challenges
+            let _g_challenges = crate::cpu_scoped!("s5_fold_challenges");
             let challenges_len = lde_factor * current_log_fold;
             let mut challenges = vec![E4::default(); challenges_len];
             Self::set_folding_challenges(
@@ -104,6 +105,7 @@ impl StageFiveOutput {
                 current_log_fold,
             );
 
+            drop(_g_challenges);
             // Upload challenges to device
             let d_challenges = context.alloc_from_slice(&challenges)?;
 
@@ -129,6 +131,7 @@ impl StageFiveOutput {
                 cmd_buf.commit_and_wait();
             }
 
+            let _g_tree = crate::cpu_scoped!("s5_oracle_tree");
             let expose_all_leafs = if i == oracles_count - 1 {
                 let log_bound = num_queries.next_power_of_two().trailing_zeros();
                 log_num_leafs + 1 - log_lde_factor <= log_bound
@@ -212,6 +215,7 @@ impl StageFiveOutput {
                 (trees, tree_caps)
             };
 
+            drop(_g_tree);
             let oracle = FRIStep {
                 ldes,
                 trees,
@@ -228,6 +232,7 @@ impl StageFiveOutput {
         );
 
         // Final monomials
+        let _g_final = crate::cpu_scoped!("s5_final_monomials");
         let final_monomials = {
             let log_folding_degree = *folding_description.folding_sequence.last().unwrap() as u32;
             let challenges_len = log_folding_degree as usize;
@@ -261,6 +266,7 @@ impl StageFiveOutput {
             let domain_size = 1 << log_current_domain_size;
 
             // Compute monomials via interpolation
+            let _g_interp = crate::cpu_scoped!("s5_interpolation");
             let mut c0 = h_folded_domain.iter().map(|el| el.c0).collect_vec();
             let mut c1 = h_folded_domain.iter().map(|el| el.c1).collect_vec();
             assert_eq!(c0.len(), domain_size);
@@ -279,7 +285,9 @@ impl StageFiveOutput {
             let monomials_accessor = monomials.get_mut_accessor();
             unsafe { monomials_accessor.get_mut().copy_from_slice(&coeffs) };
 
+            drop(_g_interp);
             // Commit monomials to transcript
+            let _g_commit = crate::cpu_scoped!("s5_monomial_commit");
             let mut transcript_input = vec![];
             let accessor = monomials.get_accessor();
             let it = unsafe { accessor.get() }

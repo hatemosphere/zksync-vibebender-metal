@@ -4,6 +4,7 @@ use objc2::runtime::ProtocolObject;
 use objc2_metal::{MTLBuffer, MTLDevice, MTLResourceOptions};
 use std::marker::PhantomData;
 use std::mem;
+use std::ptr::NonNull;
 use std::slice;
 
 /// Typed wrapper around `MTLBuffer`, analogous to `DeviceAllocation<T>` from `era_cudart`.
@@ -69,6 +70,38 @@ impl<T> MetalBuffer<T> {
             .ok_or_else(|| {
                 MetalError::ResourceCreationFailed(format!(
                     "Failed to create Metal buffer from slice of {byte_len} bytes"
+                ))
+            })?;
+        Ok(Self {
+            buffer,
+            len: data.len(),
+            _marker: PhantomData,
+        })
+    }
+
+    /// Wrap an existing host slice without copying.
+    ///
+    /// # Safety
+    /// The caller must ensure the backing allocation outlives the returned MetalBuffer.
+    pub unsafe fn from_slice_no_copy(
+        device: &ProtocolObject<dyn MTLDevice>,
+        data: &[T],
+    ) -> MetalResult<Self> {
+        let byte_len = data.len() * mem::size_of::<T>();
+        if byte_len == 0 {
+            return Self::alloc(device, 0);
+        }
+        let ptr = NonNull::new(data.as_ptr() as *mut std::ffi::c_void).unwrap();
+        let buffer = device
+            .newBufferWithBytesNoCopy_length_options_deallocator(
+                ptr,
+                byte_len,
+                MTLResourceOptions::StorageModeShared,
+                None,
+            )
+            .ok_or_else(|| {
+                MetalError::ResourceCreationFailed(format!(
+                    "Failed to create no-copy Metal buffer from slice of {byte_len} bytes"
                 ))
             })?;
         Ok(Self {

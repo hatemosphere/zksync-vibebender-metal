@@ -1476,7 +1476,6 @@ pub(crate) fn transfer_tree_cap(
 ) {
     let log_subtree_cap_size = log_tree_cap_size - log_lde_factor;
     let (offset, count) = blake2s::merkle_tree_cap(tree, log_subtree_cap_size);
-    // On Metal with unified memory, direct copy from buffer
     let accessor = cap.get_mut_accessor();
     let cap_slice = unsafe { accessor.get_mut() };
     assert_eq!(cap_slice.len(), count);

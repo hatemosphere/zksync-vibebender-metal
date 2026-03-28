@@ -57,7 +57,7 @@ pub struct MetalCommandBuffer {
 /// Maximum dispatches per command buffer before auto-commit (watchdog safety).
 /// Each command buffer should complete within ~2s (well under 5s macOS GPU watchdog).
 /// Higher = fewer commit boundaries = less overhead, but risk longer individual submissions.
-const MAX_DISPATCHES_PER_BATCH: u32 = 64;
+const MAX_DISPATCHES_PER_BATCH: u32 = 256;
 
 impl MetalCommandBuffer {
     fn new(queue: &ProtocolObject<dyn MTLCommandQueue>) -> MetalResult<Self> {

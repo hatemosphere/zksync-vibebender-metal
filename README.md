@@ -85,8 +85,8 @@ Recent verified measurements on **MacBook Pro M4 Max** (16 CPU cores, 40 GPU cor
 
 | Example | Circuit size | CPU (16 cores) | Metal GPU | Speedup |
 |---------|-------------|----------------|-----------|---------|
-| basic_fibonacci | 2^22 (1 proof) | 6.9s | **2.61s** | **2.6x** |
-| hashed_fibonacci | 2^22 (2 proofs) | 20.3s | **5.39s** | **3.8x** |
+| basic_fibonacci | 2^22 (1 proof) | 6.9s | **2.97s** | **2.3x** |
+| hashed_fibonacci | 2^22 (2 proofs) | 20.3s | **5.63s** | **3.6x** |
 
 > **Note on CPU baseline:** The CPU prover uses all available cores (16 on M4 Max) with SIMD-optimized field arithmetic. The speedup over a single-threaded CPU prover would be much larger (~10x+). The moderate GPU speedup reflects the fact that Apple Silicon's unified memory architecture means the GPU and CPU share the same memory bandwidth, and the prover's Fiat-Shamir transcript requires ~20 sequential GPU-CPU sync points per proof.
 
@@ -94,17 +94,17 @@ Recent verified measurements on **MacBook Pro M4 Max** (16 CPU cores, 40 GPU cor
 
 ```
                     basic_fibonacci (1 proof)    hashed_fibonacci (2 proofs)
-Stage 1 (witness)          244ms                       239ms + 380ms
-Stage 1 (commit)          989ms                      1036ms + 550ms
-Stage 2 (args)             692ms                       706ms + 977ms
-Stage 3 (constraints)      147ms                        88ms + 108ms
-Stage 4 (DEEP/FRI poly)    139ms                       140ms + 147ms
-Stage 5 (FRI folding)       11ms                         5ms + 5ms
-PoW                        172ms                        82ms + 613ms
-Queries                      5ms                         6ms + 5ms
-Proof assembly               6ms                         6ms + 3ms
+Stage 1 (witness)          259ms                       257ms + 382ms
+Stage 1 (commit)         1305ms                      1228ms + 480ms
+Stage 2 (args)             743ms                       712ms + 970ms
+Stage 3 (constraints)      128ms                       121ms +  83ms
+Stage 4 (DEEP/FRI poly)    142ms                       140ms + 136ms
+Stage 5 (FRI folding)       10ms                        10ms +   5ms
+PoW                        174ms                        82ms + 609ms
+Queries                      6ms                         6ms +   6ms
+Proof assembly               6ms                         7ms +   4ms
 ─────────────────────────────────────────────────────────────────────
-Total proving             2613ms                      5390ms
+Total proving             2970ms                      5629ms
 ```
 
 ### GPU kernel time breakdown (basic_fibonacci)
