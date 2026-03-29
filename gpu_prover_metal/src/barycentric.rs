@@ -118,6 +118,52 @@ pub fn eval_bf_column_at_z_batched(
     })
 }
 
+/// Evaluate multiple consecutive BF columns at z in 2 dispatches (instead of 2*N).
+/// Columns must be consecutive in memory with `count` stride.
+pub fn eval_bf_columns_batch(
+    device: &ProtocolObject<dyn MTLDevice>,
+    cmd_buf: &MetalCommandBuffer,
+    lagrange_coeffs: &MetalBuffer<E4>,
+    bf_cols: &MetalBuffer<BF>,
+    first_col_offset: usize,
+    num_cols: u32,
+    count: u32,
+    result: &mut MetalBuffer<E4>,
+    result_offset: usize,
+    partial_buf: &mut MetalBuffer<E4>,
+) -> MetalResult<()> {
+    if num_cols == 0 {
+        return Ok(());
+    }
+    let num_blocks = (count + BARY_THREADS_PER_GROUP - 1) / BARY_THREADS_PER_GROUP;
+    let col_stride = count;
+    // 2D grid: X = blocks within one column, Y = column index
+    let config = MetalLaunchConfig::basic_2d(
+        (num_blocks, num_cols),
+        (BARY_THREADS_PER_GROUP, 1),
+    );
+    dispatch_kernel(device, cmd_buf, "ab_barycentric_eval_bf_multi_col_partial_reduce", &config, |encoder| {
+        set_buffer(encoder, 0, lagrange_coeffs.raw(), 0);
+        set_buffer(encoder, 1, bf_cols.raw(), first_col_offset * std::mem::size_of::<BF>());
+        set_buffer(encoder, 2, partial_buf.raw(), 0);
+        unsafe {
+            set_bytes(encoder, 3, &count);
+            set_bytes(encoder, 4, &col_stride);
+            set_bytes(encoder, 5, &num_blocks);
+        }
+    })?;
+    let result_offset_u32 = result_offset as u32;
+    let config2 = MetalLaunchConfig::basic_2d((1, num_cols), (BARY_THREADS_PER_GROUP, 1));
+    dispatch_kernel(device, cmd_buf, "ab_barycentric_eval_multi_col_final_reduce", &config2, |encoder| {
+        set_buffer(encoder, 0, partial_buf.raw(), 0);
+        set_buffer(encoder, 1, result.raw(), 0);
+        unsafe {
+            set_bytes(encoder, 2, &num_blocks);
+            set_bytes(encoder, 3, &result_offset_u32);
+        }
+    })
+}
+
 /// Evaluate a BF column at z: result = sum_i(lagrange[i] * bf_col[i])
 pub fn eval_bf_column_at_z(
     device: &ProtocolObject<dyn MTLDevice>,

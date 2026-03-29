@@ -202,7 +202,9 @@ impl StageFourOutput {
 
             let num_partial_blocks = ((n + crate::barycentric::BARY_THREADS_PER_GROUP - 1)
                 / crate::barycentric::BARY_THREADS_PER_GROUP) as usize;
-            let mut d_partial = context.alloc::<E4>(num_partial_blocks)?;
+            // Allocate partial buffer large enough for batched multi-column evals
+            let max_batch_cols = num_setup_cols.max(num_witness_cols).max(num_memory_cols).max(stage_2_num_bf);
+            let mut d_partial = context.alloc::<E4>(num_partial_blocks * max_batch_cols)?;
             let mut eval_idx = 0usize;
 
             // ALL barycentric evals (BF + E4 + z*omega) in ONE command buffer.
@@ -211,37 +213,41 @@ impl StageFourOutput {
             {
                 let cmd_buf = context.new_command_buffer()?;
 
-                // Setup BF columns
-                for col in 0..num_setup_cols {
-                    crate::barycentric::eval_bf_column_at_z_batched(
+                // Setup BF columns - batched
+                if num_setup_cols > 0 {
+                    crate::barycentric::eval_bf_columns_batch(
                         device, &cmd_buf, &d_lagrange_coeffs, d_setup_cols,
-                        col * trace_len, n, &mut d_evals, eval_idx, &mut d_partial,
+                        0, num_setup_cols as u32, n,
+                        &mut d_evals, eval_idx, &mut d_partial,
                     )?;
-                    eval_idx += 1;
+                    eval_idx += num_setup_cols;
                 }
-                // Witness BF columns
-                for col in 0..num_witness_cols {
-                    crate::barycentric::eval_bf_column_at_z_batched(
+                // Witness BF columns - batched
+                if num_witness_cols > 0 {
+                    crate::barycentric::eval_bf_columns_batch(
                         device, &cmd_buf, &d_lagrange_coeffs, d_witness_cols,
-                        col * trace_len, n, &mut d_evals, eval_idx, &mut d_partial,
+                        0, num_witness_cols as u32, n,
+                        &mut d_evals, eval_idx, &mut d_partial,
                     )?;
-                    eval_idx += 1;
+                    eval_idx += num_witness_cols;
                 }
-                // Memory BF columns
-                for col in 0..num_memory_cols {
-                    crate::barycentric::eval_bf_column_at_z_batched(
+                // Memory BF columns - batched
+                if num_memory_cols > 0 {
+                    crate::barycentric::eval_bf_columns_batch(
                         device, &cmd_buf, &d_lagrange_coeffs, d_memory_cols,
-                        col * trace_len, n, &mut d_evals, eval_idx, &mut d_partial,
+                        0, num_memory_cols as u32, n,
+                        &mut d_evals, eval_idx, &mut d_partial,
                     )?;
-                    eval_idx += 1;
+                    eval_idx += num_memory_cols;
                 }
-                // Stage 2 BF columns
-                for col in 0..stage_2_num_bf {
-                    crate::barycentric::eval_bf_column_at_z_batched(
+                // Stage 2 BF columns - batched
+                if stage_2_num_bf > 0 {
+                    crate::barycentric::eval_bf_columns_batch(
                         device, &cmd_buf, &d_lagrange_coeffs, d_stage_2_cols,
-                        col * trace_len, n, &mut d_evals, eval_idx, &mut d_partial,
+                        0, stage_2_num_bf as u32, n,
+                        &mut d_evals, eval_idx, &mut d_partial,
                     )?;
-                    eval_idx += 1;
+                    eval_idx += stage_2_num_bf;
                 }
 
                 // Stage 2 E4 columns

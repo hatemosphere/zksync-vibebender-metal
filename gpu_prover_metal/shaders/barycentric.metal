@@ -202,6 +202,86 @@ kernel void ab_barycentric_eval_e4_col_partial_reduce(
     }
 }
 
+// Multi-column BF partial reduce: evaluate multiple BF columns in one dispatch.
+// grid_dim = (num_blocks, num_cols), each Y slice processes one column.
+kernel void ab_barycentric_eval_bf_multi_col_partial_reduce(
+    const device ext4_field* lagrange_coeffs [[buffer(0)]],
+    const device base_field* column_data [[buffer(1)]],
+    device ext4_field* partial_sums [[buffer(2)]],
+    constant uint& count [[buffer(3)]],
+    constant uint& col_stride [[buffer(4)]],
+    constant uint& num_blocks_per_col [[buffer(5)]],
+    uint2 tgid [[threadgroup_position_in_grid]],
+    uint tid [[thread_index_in_threadgroup]]
+) {
+    const uint tg_size = 256;
+    const uint col_idx = tgid.y;
+    const uint block_id = tgid.x;
+    const uint gid = block_id * tg_size + tid;
+    const device base_field* col_ptr = column_data + col_idx * col_stride;
+    device ext4_field* out = partial_sums + col_idx * num_blocks_per_col;
+
+    threadgroup ext4_field shared_sums[256];
+    ext4_field local_sum = ext4_field::zero();
+
+    for (uint i = gid; i < count; i += tg_size * ((count + tg_size - 1) / tg_size)) {
+        if (i < count) {
+            const auto coeff = lagrange_coeffs[i];
+            const auto val = col_ptr[i];
+            local_sum = ext4_field::add(local_sum, ext4_field::mul(coeff, val));
+        }
+    }
+
+    shared_sums[tid] = local_sum;
+    threadgroup_barrier(mem_flags::mem_threadgroup);
+
+    for (uint s = tg_size / 2; s > 0; s >>= 1) {
+        if (tid < s) {
+            shared_sums[tid] = ext4_field::add(shared_sums[tid], shared_sums[tid + s]);
+        }
+        threadgroup_barrier(mem_flags::mem_threadgroup);
+    }
+
+    if (tid == 0) {
+        out[block_id] = shared_sums[0];
+    }
+}
+
+// Multi-column final reduce: sum partial results for multiple columns in one dispatch.
+// grid_dim = (1, num_cols)
+kernel void ab_barycentric_eval_multi_col_final_reduce(
+    const device ext4_field* partial_sums [[buffer(0)]],
+    device ext4_field* results [[buffer(1)]],
+    constant uint& num_blocks [[buffer(2)]],
+    constant uint& result_offset [[buffer(3)]],
+    uint2 tgid [[threadgroup_position_in_grid]],
+    uint tid [[thread_index_in_threadgroup]]
+) {
+    const uint col_idx = tgid.y;
+    const device ext4_field* col_partials = partial_sums + col_idx * num_blocks;
+
+    threadgroup ext4_field shared_sums[256];
+    ext4_field local_sum = ext4_field::zero();
+
+    for (uint i = tid; i < num_blocks; i += 256) {
+        local_sum = ext4_field::add(local_sum, col_partials[i]);
+    }
+
+    shared_sums[tid] = local_sum;
+    threadgroup_barrier(mem_flags::mem_threadgroup);
+
+    for (uint s = 128; s > 0; s >>= 1) {
+        if (tid < s) {
+            shared_sums[tid] = ext4_field::add(shared_sums[tid], shared_sums[tid + s]);
+        }
+        threadgroup_barrier(mem_flags::mem_threadgroup);
+    }
+
+    if (tid == 0) {
+        results[result_offset + col_idx] = shared_sums[0];
+    }
+}
+
 // Final reduction: sum partial_sums[0..num_blocks] into result
 kernel void ab_barycentric_eval_final_reduce(
     const device ext4_field* partial_sums [[buffer(0)]],
