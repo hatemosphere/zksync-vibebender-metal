@@ -24,7 +24,7 @@ pub fn launch_leaves_kernel(
     assert_eq!(values_len % (count << log_rows_per_hash as usize), 0);
     let cols_count = (values_len / (count << log_rows_per_hash as usize)) as u32;
     let count_u32 = count as u32;
-    let threads_per_group = SIMD_GROUP_SIZE * 4;
+    let threads_per_group = SIMD_GROUP_SIZE * 8;
     let (threadgroups, tpg) = get_grid_threadgroup_dims(threads_per_group, count_u32);
     let config = MetalLaunchConfig::basic_1d(threadgroups, tpg);
     dispatch::dispatch_kernel(
@@ -74,7 +74,7 @@ pub fn build_merkle_tree_leaves_raw(
     assert_eq!(values_bf_len % (count << log_rows_per_hash as usize), 0);
     let cols_count = (values_bf_len / (count << log_rows_per_hash as usize)) as u32;
     let count_u32 = count as u32;
-    let threads_per_group = SIMD_GROUP_SIZE * 4;
+    let threads_per_group = SIMD_GROUP_SIZE * 8;
     let (threadgroups, tpg) = get_grid_threadgroup_dims(threads_per_group, count_u32);
     let config = MetalLaunchConfig::basic_1d(threadgroups, tpg);
     dispatch::dispatch_kernel(
@@ -160,7 +160,7 @@ pub fn launch_nodes_kernel(
     let results_len = results.len();
     assert_eq!(values_len, results_len * 2);
     let count = results_len as u32;
-    let threads_per_group = SIMD_GROUP_SIZE * 4;
+    let threads_per_group = SIMD_GROUP_SIZE * 8;
     let (threadgroups, tpg) = get_grid_threadgroup_dims(threads_per_group, count);
     let config = MetalLaunchConfig::basic_1d(threadgroups, tpg);
     dispatch::dispatch_kernel(
@@ -202,7 +202,7 @@ pub fn build_merkle_tree_nodes_with_offset(
     for _layer in 0..layers_count {
         let output_count = cur_input_count / 2;
         let count = output_count as u32;
-        let threads_per_group = SIMD_GROUP_SIZE * 4;
+        let threads_per_group = SIMD_GROUP_SIZE * 8;
         let (threadgroups, tpg) = get_grid_threadgroup_dims(threads_per_group, count);
         let config = MetalLaunchConfig::basic_1d(threadgroups, tpg);
 
@@ -255,7 +255,7 @@ pub fn build_merkle_tree_nodes(
     for layer in 0..layers_count {
         let output_count = input_count / 2;
         let count = output_count as u32;
-        let threads_per_group = SIMD_GROUP_SIZE * 4;
+        let threads_per_group = SIMD_GROUP_SIZE * 8;
         let (threadgroups, tpg) = get_grid_threadgroup_dims(threads_per_group, count);
         let config = MetalLaunchConfig::basic_1d(threadgroups, tpg);
 
