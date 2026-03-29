@@ -27,14 +27,12 @@ impl PowOutput {
         let d_nonce_lo = context.alloc_from_slice(&[0xFFFFFFFFu32])?;
         let d_nonce_hi = context.alloc_from_slice(&[0xFFFFFFFFu32])?;
 
-        let num_groups: u32 = 1024;
-        let threads_per_group: u32 = 128;
+        let num_groups: u32 = 2048;
+        let threads_per_group: u32 = 256;
         let grid_size: u64 = num_groups as u64 * threads_per_group as u64;
-        // Higher occupancy with fewer iterations per thread.
-        // Keeps total chunk size roughly similar to the old setting while
-        // reducing per-thread loop length.
+        // Higher occupancy with more threads and fewer iterations per thread.
         // blake2s.metal compiled at -O0 to avoid Metal compiler optimization bug.
-        let nonces_per_chunk: u64 = grid_size * 128;
+        let nonces_per_chunk: u64 = grid_size * 64;
         let mut chunk_start: u64 = 0;
         let mut chunks_done: u64 = 0;
         let t = std::time::Instant::now();
