@@ -129,7 +129,7 @@ pub fn launch_delegation_aux_poly(
     log_n: u32,
 ) -> MetalResult<()> {
     let n = 1u32 << log_n;
-    let block_dim = 128;
+    let block_dim = 256;
     let grid_dim = (n + block_dim - 1) / block_dim;
     let config = MetalLaunchConfig::basic_1d(grid_dim, block_dim);
     let handle_flag: u32 = if handle_delegation_requests { 1 } else { 0 };
@@ -246,7 +246,7 @@ pub fn launch_shuffle_ram_memory_args(
     log_n: u32,
 ) -> MetalResult<()> {
     let n = 1u32 << log_n;
-    let block_dim = 128;
+    let block_dim = 256;
     let grid_dim = (n + block_dim - 1) / block_dim;
     let config = MetalLaunchConfig::basic_1d(grid_dim, block_dim);
 
@@ -287,7 +287,7 @@ pub fn launch_batched_ram_memory_args(
     log_n: u32,
 ) -> MetalResult<()> {
     let n = 1u32 << log_n;
-    let block_dim = 128;
+    let block_dim = 256;
     let grid_dim = (n + block_dim - 1) / block_dim;
     let config = MetalLaunchConfig::basic_1d(grid_dim, block_dim);
 
@@ -324,7 +324,7 @@ pub fn launch_register_and_indirect_memory_args(
     log_n: u32,
 ) -> MetalResult<()> {
     let n = 1u32 << log_n;
-    let block_dim = 128;
+    let block_dim = 256;
     let grid_dim = (n + block_dim - 1) / block_dim;
     let config = MetalLaunchConfig::basic_1d(grid_dim, block_dim);
 

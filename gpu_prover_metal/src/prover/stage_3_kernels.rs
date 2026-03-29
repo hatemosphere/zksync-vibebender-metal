@@ -1817,7 +1817,7 @@ pub fn launch_generic_constraints(
     _e4_byte_offset: usize,
 ) -> MetalResult<()> {
     let n = 1u32 << log_n;
-    let block_dim = WARP_SIZE * 4;
+    let block_dim = WARP_SIZE * 8;
     let grid_dim = (n + block_dim - 1) / block_dim;
     let config = MetalLaunchConfig::basic_1d(grid_dim, block_dim);
 
@@ -1859,7 +1859,7 @@ pub fn launch_delegated_width_3_lookups(
     e4_byte_offset: usize,
 ) -> MetalResult<()> {
     let n = 1u32 << log_n;
-    let block_dim = WARP_SIZE * 4;
+    let block_dim = WARP_SIZE * 8;
     let grid_dim = (n + block_dim - 1) / block_dim;
     let config = MetalLaunchConfig::basic_1d(grid_dim, block_dim);
 
@@ -1966,7 +1966,7 @@ pub fn launch_hardcoded_constraints(
     params: &HardcodedConstraintsParams,
 ) -> MetalResult<()> {
     let n = 1u32 << params.log_n;
-    let block_dim = WARP_SIZE * 4;
+    let block_dim = WARP_SIZE * 8;
     let grid_dim = (n + block_dim - 1) / block_dim;
     let config = MetalLaunchConfig::basic_1d(grid_dim, block_dim);
 
