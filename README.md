@@ -25,7 +25,7 @@ Metal GPU implementation of the ZKsync Airbender prover pipeline:
 - **5-stage proving**: Witness generation, argument polynomials, constraint quotient, DEEP/FRI, proof assembly
 - **Metal compute shaders**: NTT (forward/inverse), Blake2s Merkle tree hashing, field arithmetic (Mersenne31), parallel reduce/scan/sort, barycentric evaluation
 - **Unified memory**: No explicit CPU-GPU copies — Apple Silicon's shared memory model
-- **GPU profiler**: Chrome trace JSON output (viewable in [Perfetto](https://ui.perfetto.dev))
+- **GPU profiler**: Chrome trace JSON output (viewable in [Perfetto](https://ui.perfetto.dev)) + Apple Instruments integration via `os_signpost` and Metal encoder labels
 
 ## Build & Run
 
@@ -58,6 +58,7 @@ cargo run -p cli --features include_verifiers --release -- verify-all \
 ### Prove with GPU profiling
 
 ```bash
+# Built-in profiler (Chrome trace + summary table)
 cargo run -p cli --features gpu_profile --release -- prove \
   --bin examples/basic_fibonacci/app.bin \
   --gpu --cycles 100 \
@@ -66,7 +67,18 @@ cargo run -p cli --features gpu_profile --release -- prove \
 
 This prints a GPU + CPU timing summary to stderr and writes `gpu_trace.json` to the output directory.
 
-**View the trace:** Open `gpu_trace.json` in [ui.perfetto.dev](https://ui.perfetto.dev) or `chrome://tracing`. GPU events are on thread 1, CPU spans on thread 2.
+**View the trace:** Open `gpu_trace.json` in [ui.perfetto.dev](https://ui.perfetto.dev) or `chrome://tracing`. GPU events are on thread 1, CPU stage spans on thread 2, CPU detail on thread 3+.
+
+```bash
+# Apple Instruments (zero-overhead, per-kernel GPU timing)
+cargo build -p cli --features gpu --release
+xctrace record --template 'Metal System Trace' --launch -- \
+  target/release/cli prove \
+  --bin examples/basic_fibonacci/app.bin \
+  --gpu --output-dir /tmp/output
+```
+
+Open the `.trace` file in Instruments.app. GPU compute encoders are labeled with kernel function names. CPU spans emit `os_signpost` intervals under subsystem `com.matterlabs.gpu-prover`.
 
 ### Prove with CPU (no GPU)
 
@@ -85,57 +97,54 @@ Recent verified measurements on **MacBook Pro M4 Max** (16 CPU cores, 40 GPU cor
 
 | Example | Circuit size | CPU (16 cores) | Metal GPU | Speedup |
 |---------|-------------|----------------|-----------|---------|
-| basic_fibonacci | 2^22 (1 proof) | 6.9s | **2.97s** | **2.3x** |
-| hashed_fibonacci | 2^22 (2 proofs) | 20.3s | **5.63s** | **3.6x** |
+| basic_fibonacci | 2^22 (1 proof) | 6.9s | **2.05s** | **3.4x** |
+| hashed_fibonacci | 2^22 (2 proofs) | 20.3s | **3.65s** | **5.6x** |
 
-> **Note on CPU baseline:** The CPU prover uses all available cores (16 on M4 Max) with SIMD-optimized field arithmetic. The speedup over a single-threaded CPU prover would be much larger (~10x+). The moderate GPU speedup reflects the fact that Apple Silicon's unified memory architecture means the GPU and CPU share the same memory bandwidth, and the prover's Fiat-Shamir transcript requires ~20 sequential GPU-CPU sync points per proof.
+> **Note on CPU baseline:** The CPU prover uses all available cores (16 on M4 Max) with SIMD-optimized field arithmetic. The speedup over a single-threaded CPU prover would be much larger (~10x+). GPU utilization is ~74% with the remaining time spent on CPU-side Metal API overhead and Fiat-Shamir transcript sync points between stages.
 
 ### Per-stage wall time breakdown
 
 ```
-                    basic_fibonacci (1 proof)    hashed_fibonacci (2 proofs)
-Stage 1 (witness)          259ms                       257ms + 382ms
-Stage 1 (commit)         1305ms                      1228ms + 480ms
-Stage 2 (args)             743ms                       712ms + 970ms
-Stage 3 (constraints)      128ms                       121ms +  83ms
-Stage 4 (DEEP/FRI poly)    142ms                       140ms + 136ms
-Stage 5 (FRI folding)       10ms                        10ms +   5ms
-PoW                        174ms                        82ms + 609ms
-Queries                      6ms                         6ms +   6ms
-Proof assembly               6ms                         7ms +   4ms
-─────────────────────────────────────────────────────────────────────
-Total proving             2970ms                      5629ms
+                    basic_fibonacci (1 proof)
+Stage 1 (witness)          225ms
+Stage 1 (commit)           910ms
+Stage 2 (args+commit)      572ms
+Stage 3 (constraints)       74ms
+Stage 4 (DEEP/FRI poly)    96ms
+Stage 5 (FRI folding)       10ms
+PoW                         12ms
+Queries                      9ms
+Proof assembly              32ms
+──────────────────────────────────
+Total proving            1940ms
 ```
 
 ### GPU kernel time breakdown (basic_fibonacci)
 
 ```
-Stage 2 args + commit   1151ms  64%   dominant GPU phase after overlap refactors
-PoW search               186ms  10%   compute-bound
-Barycentric eval          84ms   5%
-Stage 3 constraints       34ms   2%
-Queries (gather)           ~0ms  ~0%  now mostly hidden by earlier stage work
-Other                    335ms  19%
+Stage 1 commit (trees)    712ms  50%   NTT + blake2s Merkle tree hashing
+Stage 2 args + commit     358ms  25%   lookup/memory arguments + tree
+Stage 1 witness gen       139ms  10%   witness + memory value generation
+Stage 3 constraints        68ms   5%   constraint quotient + tree
+Barycentric eval           47ms   3%   batched multi-column evaluation
+Deep quotient + trees      20ms   1%
+PoW search                 12ms   1%   blake2s nonce search (-O2)
+Other                      71ms   5%
 ────────────────────────────────────
-Total GPU time         1790ms
+Total GPU time          1427ms
+Total dispatches          455
 ```
 
-### Resource usage (documentation runs, GPU)
+### Resource usage
 
 ```
 Peak process memory footprint:
-  basic_fibonacci  ~41.7 GB  (41,697,168,800 bytes; `/usr/bin/time -l`)
-  hashed_fibonacci ~46.3 GB  (46,273,826,016 bytes; `/usr/bin/time -l`)
+  basic_fibonacci  ~42 GB
+  hashed_fibonacci ~46 GB
 
 Host buffer pool:
   12 x 648 MB = ~7.8 GB reserved up front
-
-Observed wall time on the same `/usr/bin/time -l` documentation runs:
-  basic_fibonacci  4.40s
-  hashed_fibonacci 7.73s
 ```
-
-The documentation runs above were taken under normal desktop load and are useful for memory accounting. The lower performance table numbers are from the best recent verified benchmark runs on the current code.
 
 ## CUDA vs Metal: TL;DR
 
@@ -172,7 +181,7 @@ GPU and CPU proofs in theory should be **mathematically equivalent but NOT byte-
 Both generate valid proofs that pass the verifier. No other circuits, input sizes, or edge cases have been tested. The Metal prover should NOT be used in production without thorough testing across the full circuit suite.
 
 Known limitations:
-- Blake2s leaf hashing uses column-major layout (required by NTT) causing ~16MB stride between columns. Shared-memory tiling and multi-pass chunking were tried but add overhead on Apple Silicon's unified memory — the GPU's thread-level parallelism already hides most latency from strided reads
-- NTT block-level kernels limited to COL_PAIRS=1 due to 32KB threadgroup memory shared between twiddle cache and cross-warp data exchange (warp-level kernels use COL_PAIRS=4)
-- A substantial fraction of remaining wall time is still CPU-visible synchronization around Fiat-Shamir transcript boundaries
-- Peak process memory footprint is high (roughly 42-46 GB in recent documentation runs)
+- GPU utilization is ~74% — the remaining 26% is CPU-side Metal API overhead (command buffer encoding, scheduling latency, Fiat-Shamir transcript sync points between stages)
+- Blake2s leaf hashing uses column-major layout (required by NTT) causing ~16MB stride between columns. The kernel is compute-bound on blake2s compression, not memory-bound
+- NTT block-level kernels limited to COL_PAIRS=1 due to 32KB threadgroup memory
+- Peak process memory footprint is high (~42-46 GB)
