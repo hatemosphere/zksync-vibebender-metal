@@ -10,7 +10,8 @@ typedef uint32_t u32;
 typedef uint64_t u64;
 typedef base_field bf;
 
-#define ROTR32(x, y) (((x) >> (y)) ^ ((x) << (32 - (y))))
+// Use Metal's rotate intrinsic for right rotation
+#define ROTR32(x, y) rotate((x), (32u - (y)))
 
 #define G(a, b, c, d, x, y)                                                   \
   v[a] = v[a] + v[b] + (x);                                                   \
