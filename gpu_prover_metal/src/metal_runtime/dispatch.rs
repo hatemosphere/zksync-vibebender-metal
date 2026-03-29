@@ -133,6 +133,10 @@ pub fn dispatch_kernel(
             MetalError::ResourceCreationFailed("Failed to create compute command encoder".into())
         })?;
 
+    // Label encoder with kernel name for Metal System Trace / Instruments visibility
+    let label = objc2_foundation::NSString::from_str(function_name);
+    encoder.setLabel(Some(&label));
+
     encoder.setComputePipelineState(&pipeline);
     encode_args(&encoder);
 
