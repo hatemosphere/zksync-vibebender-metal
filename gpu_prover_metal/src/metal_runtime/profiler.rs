@@ -3,9 +3,37 @@
 //! When the `log_gpu_stages_timings` feature is enabled, records per-kernel
 //! dispatch timing via Metal command buffer GPU timestamps. Prints a summary
 //! table at the end of proving and outputs a Chrome trace JSON for visualization.
+//!
+//! Additionally, `os_signpost` markers are always emitted (zero overhead when
+//! not tracing). These show up in Instruments Metal System Trace as a dedicated
+//! "Prover" track, perfectly aligned with GPU intervals. Use:
+//!   xctrace record --template 'Metal System Trace' --launch -- ./target/release/cli prove ...
 
 use std::sync::Mutex;
 use std::time::Instant;
+
+// --- os_signpost integration for Instruments ---
+// Uses a compiled ObjC shim (build/signpost.m) since the os_signpost C API
+// functions are macros that can't be called directly from Rust FFI.
+// Zero overhead when Instruments is not attached.
+mod signpost {
+    use std::ffi::CString;
+
+    extern "C" {
+        fn prover_signpost_begin(name: *const i8) -> u64;
+        fn prover_signpost_end(spid: u64, name: *const i8);
+    }
+
+    pub fn begin(name: &str) -> u64 {
+        let c_name = CString::new(name).unwrap_or_else(|_| CString::new("?").unwrap());
+        unsafe { prover_signpost_begin(c_name.as_ptr()) }
+    }
+
+    pub fn end(id: u64, name: &str) {
+        let c_name = CString::new(name).unwrap_or_else(|_| CString::new("?").unwrap());
+        unsafe { prover_signpost_end(id, c_name.as_ptr()) }
+    }
+}
 
 /// CPU span timing — records start/end of named CPU operations.
 /// Supports nesting via `depth` field for hierarchical visualization.
@@ -152,10 +180,12 @@ pub fn cpu_span_end(idx: usize) {
 }
 
 /// RAII guard for a nested CPU span. Ends the span on drop.
-/// When profiling is disabled, acts as a zero-size no-op.
+/// Also emits os_signpost intervals for Instruments visibility.
 pub struct CpuSpanGuard {
     #[cfg(feature = "log_gpu_stages_timings")]
     idx: usize,
+    signpost_id: u64,
+    name: &'static str,
 }
 
 impl Drop for CpuSpanGuard {
@@ -163,22 +193,29 @@ impl Drop for CpuSpanGuard {
     fn drop(&mut self) {
         #[cfg(feature = "log_gpu_stages_timings")]
         cpu_span_end(self.idx);
+        signpost::end(self.signpost_id, self.name);
     }
 }
 
 /// Start a scoped CPU span that ends when the returned guard is dropped.
+/// Also emits an os_signpost interval visible in Instruments.
 #[inline(always)]
-pub fn cpu_span_scoped(label: &str) -> CpuSpanGuard {
+pub fn cpu_span_scoped(label: &'static str) -> CpuSpanGuard {
+    let signpost_id = signpost::begin(label);
     #[cfg(feature = "log_gpu_stages_timings")]
     {
         CpuSpanGuard {
             idx: cpu_span_begin(label),
+            signpost_id,
+            name: label,
         }
     }
     #[cfg(not(feature = "log_gpu_stages_timings"))]
     {
-        let _ = label;
-        CpuSpanGuard {}
+        CpuSpanGuard {
+            signpost_id,
+            name: label,
+        }
     }
 }
 

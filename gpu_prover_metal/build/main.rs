@@ -149,4 +149,25 @@ fn main() {
         "cargo::rustc-env=METAL_LIB_PATH={}",
         metallib_path.display()
     );
+
+    // Compile os_signpost ObjC shim for Instruments integration.
+    let signpost_src = Path::new(&manifest_dir).join("build/signpost.m");
+    let signpost_obj = out_dir.join("signpost.o");
+    println!("cargo:rerun-if-changed={}", signpost_src.display());
+    let status = Command::new("clang")
+        .args([
+            "-c", "-O2", "-fobjc-arc",
+            signpost_src.to_str().unwrap(),
+            "-o", signpost_obj.to_str().unwrap(),
+        ])
+        .status()
+        .expect("Failed to compile signpost shim");
+    assert!(status.success(), "signpost.m compilation failed");
+    let signpost_lib = out_dir.join("libsignpost.a");
+    Command::new("ar")
+        .args(["rcs", signpost_lib.to_str().unwrap(), signpost_obj.to_str().unwrap()])
+        .status()
+        .expect("Failed to create signpost static library");
+    println!("cargo::rustc-link-search=native={}", out_dir.display());
+    println!("cargo::rustc-link-lib=static=signpost");
 }
