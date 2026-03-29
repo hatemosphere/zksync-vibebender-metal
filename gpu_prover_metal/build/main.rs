@@ -99,10 +99,9 @@ fn main() {
         };
         let air_file = out_dir.join(&air_name);
 
-        // blake2s.metal must be compiled at -O0 due to a Metal compiler
-        // optimization bug: the compress() function produces wrong results
-        // when inlined inside a for loop at -O1 or higher.
-        let opt_level = if stem == "blake2s" { "-O0" } else { "-O2" };
+        // blake2s rounds are now manually unrolled (no SIGMAS loop), so the
+        // Metal compiler optimization bug that required -O0 should no longer apply.
+        let opt_level = "-O2";
         let status = Command::new("xcrun")
             .args([
                 "-sdk",
