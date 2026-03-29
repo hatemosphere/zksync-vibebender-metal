@@ -253,8 +253,8 @@ impl StageOneOutput {
                 }
             })?;
         }
-        cmd_buf.commit_and_wait();
         generate_range_check_multiplicities_gpu(
+            &cmd_buf,
             circuit,
             setup_evaluations,
             witness_evaluations,
@@ -350,6 +350,7 @@ fn read_public_input_value_at_row(
 
 /// Generate range check multiplicities using GPU atomic histogram kernel.
 fn generate_range_check_multiplicities_gpu(
+    cmd_buf: &crate::metal_runtime::MetalCommandBuffer,
     circuit: &CompiledCircuitArtifact<BF>,
     setup_evals: &MetalBuffer<BF>,
     witness_evals: &mut MetalBuffer<BF>,
@@ -444,12 +445,11 @@ fn generate_range_check_multiplicities_gpu(
     let grid_dim = (n_threads + block_dim - 1) / block_dim;
     let config = MetalLaunchConfig::basic_1d(grid_dim, block_dim);
     let device = context.device();
-    let cmd_buf = context.new_command_buffer()?;
-    crate::ops_simple::memset_zero(device, &cmd_buf, d_rc16_hist.raw(), d_rc16_hist.byte_len())?;
-    crate::ops_simple::memset_zero(device, &cmd_buf, d_ts_hist.raw(), d_ts_hist.byte_len())?;
+    crate::ops_simple::memset_zero(device, cmd_buf, d_rc16_hist.raw(), d_rc16_hist.byte_len())?;
+    crate::ops_simple::memset_zero(device, cmd_buf, d_ts_hist.raw(), d_ts_hist.byte_len())?;
     dispatch_kernel(
         device,
-        &cmd_buf,
+        cmd_buf,
         "ab_range_check_multiplicities_kernel",
         &config,
         |encoder| {
@@ -474,7 +474,7 @@ fn generate_range_check_multiplicities_gpu(
     )?;
     cmd_buf.commit_and_wait();
 
-    // Copy histograms to witness multiplicities columns
+    // Copy histograms to witness multiplicities columns (needs GPU results)
     let _g2 = crate::cpu_scoped!("s1_rc_hist_copy");
     let witness_slice = unsafe { witness_evals.as_mut_slice() };
 

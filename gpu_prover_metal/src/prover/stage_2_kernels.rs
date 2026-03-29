@@ -33,7 +33,7 @@ pub fn launch_range_check_aggregated_entry_invs(
     log_n: u32,
 ) -> MetalResult<()> {
     let n = 1u32 << log_n;
-    let block_dim = WARP_SIZE * 4;
+    let block_dim = WARP_SIZE * 8;
     let grid_dim = (n + block_dim - 1) / block_dim;
     let config = MetalLaunchConfig::basic_1d(grid_dim, block_dim);
 
@@ -82,7 +82,7 @@ pub fn launch_generic_aggregated_entry_invs(
     log_n: u32,
 ) -> MetalResult<()> {
     let n = 1u32 << log_n;
-    let block_dim = WARP_SIZE * 4;
+    let block_dim = WARP_SIZE * 8;
     let grid_dim = (n + block_dim - 1) / block_dim;
     let config = MetalLaunchConfig::basic_1d(grid_dim, block_dim);
 
@@ -188,7 +188,7 @@ pub fn launch_lookup_args(
     log_n: u32,
 ) -> MetalResult<()> {
     let n = 1u32 << log_n;
-    let block_dim = 128;
+    let block_dim = 256;
     let grid_dim = (n + block_dim - 1) / block_dim;
     let config = MetalLaunchConfig::basic_1d(grid_dim, block_dim);
 
