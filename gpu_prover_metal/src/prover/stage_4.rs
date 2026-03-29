@@ -171,8 +171,8 @@ impl StageFourOutput {
         // GPU-side barycentric evaluation matching CUDA batch_barycentric_eval.
         let mut d_evals = context.alloc::<E4>(num_evals)?;
 
-        cmd_buf.commit_and_wait();
-
+        // No sync needed — Metal guarantees Lagrange precompute completes before
+        // barycentric eval dispatches start (sequential within command buffer).
         {
             let n = trace_len as u32;
             let num_setup_cols = circuit.setup_layout.total_width;
@@ -211,7 +211,6 @@ impl StageFourOutput {
             let d_e4_temp = context.alloc::<E4>(trace_len)?;
             let d_shifted_lagrange = context.alloc::<E4>(trace_len)?;
             {
-                let cmd_buf = context.new_command_buffer()?;
 
                 // Setup BF columns - batched
                 if num_setup_cols > 0 {
@@ -441,60 +440,70 @@ impl StageFourOutput {
         let mut tree_caps = super::trace_holder::allocate_tree_caps(log_lde_factor, log_tree_cap_size);
 
         let _g = crate::cpu_scoped!("s4_coset_trees");
-        for coset_idx in 0..2usize {
-            // ALL coset ops in ONE command buffer: transpose → bit-reverse → merkle tree
-            let d_coset_e4: &mut crate::metal_runtime::MetalBuffer<E4> = match &mut trace_holder.cosets {
-                super::trace_holder::CosetsHolder::Full(evals) => &mut evals[coset_idx],
+        // Batch BOTH cosets into a single command buffer (saves 1 GPU sync point)
+        {
+            let (coset0, coset1) = match &mut trace_holder.cosets {
+                super::trace_holder::CosetsHolder::Full(evals) => {
+                    let (a, b) = evals.split_at_mut(1);
+                    (&mut a[0], &mut b[0])
+                }
                 _ => unreachable!(),
             };
-            let tree = match &mut trace_holder.trees {
-                super::trace_holder::TreesHolder::Full(trees) => &mut trees[coset_idx],
-                super::trace_holder::TreesHolder::Partial(trees) => &mut trees[coset_idx],
+            let (tree0, tree1) = match &mut trace_holder.trees {
+                super::trace_holder::TreesHolder::Full(trees) => {
+                    let (a, b) = trees.split_at_mut(1);
+                    (&mut a[0], &mut b[0])
+                }
+                super::trace_holder::TreesHolder::Partial(trees) => {
+                    let (a, b) = trees.split_at_mut(1);
+                    (&mut a[0], &mut b[0])
+                }
                 _ => unreachable!(),
             };
-            assert_eq!(tree.len(), tree_len);
+            assert_eq!(tree0.len(), tree_len);
+            assert_eq!(tree1.len(), tree_len);
 
             let cmd_buf = context.new_command_buffer()?;
-
-            // Transpose BF column-major → E4 row-major
-            crate::ops_simple::transpose_bf4_to_e4(
-                device, &cmd_buf,
-                coset_bf_bufs[coset_idx].raw(),
-                d_coset_e4.raw(),
-                trace_len as u32,
-            )?;
-
-            // Bit-reverse E4 data in place
             let e4_stride = trace_len as u32;
-            crate::ops_complex::bit_reverse_naive_e4(
-                device,
-                &cmd_buf,
-                d_coset_e4,
-                e4_stride,
-                d_coset_e4,
-                e4_stride,
-                log_domain_size,
-                1,
-            )?;
+            let digest_size = std::mem::size_of::<crate::blake2s::Digest>();
 
-            // Build merkle tree (leaves + nodes)
-            let bf_len = d_coset_e4.len() * 4;
-            crate::blake2s::build_merkle_tree_leaves_raw(
-                device, &cmd_buf, d_coset_e4.raw(), bf_len,
-                tree, num_leaves, log_fold_by + 2,
-            )?;
-            if layers_count > 0 {
-                let digest_size = std::mem::size_of::<crate::blake2s::Digest>();
-                crate::blake2s::build_merkle_tree_nodes_with_offset(
-                    device, &cmd_buf, tree, 0, num_leaves,
-                    tree, num_leaves * digest_size, layers_count - 1,
-                )?;
+            // Encode both cosets into the same command buffer
+            macro_rules! encode_coset {
+                ($coset_idx:expr, $d_coset_e4:expr, $tree:expr) => {{
+                    crate::ops_simple::transpose_bf4_to_e4(
+                        device, &cmd_buf,
+                        coset_bf_bufs[$coset_idx].raw(),
+                        $d_coset_e4.raw(),
+                        trace_len as u32,
+                    )?;
+                    crate::ops_complex::bit_reverse_naive_e4(
+                        device, &cmd_buf,
+                        $d_coset_e4, e4_stride,
+                        $d_coset_e4, e4_stride,
+                        log_domain_size, 1,
+                    )?;
+                    let bf_len = $d_coset_e4.len() * 4;
+                    crate::blake2s::build_merkle_tree_leaves_raw(
+                        device, &cmd_buf, $d_coset_e4.raw(), bf_len,
+                        $tree, num_leaves, log_fold_by + 2,
+                    )?;
+                    if layers_count > 0 {
+                        crate::blake2s::build_merkle_tree_nodes_with_offset(
+                            device, &cmd_buf, $tree, 0, num_leaves,
+                            $tree, num_leaves * digest_size, layers_count - 1,
+                        )?;
+                    }
+                }};
             }
-
+            encode_coset!(0, coset0, tree0);
+            encode_coset!(1, coset1, tree1);
             cmd_buf.commit_and_wait();
 
             super::trace_holder::transfer_tree_cap(
-                tree, &mut tree_caps[coset_idx], log_lde_factor, log_tree_cap_size,
+                tree0, &mut tree_caps[0], log_lde_factor, log_tree_cap_size,
+            );
+            super::trace_holder::transfer_tree_cap(
+                tree1, &mut tree_caps[1], log_lde_factor, log_tree_cap_size,
             );
         }
         drop(_g);
