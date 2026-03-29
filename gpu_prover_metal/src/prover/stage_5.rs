@@ -109,28 +109,6 @@ impl StageFiveOutput {
             // Upload challenges to device
             let d_challenges = context.alloc_from_slice(&challenges)?;
 
-            // Batch all coset folds into ONE command buffer
-            {
-                let cmd_buf = context.new_command_buffer()?;
-                for (coset_idx, (folding_input, folding_output)) in folding_inputs
-                    .iter()
-                    .zip(ldes.iter_mut())
-                    .enumerate()
-                {
-                    let challenge_offset = coset_idx * current_log_fold;
-                    Self::fold_coset_dispatch(
-                        &cmd_buf,
-                        folding_degree_log2,
-                        &d_challenges,
-                        challenge_offset,
-                        folding_input,
-                        folding_output,
-                        context,
-                    )?;
-                }
-                cmd_buf.commit_and_wait();
-            }
-
             let _g_tree = crate::cpu_scoped!("s5_oracle_tree");
             let expose_all_leafs = if i == oracles_count - 1 {
                 let log_bound = num_queries.next_power_of_two().trailing_zeros();
@@ -140,6 +118,27 @@ impl StageFiveOutput {
             };
 
             let (trees, tree_caps) = if expose_all_leafs {
+                // Fold first, then copy to host
+                {
+                    let cmd_buf = context.new_command_buffer()?;
+                    for (coset_idx, (folding_input, folding_output)) in folding_inputs
+                        .iter()
+                        .zip(ldes.iter_mut())
+                        .enumerate()
+                    {
+                        let challenge_offset = coset_idx * current_log_fold;
+                        Self::fold_coset_dispatch(
+                            &cmd_buf,
+                            folding_degree_log2,
+                            &d_challenges,
+                            challenge_offset,
+                            folding_input,
+                            folding_output,
+                            context,
+                        )?;
+                    }
+                    cmd_buf.commit_and_wait();
+                }
                 // Copy LDE values to host for transcript commitment
                 let mut leaf_values = vec![];
                 for d_coset in ldes.iter() {
@@ -165,7 +164,7 @@ impl StageFiveOutput {
                 Transcript::commit_with_seed(seed, &transcript_input);
                 (vec![], vec![])
             } else {
-                // Build ALL coset merkle trees in ONE command buffer
+                // Fold + tree in ONE command buffer (saves 1 GPU sync)
                 let mut trees = Vec::with_capacity(lde_factor);
                 for _ in 0..lde_factor {
                     trees.push(context.alloc::<Digest>(1 << (log_num_leafs + 1))?);
@@ -179,6 +178,25 @@ impl StageFiveOutput {
                 let cmd_buf = context.new_command_buffer()?;
                 let num_leaves = 1usize << log_num_leafs;
 
+                // Fold all cosets first
+                for (coset_idx, (folding_input, folding_output)) in folding_inputs
+                    .iter()
+                    .zip(ldes.iter_mut())
+                    .enumerate()
+                {
+                    let challenge_offset = coset_idx * current_log_fold;
+                    Self::fold_coset_dispatch(
+                        &cmd_buf,
+                        folding_degree_log2,
+                        &d_challenges,
+                        challenge_offset,
+                        folding_input,
+                        folding_output,
+                        context,
+                    )?;
+                }
+
+                // Then build trees from folded results (same cmd_buf)
                 for (lde, tree) in ldes.iter().zip_eq(trees.iter_mut()) {
                     let log_tree_len = log_num_leafs + 1;
                     let layers_count = log_num_leafs + 1 - log_coset_cap_size;
