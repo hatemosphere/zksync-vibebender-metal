@@ -109,12 +109,10 @@ impl From<(u32, u32, u32)> for Dim3 {
     }
 }
 
-/// Dispatch a GPU kernel with immediate commit+wait.
+/// Dispatch a GPU kernel on a serial compute encoder.
 ///
-/// Creates a fresh command buffer for each dispatch and commits it immediately.
-/// This prevents GPU monopolization that causes macOS WindowServer hangs —
-/// each kernel runs as an isolated GPU submission (~1-100ms), giving the
-/// display compositor time to render between dispatches.
+/// Each call creates a new compute encoder, dispatches one kernel, and ends
+/// the encoder. Encoders within a command buffer execute sequentially.
 ///
 /// The `cmd_buf` parameter provides access to the underlying command queue.
 pub fn dispatch_kernel(
@@ -124,14 +122,48 @@ pub fn dispatch_kernel(
     config: &MetalLaunchConfig,
     encode_args: impl FnOnce(&ProtocolObject<dyn MTLComputeCommandEncoder>),
 ) -> MetalResult<()> {
+    dispatch_kernel_impl(device, cmd_buf, function_name, config, encode_args, false)
+}
+
+/// Dispatch a GPU kernel on a concurrent compute encoder.
+///
+/// Dispatches using `MTLDispatchType::Concurrent`, allowing the GPU to
+/// execute this kernel in parallel with other concurrent dispatches in the
+/// same command buffer. Use for independent kernels that don't read each
+/// other's outputs (e.g., two independent Merkle tree builds).
+///
+/// IMPORTANT: A memory barrier (serial dispatch or `commit_and_wait`) is
+/// needed BEFORE any kernel that reads outputs from concurrent dispatches.
+pub fn dispatch_kernel_concurrent(
+    device: &ProtocolObject<dyn MTLDevice>,
+    cmd_buf: &MetalCommandBuffer,
+    function_name: &str,
+    config: &MetalLaunchConfig,
+    encode_args: impl FnOnce(&ProtocolObject<dyn MTLComputeCommandEncoder>),
+) -> MetalResult<()> {
+    dispatch_kernel_impl(device, cmd_buf, function_name, config, encode_args, true)
+}
+
+fn dispatch_kernel_impl(
+    device: &ProtocolObject<dyn MTLDevice>,
+    cmd_buf: &MetalCommandBuffer,
+    function_name: &str,
+    config: &MetalLaunchConfig,
+    encode_args: impl FnOnce(&ProtocolObject<dyn MTLComputeCommandEncoder>),
+    concurrent: bool,
+) -> MetalResult<()> {
     let pipeline = pipeline::get_pipeline(device, function_name)?;
 
-    let encoder = cmd_buf
-        .raw()
-        .computeCommandEncoder()
-        .ok_or_else(|| {
-            MetalError::ResourceCreationFailed("Failed to create compute command encoder".into())
-        })?;
+    let encoder = if concurrent {
+        cmd_buf
+            .raw()
+            .computeCommandEncoderWithDispatchType(objc2_metal::MTLDispatchType::Concurrent)
+    } else {
+        cmd_buf.raw().computeCommandEncoder()
+    }
+    .ok_or_else(|| {
+        MetalError::ResourceCreationFailed("Failed to create compute command encoder".into())
+    })?;
 
     // Label encoder with kernel name for Metal System Trace / Instruments visibility
     let label = objc2_foundation::NSString::from_str(function_name);

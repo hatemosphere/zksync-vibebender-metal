@@ -219,7 +219,23 @@ impl TraceHolder<BF> {
                             self.padded_to_even,
                             context,
                         )?;
+                        // NTT first: src_eval → dst_eval (produces coset evaluations)
+                        // Then both trees can be built concurrently since they read
+                        // from independent buffers (src_eval and dst_eval).
                         let src_eval_ref = unsafe { &*(src_eval as *const MetalBuffer<BF>) };
+                        compute_coset_evaluations_into(
+                            &cmd_buf,
+                            src_eval_ref,
+                            dst_eval,
+                            0,
+                            self.log_domain_size,
+                            self.log_lde_factor,
+                            self.compressed_coset,
+                            context,
+                        )?;
+                        // Build both trees from independent evaluation buffers.
+                        // Submit reduce+NTT work first, then build trees.
+                        let dst_eval_ref = unsafe { &*(dst_eval as *const MetalBuffer<BF>) };
                         commit_trace_into(
                             &cmd_buf,
                             src_eval_ref,
@@ -231,17 +247,6 @@ impl TraceHolder<BF> {
                             self.columns_count,
                             context,
                         )?;
-                        compute_coset_evaluations_into(
-                            &cmd_buf,
-                            src_eval_ref,
-                            dst_eval,
-                            0,
-                            self.log_domain_size,
-                            self.log_lde_factor,
-                            self.compressed_coset,
-                            context,
-                        )?;
-                        let dst_eval_ref = unsafe { &*(dst_eval as *const MetalBuffer<BF>) };
                         commit_trace_into(
                             &cmd_buf,
                             dst_eval_ref,
@@ -281,17 +286,6 @@ impl TraceHolder<BF> {
                             context,
                         )?;
                         let src_eval_ref = unsafe { &*(src_eval as *const MetalBuffer<BF>) };
-                        commit_trace_into(
-                            &cmd_buf,
-                            src_eval_ref,
-                            &mut tree0,
-                            self.log_domain_size,
-                            self.log_lde_factor,
-                            self.log_rows_per_leaf,
-                            self.log_tree_cap_size,
-                            self.columns_count,
-                            context,
-                        )?;
                         compute_coset_evaluations_into(
                             &cmd_buf,
                             src_eval_ref,
@@ -303,6 +297,17 @@ impl TraceHolder<BF> {
                             context,
                         )?;
                         let dst_eval_ref = unsafe { &*(dst_eval as *const MetalBuffer<BF>) };
+                        commit_trace_into(
+                            &cmd_buf,
+                            src_eval_ref,
+                            &mut tree0,
+                            self.log_domain_size,
+                            self.log_lde_factor,
+                            self.log_rows_per_leaf,
+                            self.log_tree_cap_size,
+                            self.columns_count,
+                            context,
+                        )?;
                         commit_trace_into(
                             &cmd_buf,
                             dst_eval_ref,
